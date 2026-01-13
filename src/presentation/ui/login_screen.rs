@@ -1,0 +1,279 @@
+//! Login screen.
+
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Widget},
+};
+
+use crate::presentation::widgets::TextInput;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginState {
+    Input,
+    Validating,
+    Error,
+    Success,
+}
+
+/// Login screen UI.
+pub struct LoginScreen {
+    token_input: TextInput,
+    state: LoginState,
+    error_message: Option<String>,
+    persist_token: bool,
+}
+
+impl LoginScreen {
+    /// Creates new login screen.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut token_input = TextInput::new("Discord Token")
+            .password()
+            .placeholder("Paste your Discord token here...");
+        token_input.set_focused(true);
+
+        Self {
+            token_input,
+            state: LoginState::Input,
+            error_message: None,
+            persist_token: true,
+        }
+    }
+
+    /// Returns current state.
+    #[must_use]
+    pub fn state(&self) -> LoginState {
+        self.state
+    }
+
+    /// Returns entered token.
+    #[must_use]
+    pub fn token(&self) -> Option<&str> {
+        let value = self.token_input.value();
+        if value.is_empty() { None } else { Some(value) }
+    }
+
+    /// Returns persistence preference.
+    #[must_use]
+    pub fn should_persist(&self) -> bool {
+        self.persist_token
+    }
+
+    /// Sets validating state.
+    pub fn set_validating(&mut self) {
+        self.state = LoginState::Validating;
+        self.error_message = None;
+    }
+
+    /// Sets success state.
+    pub fn set_success(&mut self) {
+        self.state = LoginState::Success;
+        self.error_message = None;
+    }
+
+    /// Sets error state.
+    pub fn set_error(&mut self, message: impl Into<String>) {
+        self.state = LoginState::Error;
+        self.error_message = Some(message.into());
+    }
+
+    /// Resets to input state.
+    pub fn reset(&mut self) {
+        self.state = LoginState::Input;
+        self.error_message = None;
+    }
+
+    /// Handles key event, returns true if submit.
+    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        if self.state == LoginState::Validating {
+            return false;
+        }
+
+        if self.state == LoginState::Error {
+            self.reset();
+            return false;
+        }
+
+        match key.code {
+            KeyCode::Enter => {
+                if !self.token_input.value().is_empty() {
+                    return true;
+                }
+            }
+            KeyCode::Char(c) => {
+                self.token_input.input_char(c);
+            }
+            KeyCode::Backspace => {
+                self.token_input.backspace();
+            }
+            KeyCode::Delete => {
+                self.token_input.delete();
+            }
+            KeyCode::Left => {
+                self.token_input.move_left();
+            }
+            KeyCode::Right => {
+                self.token_input.move_right();
+            }
+            KeyCode::Home => {
+                self.token_input.move_start();
+            }
+            KeyCode::End => {
+                self.token_input.move_end();
+            }
+            KeyCode::Tab => {
+                self.persist_token = !self.persist_token;
+            }
+            _ => {}
+        }
+
+        false
+    }
+
+    fn render_inner(&self, area: Rect, buf: &mut Buffer) {
+        let vertical = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(12),
+            Constraint::Fill(1),
+        ]);
+        let [_, center, _] = vertical.areas(area);
+
+        let horizontal = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Min(50),
+            Constraint::Fill(1),
+        ]);
+        let [_, content_area, _] = horizontal.areas(center);
+
+        Clear.render(content_area, buf);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Discordo Login ");
+
+        let inner = block.inner(content_area);
+        block.render(content_area, buf);
+
+        let inner_layout = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]);
+        let areas = inner_layout.areas::<7>(inner);
+
+        let title = Paragraph::new("Enter your Discord token to login")
+            .style(Style::default().fg(Color::White));
+        title.render(areas[0], buf);
+
+        (&self.token_input).render(areas[2], buf);
+
+        let checkbox = if self.persist_token { "[x]" } else { "[ ]" };
+        let persist_line = Line::from(vec![
+            Span::styled(checkbox, Style::default().fg(Color::Yellow)),
+            Span::raw(" Remember token (Tab to toggle)"),
+        ]);
+        let persist_para = Paragraph::new(persist_line);
+        persist_para.render(areas[4], buf);
+
+        let status = match self.state {
+            LoginState::Input => Line::from(Span::styled(
+                "Press Enter to login, Esc to quit",
+                Style::default().fg(Color::DarkGray),
+            )),
+            LoginState::Validating => Line::from(Span::styled(
+                "Validating token...",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::ITALIC),
+            )),
+            LoginState::Error => {
+                let msg = self.error_message.as_deref().unwrap_or("Unknown error");
+                Line::from(Span::styled(
+                    format!("Error: {msg}"),
+                    Style::default().fg(Color::Red),
+                ))
+            }
+            LoginState::Success => Line::from(Span::styled(
+                "Login successful!",
+                Style::default().fg(Color::Green),
+            )),
+        };
+        let status_para = Paragraph::new(status);
+        status_para.render(areas[6], buf);
+    }
+}
+
+impl Default for LoginScreen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Widget for &LoginScreen {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        self.render_inner(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn test_initial_state() {
+        let screen = LoginScreen::new();
+        assert_eq!(screen.state(), LoginState::Input);
+        assert!(screen.token().is_none());
+        assert!(screen.should_persist());
+    }
+
+    #[test]
+    fn test_typing() {
+        let mut screen = LoginScreen::new();
+        screen.handle_key(key(KeyCode::Char('t')));
+        screen.handle_key(key(KeyCode::Char('e')));
+        screen.handle_key(key(KeyCode::Char('s')));
+        screen.handle_key(key(KeyCode::Char('t')));
+
+        assert_eq!(screen.token(), Some("test"));
+    }
+
+    #[test]
+    fn test_toggle_persist() {
+        let mut screen = LoginScreen::new();
+        assert!(screen.should_persist());
+
+        screen.handle_key(key(KeyCode::Tab));
+        assert!(!screen.should_persist());
+
+        screen.handle_key(key(KeyCode::Tab));
+        assert!(screen.should_persist());
+    }
+
+    #[test]
+    fn test_submit_empty_returns_false() {
+        let mut screen = LoginScreen::new();
+        assert!(!screen.handle_key(key(KeyCode::Enter)));
+    }
+
+    #[test]
+    fn test_submit_with_token_returns_true() {
+        let mut screen = LoginScreen::new();
+        screen.handle_key(key(KeyCode::Char('x')));
+        assert!(screen.handle_key(key(KeyCode::Enter)));
+    }
+}
