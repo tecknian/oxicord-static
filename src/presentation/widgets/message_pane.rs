@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
-use tui_scrollview::{ScrollView, ScrollViewState};
+use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use crate::domain::entities::{ChannelId, Message, MessageId};
 
@@ -146,6 +146,7 @@ pub struct MessagePaneState {
     selected_index: Option<usize>,
     focused: bool,
     auto_scroll: bool,
+    scroll_to_selection: bool,
     content_height: u16,
     viewport_height: u16,
 }
@@ -158,6 +159,7 @@ impl MessagePaneState {
             selected_index: None,
             focused: false,
             auto_scroll: true,
+            scroll_to_selection: false,
             content_height: 0,
             viewport_height: 0,
         }
@@ -183,6 +185,7 @@ impl MessagePaneState {
         }
 
         self.auto_scroll = false;
+        self.scroll_to_selection = true;
         self.selected_index = Some(match self.selected_index {
             Some(idx) => (idx + 1).min(message_count - 1),
             None => message_count.saturating_sub(1),
@@ -195,6 +198,7 @@ impl MessagePaneState {
         }
 
         self.auto_scroll = false;
+        self.scroll_to_selection = true;
         self.selected_index = Some(match self.selected_index {
             Some(idx) => idx.saturating_sub(1),
             None => message_count.saturating_sub(1),
@@ -203,6 +207,7 @@ impl MessagePaneState {
 
     pub fn select_first(&mut self) {
         self.auto_scroll = false;
+        self.scroll_to_selection = true;
         self.selected_index = Some(0);
         self.scroll_state.scroll_to_top();
     }
@@ -213,6 +218,7 @@ impl MessagePaneState {
         }
         self.selected_index = Some(message_count - 1);
         self.auto_scroll = true;
+        self.scroll_to_selection = true;
         self.scroll_to_bottom();
     }
 
@@ -614,9 +620,12 @@ impl StatefulWidget for MessagePane<'_> {
 
         state.update_dimensions(content_height, inner_area.height);
 
-        let mut scroll_view = ScrollView::new(Size::new(content_width, content_height));
+        let mut scroll_view = ScrollView::new(Size::new(content_width, content_height))
+            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
 
         let mut y_offset: u16 = 0;
+        let mut selected_position = None;
+
         for (idx, message) in self.data.messages().iter().enumerate() {
             let is_selected = state.selected_index == Some(idx);
             let msg_height = self.render_message(
@@ -626,7 +635,40 @@ impl StatefulWidget for MessagePane<'_> {
                 is_selected,
                 &mut scroll_view,
             );
+
+            if is_selected {
+                selected_position = Some((y_offset, msg_height));
+            }
+
             y_offset += msg_height;
+        }
+
+        if state.scroll_to_selection {
+            if let Some((msg_y, msg_height)) = selected_position {
+                let current_scroll = state.scroll_state.offset().y;
+                let viewport_height = inner_area.height;
+
+                let new_scroll = if msg_y < current_scroll {
+                    Some(msg_y)
+                } else if msg_y.saturating_add(msg_height)
+                    > current_scroll.saturating_add(viewport_height)
+                {
+                    Some(
+                        msg_y
+                            .saturating_add(msg_height)
+                            .saturating_sub(viewport_height),
+                    )
+                } else {
+                    None
+                };
+
+                if let Some(scroll) = new_scroll {
+                    state
+                        .scroll_state
+                        .set_offset(ratatui::layout::Position { x: 0, y: scroll });
+                }
+            }
+            state.scroll_to_selection = false;
         }
 
         scroll_view.render(inner_area, buf, &mut state.scroll_state);
