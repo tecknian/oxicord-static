@@ -4,13 +4,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
+    style::{Color, Style},
+    text::Span,
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::domain::entities::{Channel, Guild, GuildId, User};
-use crate::presentation::widgets::{GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState};
+use crate::domain::entities::{Channel, ChannelId, Guild, GuildId, Message, User};
+use crate::presentation::widgets::{
+    GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, MessagePane, MessagePaneAction,
+    MessagePaneData, MessagePaneState,
+};
 
 const GUILDS_TREE_WIDTH_PERCENT: u16 = 25;
 const GUILDS_TREE_MIN_WIDTH: u16 = 20;
@@ -65,6 +68,8 @@ pub struct ChatScreenState {
     guilds_tree_visible: bool,
     guilds_tree_state: GuildsTreeState,
     guilds_tree_data: GuildsTreeData,
+    message_pane_state: MessagePaneState,
+    message_pane_data: MessagePaneData,
     selected_guild: Option<GuildId>,
     selected_channel: Option<Channel>,
 }
@@ -82,6 +87,8 @@ impl ChatScreenState {
             guilds_tree_visible: true,
             guilds_tree_state,
             guilds_tree_data: GuildsTreeData::new(),
+            message_pane_state: MessagePaneState::new(),
+            message_pane_data: MessagePaneData::new(),
             selected_guild: None,
             selected_channel: None,
         }
@@ -167,6 +174,8 @@ impl ChatScreenState {
         self.focus = focus;
         self.guilds_tree_state
             .set_focused(focus == ChatFocus::GuildsTree);
+        self.message_pane_state
+            .set_focused(focus == ChatFocus::MessagesList);
     }
 
     /// Handles a key event and returns the result.
@@ -218,7 +227,9 @@ impl ChatScreenState {
         if let Some(action) = self.guilds_tree_state.handle_key(key) {
             match action {
                 GuildsTreeAction::SelectChannel(channel_id) => {
-                    self.on_channel_selected(channel_id);
+                    if let Some(result) = self.on_channel_selected(channel_id) {
+                        return result;
+                    }
                 }
                 GuildsTreeAction::SelectGuild(guild_id) => {
                     if let Some(result) = self.on_guild_selected(guild_id) {
@@ -237,8 +248,43 @@ impl ChatScreenState {
         ChatKeyResult::Consumed
     }
 
-    fn handle_messages_list_key(&mut self, _key: KeyEvent) -> ChatKeyResult {
-        let _ = self; // Suppress unused_self warning until implementation
+    fn handle_messages_list_key(&mut self, key: KeyEvent) -> ChatKeyResult {
+        if let Some(action) = self
+            .message_pane_state
+            .handle_key(key, &self.message_pane_data)
+        {
+            match action {
+                MessagePaneAction::ClearSelection => {}
+                MessagePaneAction::SelectMessage(_) => {}
+                MessagePaneAction::Reply {
+                    message_id,
+                    mention,
+                } => {
+                    return ChatKeyResult::ReplyToMessage {
+                        message_id,
+                        mention,
+                    };
+                }
+                MessagePaneAction::Edit(message_id) => {
+                    return ChatKeyResult::EditMessage(message_id);
+                }
+                MessagePaneAction::Delete(message_id) => {
+                    return ChatKeyResult::DeleteMessage(message_id);
+                }
+                MessagePaneAction::YankContent(content) | MessagePaneAction::YankUrl(content) => {
+                    return ChatKeyResult::CopyToClipboard(content);
+                }
+                MessagePaneAction::YankId(id) => {
+                    return ChatKeyResult::CopyToClipboard(id);
+                }
+                MessagePaneAction::OpenAttachments(message_id) => {
+                    return ChatKeyResult::OpenAttachments(message_id);
+                }
+                MessagePaneAction::JumpToReply(message_id) => {
+                    return ChatKeyResult::JumpToMessage(message_id);
+                }
+            }
+        }
         ChatKeyResult::Consumed
     }
 
@@ -247,13 +293,17 @@ impl ChatScreenState {
         ChatKeyResult::Consumed
     }
 
-    fn on_channel_selected(&mut self, channel_id: crate::domain::entities::ChannelId) {
+    fn on_channel_selected(&mut self, channel_id: ChannelId) -> Option<ChatKeyResult> {
         if let Some(guild_id) = self.selected_guild
             && let Some(channels) = self.guilds_tree_data.channels(guild_id)
             && let Some(channel) = channels.iter().find(|c| c.id() == channel_id)
         {
             self.selected_channel = Some(channel.clone());
+            let channel_name = channel.display_name();
+            self.message_pane_data.set_channel(channel_id, channel_name);
+            return Some(ChatKeyResult::LoadChannelMessages(channel_id));
         }
+        None
     }
 
     fn on_guild_selected(&mut self, guild_id: GuildId) -> Option<ChatKeyResult> {
@@ -283,6 +333,43 @@ impl ChatScreenState {
     pub fn guilds_tree_parts_mut(&mut self) -> (&GuildsTreeData, &mut GuildsTreeState) {
         (&self.guilds_tree_data, &mut self.guilds_tree_state)
     }
+
+    /// Sets the messages for the current channel.
+    pub fn set_messages(&mut self, messages: Vec<Message>) {
+        self.message_pane_data.set_messages(messages);
+    }
+
+    /// Adds a new message to the current channel.
+    pub fn add_message(&mut self, message: Message) {
+        self.message_pane_data.add_message(message);
+        self.message_pane_state.on_new_message();
+    }
+
+    /// Updates an existing message in the current channel.
+    pub fn update_message(&mut self, message: Message) {
+        self.message_pane_data.update_message(message);
+    }
+
+    /// Removes a message from the current channel.
+    pub fn remove_message(&mut self, message_id: crate::domain::entities::MessageId) {
+        self.message_pane_data.remove_message(message_id);
+    }
+
+    /// Sets an error state for message loading.
+    pub fn set_message_error(&mut self, error: String) {
+        self.message_pane_data.set_error(error);
+    }
+
+    /// Returns a reference to the message pane data.
+    #[must_use]
+    pub fn message_pane_data(&self) -> &MessagePaneData {
+        &self.message_pane_data
+    }
+
+    /// Returns mutable references to message pane data and state.
+    pub fn message_pane_parts_mut(&mut self) -> (&MessagePaneData, &mut MessagePaneState) {
+        (&self.message_pane_data, &mut self.message_pane_state)
+    }
 }
 
 /// Result of handling a key event in the chat screen.
@@ -298,6 +385,23 @@ pub enum ChatKeyResult {
     CopyToClipboard(String),
     /// Request to load channels for a guild (lazy loading).
     LoadGuildChannels(GuildId),
+    /// Request to load messages for a channel.
+    LoadChannelMessages(ChannelId),
+    /// Request to reply to a message.
+    ReplyToMessage {
+        /// The message ID to reply to.
+        message_id: crate::domain::entities::MessageId,
+        /// Whether to mention the author.
+        mention: bool,
+    },
+    /// Request to edit a message.
+    EditMessage(crate::domain::entities::MessageId),
+    /// Request to delete a message.
+    DeleteMessage(crate::domain::entities::MessageId),
+    /// Request to open attachments for a message.
+    OpenAttachments(crate::domain::entities::MessageId),
+    /// Request to jump to a specific message.
+    JumpToMessage(crate::domain::entities::MessageId),
 }
 
 /// Chat screen widget.
@@ -351,55 +455,21 @@ fn render_guilds_tree(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer)
     StatefulWidget::render(tree, area, buf, tree_state);
 }
 
-fn render_messages_placeholder(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
-    let is_focused = state.focus == ChatFocus::MessagesList;
-    let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::Gray)
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(Span::styled(
-            " Messages ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-    let content = if let Some(channel) = state.selected_channel() {
-        vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                format!("Channel: {}", channel.display_name()),
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]
-    } else {
-        vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "Select a channel to view messages",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]
-    };
-
-    let paragraph = Paragraph::new(content).block(block);
-    paragraph.render(area, buf);
+fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    let (data, pane_state) = state.message_pane_parts_mut();
+    let pane = MessagePane::new(data);
+    StatefulWidget::render(pane, area, buf, pane_state);
 }
 
-fn render_input_placeholder(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
-    let is_focused = state.focus == ChatFocus::MessageInput;
+fn render_input_placeholder(focus: ChatFocus, has_channel: bool, area: Rect, buf: &mut Buffer) {
+    let is_focused = focus == ChatFocus::MessageInput;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::Gray)
     };
 
-    let placeholder = if state.selected_channel().is_some() {
+    let placeholder = if has_channel {
         "Type a message..."
     } else {
         "Select a channel first"
@@ -418,12 +488,15 @@ fn render_input_placeholder(state: &ChatScreenState, area: Rect, buf: &mut Buffe
     paragraph.render(area, buf);
 }
 
-fn render_messages_area(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
+fn render_messages_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
     let layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
     let [messages_area, input_area] = layout.areas(area);
 
-    render_messages_placeholder(state, messages_area, buf);
-    render_input_placeholder(state, input_area, buf);
+    render_message_pane(state, messages_area, buf);
+
+    let focus = state.focus;
+    let has_channel = state.selected_channel().is_some();
+    render_input_placeholder(focus, has_channel, input_area, buf);
 }
 
 #[cfg(test)]

@@ -1,17 +1,25 @@
 //! Discord API HTTP client.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use reqwest::{Client, StatusCode, header};
 use tracing::{debug, warn};
 
-use super::dto::{ChannelResponse, DmChannelResponse, ErrorResponse, GuildResponse, UserResponse};
-use crate::domain::entities::{AuthToken, Channel, ChannelKind, Guild, User};
+use super::dto::{
+    AttachmentResponse, ChannelResponse, DmChannelResponse, ErrorResponse, GuildResponse,
+    MessageResponse, UserResponse,
+};
+use crate::domain::entities::{
+    Attachment, AuthToken, Channel, ChannelKind, Guild, Message, MessageAuthor, MessageKind,
+    MessageReference, User,
+};
 use crate::domain::errors::AuthError;
-use crate::domain::ports::{AuthPort, DirectMessageChannel, DiscordDataPort};
+use crate::domain::ports::{AuthPort, DirectMessageChannel, DiscordDataPort, FetchMessagesOptions};
 
 const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const MAX_IDLE_CONNECTIONS: usize = 10;
+const DEFAULT_MESSAGE_LIMIT: u8 = 50;
 
 /// Discord API client for authentication and data fetching.
 pub struct DiscordClient {
@@ -96,6 +104,68 @@ impl DiscordClient {
                 Some(channel)
             })
             .collect()
+    }
+
+    fn parse_attachment(attachment: AttachmentResponse) -> Attachment {
+        let mut result = Attachment::new(
+            attachment.id,
+            attachment.filename,
+            attachment.size,
+            attachment.url,
+        );
+        if let Some(content_type) = attachment.content_type {
+            result = result.with_content_type(content_type);
+        }
+        result
+    }
+
+    fn parse_message_response(response: MessageResponse, channel_id: u64) -> Option<Message> {
+        let id: u64 = response.id.parse().ok()?;
+        let author = MessageAuthor::new(
+            response.author.id,
+            response.author.username,
+            response.author.discriminator,
+            response.author.avatar,
+            response.author.bot,
+        );
+
+        let timestamp: DateTime<Utc> = response.timestamp.parse().ok()?;
+
+        let mut message = Message::new(id, channel_id, author, response.content, timestamp)
+            .with_kind(MessageKind::from(response.kind))
+            .with_pinned(response.pinned);
+
+        if !response.attachments.is_empty() {
+            let attachments = response
+                .attachments
+                .into_iter()
+                .map(Self::parse_attachment)
+                .collect();
+            message = message.with_attachments(attachments);
+        }
+
+        if let Some(edited) = response.edited_timestamp {
+            if let Ok(edited_ts) = edited.parse::<DateTime<Utc>>() {
+                message = message.with_edited_timestamp(edited_ts);
+            }
+        }
+
+        if let Some(reference) = response.message_reference {
+            let ref_msg_id = reference.message_id.and_then(|id| id.parse::<u64>().ok());
+            let ref_channel_id = reference.channel_id.and_then(|id| id.parse::<u64>().ok());
+            message = message.with_reference(MessageReference::new(
+                ref_msg_id.map(Into::into),
+                ref_channel_id.map(Into::into),
+            ));
+        }
+
+        if let Some(referenced) = response.referenced_message {
+            if let Some(ref_message) = Self::parse_message_response(*referenced, channel_id) {
+                message = message.with_referenced_message(ref_message);
+            }
+        }
+
+        Some(message)
     }
 }
 
@@ -325,6 +395,75 @@ impl DiscordDataPort for DiscordClient {
             .collect();
 
         Ok(dm_channels)
+    }
+
+    async fn fetch_messages(
+        &self,
+        token: &AuthToken,
+        channel_id: u64,
+        options: FetchMessagesOptions,
+    ) -> Result<Vec<Message>, AuthError> {
+        let mut url = format!("{}/channels/{}/messages", self.base_url, channel_id);
+        let mut query_parts = Vec::new();
+
+        let limit = options.limit.unwrap_or(DEFAULT_MESSAGE_LIMIT);
+        query_parts.push(format!("limit={}", limit.min(100)));
+
+        if let Some(before) = options.before {
+            query_parts.push(format!("before={before}"));
+        }
+        if let Some(after) = options.after {
+            query_parts.push(format!("after={after}"));
+        }
+        if let Some(around) = options.around {
+            query_parts.push(format!("around={around}"));
+        }
+
+        if !query_parts.is_empty() {
+            url = format!("{}?{}", url, query_parts.join("&"));
+        }
+
+        debug!(
+            channel_id = channel_id,
+            "Fetching messages from Discord API"
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header(header::AUTHORIZATION, token.as_str())
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to fetch messages");
+                AuthError::network(e.to_string())
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(self.handle_error_response(status, response).await);
+        }
+
+        let message_responses: Vec<MessageResponse> = response.json().await.map_err(|e| {
+            warn!(error = %e, "Failed to parse messages response");
+            AuthError::unexpected(format!("failed to parse messages: {e}"))
+        })?;
+
+        debug!(
+            count = message_responses.len(),
+            channel_id = channel_id,
+            "Fetched messages successfully"
+        );
+
+        let mut messages: Vec<Message> = message_responses
+            .into_iter()
+            .filter_map(|m| Self::parse_message_response(m, channel_id))
+            .collect();
+
+        messages.reverse();
+
+        Ok(messages)
     }
 }
 

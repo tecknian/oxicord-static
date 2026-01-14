@@ -8,9 +8,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::application::dto::{LoginRequest, TokenSource};
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
-use crate::domain::entities::{AuthToken, GuildId, User};
+use crate::domain::entities::{AuthToken, ChannelId, GuildId, User};
 use crate::domain::errors::AuthError;
-use crate::domain::ports::{AuthPort, DiscordDataPort, TokenStoragePort};
+use crate::domain::ports::{AuthPort, DiscordDataPort, FetchMessagesOptions, TokenStoragePort};
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen};
 
@@ -164,6 +164,27 @@ impl App {
             ChatKeyResult::LoadGuildChannels(guild_id) => {
                 self.load_guild_channels(guild_id).await;
             }
+            ChatKeyResult::LoadChannelMessages(channel_id) => {
+                self.load_channel_messages(channel_id).await;
+            }
+            ChatKeyResult::ReplyToMessage {
+                message_id,
+                mention,
+            } => {
+                debug!(message_id = %message_id, mention = mention, "Reply to message requested");
+            }
+            ChatKeyResult::EditMessage(message_id) => {
+                debug!(message_id = %message_id, "Edit message requested");
+            }
+            ChatKeyResult::DeleteMessage(message_id) => {
+                debug!(message_id = %message_id, "Delete message requested");
+            }
+            ChatKeyResult::OpenAttachments(message_id) => {
+                debug!(message_id = %message_id, "Open attachments requested");
+            }
+            ChatKeyResult::JumpToMessage(message_id) => {
+                debug!(message_id = %message_id, "Jump to message requested");
+            }
             ChatKeyResult::Consumed => {}
         }
 
@@ -273,6 +294,35 @@ impl App {
         }
     }
 
+    async fn load_channel_messages(&mut self, channel_id: ChannelId) {
+        let messages = if let Some(ref token) = self.current_token {
+            let options = FetchMessagesOptions::default().with_limit(50);
+            match self
+                .discord_data
+                .fetch_messages(token, channel_id.as_u64(), options)
+                .await
+            {
+                Ok(messages) => {
+                    debug!(channel_id = %channel_id, count = messages.len(), "Loaded messages for channel");
+                    Some(messages)
+                }
+                Err(e) => {
+                    warn!(channel_id = %channel_id, error = %e, "Failed to load messages for channel");
+                    if let CurrentScreen::Chat(state) = &mut self.screen {
+                        state.set_message_error(e.to_string());
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let (Some(messages), CurrentScreen::Chat(state)) = (messages, &mut self.screen) {
+            state.set_messages(messages);
+        }
+    }
+
     fn transition_to_login(&mut self) {
         self.state = AppState::Login;
         self.current_token = None;
@@ -306,7 +356,7 @@ mod tests {
     use super::*;
     use crate::domain::entities::Guild;
     use crate::domain::ports::{
-        DirectMessageChannel,
+        DirectMessageChannel, FetchMessagesOptions,
         mocks::{MockAuthPort, MockTokenStorage},
     };
 
@@ -330,6 +380,15 @@ mod tests {
             &self,
             _token: &AuthToken,
         ) -> Result<Vec<DirectMessageChannel>, AuthError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_messages(
+            &self,
+            _token: &AuthToken,
+            _channel_id: u64,
+            _options: FetchMessagesOptions,
+        ) -> Result<Vec<crate::domain::entities::Message>, AuthError> {
             Ok(vec![])
         }
     }

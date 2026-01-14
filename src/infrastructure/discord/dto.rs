@@ -96,3 +96,52 @@ pub struct DmChannelResponse {
     #[serde(default)]
     pub recipients: Vec<DmRecipient>,
 }
+
+/// Discord API message author structure.
+#[derive(Debug, Deserialize)]
+pub struct MessageAuthorResponse {
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub discriminator: String,
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub bot: bool,
+}
+
+/// Discord API attachment structure.
+#[derive(Debug, Deserialize)]
+pub struct AttachmentResponse {
+    pub id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub size: u64,
+    pub url: String,
+    pub content_type: Option<String>,
+}
+
+/// Discord API message reference structure.
+#[derive(Debug, Deserialize)]
+pub struct MessageReferenceResponse {
+    pub message_id: Option<String>,
+    pub channel_id: Option<String>,
+}
+
+/// Discord API message response structure.
+#[derive(Debug, Deserialize)]
+pub struct MessageResponse {
+    pub id: String,
+    pub channel_id: String,
+    pub author: MessageAuthorResponse,
+    pub content: String,
+    pub timestamp: String,
+    pub edited_timestamp: Option<String>,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    #[serde(default)]
+    pub attachments: Vec<AttachmentResponse>,
+    pub message_reference: Option<MessageReferenceResponse>,
+    pub referenced_message: Option<Box<MessageResponse>>,
+    #[serde(default)]
+    pub pinned: bool,
+}

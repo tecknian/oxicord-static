@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::domain::entities::{AuthToken, Channel, Guild};
+use crate::domain::entities::{AuthToken, Channel, Guild, Message};
 use crate::domain::errors::AuthError;
 
 /// Represents a direct message channel with a recipient.
@@ -14,6 +14,35 @@ pub struct DirectMessageChannel {
     pub recipient_id: String,
     /// The recipient's display name.
     pub recipient_name: String,
+}
+
+/// Options for fetching messages from a channel.
+#[derive(Debug, Clone, Default)]
+pub struct FetchMessagesOptions {
+    pub limit: Option<u8>,
+    pub before: Option<u64>,
+    pub after: Option<u64>,
+    pub around: Option<u64>,
+}
+
+impl FetchMessagesOptions {
+    #[must_use]
+    pub fn with_limit(mut self, limit: u8) -> Self {
+        self.limit = Some(limit.min(100));
+        self
+    }
+
+    #[must_use]
+    pub fn before_message(mut self, message_id: u64) -> Self {
+        self.before = Some(message_id);
+        self
+    }
+
+    #[must_use]
+    pub fn after_message(mut self, message_id: u64) -> Self {
+        self.after = Some(message_id);
+        self
+    }
 }
 
 /// Port for fetching Discord data (guilds, channels, DMs, etc).
@@ -34,4 +63,12 @@ pub trait DiscordDataPort: Send + Sync {
         &self,
         token: &AuthToken,
     ) -> Result<Vec<DirectMessageChannel>, AuthError>;
+
+    /// Fetches messages from a channel.
+    async fn fetch_messages(
+        &self,
+        token: &AuthToken,
+        channel_id: u64,
+        options: FetchMessagesOptions,
+    ) -> Result<Vec<Message>, AuthError>;
 }
