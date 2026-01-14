@@ -43,10 +43,7 @@ impl MainScreen {
 
 impl Widget for &MainScreen {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(1),
-        ]);
+        let layout = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
         let [content_area, status_area] = layout.areas(area);
 
         let block = Block::default()

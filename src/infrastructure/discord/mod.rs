@@ -3,4 +3,4 @@
 mod client;
 mod dto;
 
-pub use client::DiscordAuthClient;
+pub use client::DiscordClient;

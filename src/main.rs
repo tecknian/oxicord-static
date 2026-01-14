@@ -5,7 +5,7 @@ use color_eyre::eyre::Result;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-use discord_tui::infrastructure::{AppConfig, DiscordAuthClient, KeyringTokenStorage};
+use discord_tui::infrastructure::{AppConfig, DiscordClient, KeyringTokenStorage};
 use discord_tui::presentation::App;
 
 fn init_logging(config: &AppConfig) -> Result<()> {
@@ -49,10 +49,10 @@ fn create_app() -> Result<(App, Option<String>)> {
 
     info!(version = discord_tui::VERSION, "Starting Discordo");
 
-    let auth_client = Arc::new(DiscordAuthClient::new()?);
+    let discord_client = Arc::new(DiscordClient::new()?);
     let token_storage = Arc::new(KeyringTokenStorage::new());
 
-    let app = App::new(auth_client, token_storage);
+    let app = App::new(discord_client.clone(), discord_client, token_storage);
 
     Ok((app, cli_token))
 }

@@ -18,8 +18,8 @@ pub trait AuthPort: Send + Sync {
 #[cfg(test)]
 pub mod mock {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     /// Mock authentication port for testing.
     pub struct MockAuthPort {

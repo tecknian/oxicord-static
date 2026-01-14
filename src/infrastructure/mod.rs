@@ -8,5 +8,5 @@ pub mod discord;
 pub mod storage;
 
 pub use config::{AppConfig, LogLevel};
-pub use discord::DiscordAuthClient;
+pub use discord::DiscordClient;
 pub use storage::KeyringTokenStorage;

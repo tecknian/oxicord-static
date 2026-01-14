@@ -4,26 +4,26 @@ use std::sync::Arc;
 
 use crossterm::event::{Event, KeyEvent};
 use ratatui::{DefaultTerminal, Frame};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::application::dto::{LoginRequest, TokenSource};
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
-use crate::domain::entities::User;
+use crate::domain::entities::{AuthToken, GuildId, User};
 use crate::domain::errors::AuthError;
-use crate::domain::ports::{AuthPort, TokenStoragePort};
+use crate::domain::ports::{AuthPort, DiscordDataPort, TokenStoragePort};
 use crate::presentation::events::{EventHandler, EventResult};
-use crate::presentation::ui::{LoginScreen, MainScreen};
+use crate::presentation::ui::{ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppState {
     Login,
-    Main,
+    Chat,
     Exiting,
 }
 
 enum CurrentScreen {
     Login(LoginScreen),
-    Main(MainScreen),
+    Chat(Box<ChatScreenState>),
 }
 
 /// Main application.
@@ -32,14 +32,20 @@ pub struct App {
     screen: CurrentScreen,
     login_use_case: LoginUseCase,
     resolve_token_use_case: ResolveTokenUseCase,
+    discord_data: Arc<dyn DiscordDataPort>,
     event_handler: EventHandler,
     pending_token: Option<(String, TokenSource)>,
+    current_token: Option<AuthToken>,
 }
 
 impl App {
     /// Creates new application.
     #[must_use]
-    pub fn new(auth_port: Arc<dyn AuthPort>, storage_port: Arc<dyn TokenStoragePort>) -> Self {
+    pub fn new(
+        auth_port: Arc<dyn AuthPort>,
+        discord_data: Arc<dyn DiscordDataPort>,
+        storage_port: Arc<dyn TokenStoragePort>,
+    ) -> Self {
         let login_use_case = LoginUseCase::new(auth_port, storage_port.clone());
         let resolve_token_use_case = ResolveTokenUseCase::new(storage_port);
 
@@ -48,8 +54,10 @@ impl App {
             screen: CurrentScreen::Login(LoginScreen::new()),
             login_use_case,
             resolve_token_use_case,
+            discord_data,
             event_handler: EventHandler::new(),
             pending_token: None,
+            current_token: None,
         }
     }
 
@@ -90,11 +98,14 @@ impl App {
             login_screen.set_validating();
         }
 
-        let request = LoginRequest::new(token, source);
+        let request = LoginRequest::new(token.clone(), source);
         match self.login_use_case.execute(request).await {
             Ok(response) => {
                 info!(user = %response.user.display_name(), "Auto-login successful");
-                self.transition_to_main(response.user);
+                if let Some(auth_token) = AuthToken::new(&token) {
+                    self.current_token = Some(auth_token);
+                }
+                self.transition_to_chat(response.user).await;
             }
             Err(e) => {
                 error!(error = %e, "Auto-login failed");
@@ -105,13 +116,13 @@ impl App {
         }
     }
 
-    fn render(&self, frame: &mut Frame) {
-        match &self.screen {
+    fn render(&mut self, frame: &mut Frame) {
+        match &mut self.screen {
             CurrentScreen::Login(screen) => {
-                frame.render_widget(screen, frame.area());
+                frame.render_widget(&*screen, frame.area());
             }
-            CurrentScreen::Main(screen) => {
-                frame.render_widget(screen, frame.area());
+            CurrentScreen::Chat(state) => {
+                frame.render_stateful_widget(ChatScreen::new(), frame.area(), state);
             }
         }
     }
@@ -132,17 +143,28 @@ impl App {
             return EventResult::Exit;
         }
 
-        match &mut self.screen {
+        let result = match &mut self.screen {
             CurrentScreen::Login(screen) => {
                 if screen.handle_key(key) {
                     self.handle_login_submit().await;
                 }
+                return EventResult::Continue;
             }
-            CurrentScreen::Main(_) => {
-                if EventHandler::is_quit_event(&key) {
-                    return EventResult::Exit;
-                }
+            CurrentScreen::Chat(state) => state.handle_key(key),
+        };
+
+        match result {
+            ChatKeyResult::Quit => return EventResult::Exit,
+            ChatKeyResult::Logout => {
+                self.transition_to_login();
             }
+            ChatKeyResult::CopyToClipboard(text) => {
+                debug!(text = %text, "Copy to clipboard requested");
+            }
+            ChatKeyResult::LoadGuildChannels(guild_id) => {
+                self.load_guild_channels(guild_id).await;
+            }
+            ChatKeyResult::Consumed => {}
         }
 
         EventResult::Continue
@@ -162,7 +184,7 @@ impl App {
             screen.set_validating();
         }
 
-        let mut request = LoginRequest::new(token, TokenSource::UserInput);
+        let mut request = LoginRequest::new(token.clone(), TokenSource::UserInput);
         if !persist {
             request = request.without_persistence();
         }
@@ -174,7 +196,10 @@ impl App {
                     persisted = response.token_persisted,
                     "Login successful"
                 );
-                self.transition_to_main(response.user);
+                if let Some(auth_token) = AuthToken::new(&token) {
+                    self.current_token = Some(auth_token);
+                }
+                self.transition_to_chat(response.user).await;
             }
             Err(e) => {
                 error!(error = %e, "Login failed");
@@ -183,9 +208,75 @@ impl App {
         }
     }
 
-    fn transition_to_main(&mut self, user: User) {
-        self.state = AppState::Main;
-        self.screen = CurrentScreen::Main(MainScreen::new(user));
+    async fn transition_to_chat(&mut self, user: User) {
+        self.state = AppState::Chat;
+        let mut chat_state = ChatScreenState::new(user);
+
+        if let Some(ref token) = self.current_token {
+            self.load_discord_data(&mut chat_state, token).await;
+        }
+
+        self.screen = CurrentScreen::Chat(Box::new(chat_state));
+    }
+
+    async fn load_discord_data(&self, state: &mut ChatScreenState, token: &AuthToken) {
+        let guilds_future = self.discord_data.fetch_guilds(token);
+        let dms_future = self.discord_data.fetch_dm_channels(token);
+
+        let (guilds_result, dms_result) = tokio::join!(guilds_future, dms_future);
+
+        if let Ok(dm_channels) = dms_result {
+            let dm_users: Vec<(String, String)> = dm_channels
+                .into_iter()
+                .map(|dm| (dm.channel_id, dm.recipient_name))
+                .collect();
+            state.set_dm_users(dm_users);
+            debug!(
+                count = state.guilds_tree_data().dm_users().len(),
+                "Loaded DM channels"
+            );
+        }
+
+        match guilds_result {
+            Ok(guilds) => {
+                info!(count = guilds.len(), "Loaded guilds from Discord");
+                state.set_guilds(guilds);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to load guilds from Discord");
+            }
+        }
+    }
+
+    async fn load_guild_channels(&mut self, guild_id: GuildId) {
+        let channels = if let Some(ref token) = self.current_token {
+            match self
+                .discord_data
+                .fetch_channels(token, guild_id.as_u64())
+                .await
+            {
+                Ok(channels) => {
+                    debug!(guild_id = %guild_id, count = channels.len(), "Loaded channels for guild");
+                    Some(channels)
+                }
+                Err(e) => {
+                    warn!(guild_id = %guild_id, error = %e, "Failed to load channels for guild");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let (Some(channels), CurrentScreen::Chat(state)) = (channels, &mut self.screen) {
+            state.set_channels(guild_id, channels);
+        }
+    }
+
+    fn transition_to_login(&mut self) {
+        self.state = AppState::Login;
+        self.current_token = None;
+        self.screen = CurrentScreen::Login(LoginScreen::new());
     }
 
     fn handle_login_error(&mut self, error: &AuthError) {
@@ -213,13 +304,42 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ports::mocks::{MockAuthPort, MockTokenStorage};
+    use crate::domain::entities::Guild;
+    use crate::domain::ports::{
+        DirectMessageChannel,
+        mocks::{MockAuthPort, MockTokenStorage},
+    };
+
+    struct MockDiscordData;
+
+    #[async_trait::async_trait]
+    impl DiscordDataPort for MockDiscordData {
+        async fn fetch_guilds(&self, _token: &AuthToken) -> Result<Vec<Guild>, AuthError> {
+            Ok(vec![Guild::new(1_u64, "Test Guild")])
+        }
+
+        async fn fetch_channels(
+            &self,
+            _token: &AuthToken,
+            _guild_id: u64,
+        ) -> Result<Vec<crate::domain::entities::Channel>, AuthError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_dm_channels(
+            &self,
+            _token: &AuthToken,
+        ) -> Result<Vec<DirectMessageChannel>, AuthError> {
+            Ok(vec![])
+        }
+    }
 
     #[test]
     fn test_app_creation() {
         let auth = Arc::new(MockAuthPort::new(true));
+        let data = Arc::new(MockDiscordData);
         let storage = Arc::new(MockTokenStorage::new());
-        let app = App::new(auth, storage);
+        let app = App::new(auth, data, storage);
 
         assert_eq!(app.state, AppState::Login);
     }
