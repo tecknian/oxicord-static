@@ -167,6 +167,13 @@ impl App {
             ChatKeyResult::LoadChannelMessages(channel_id) => {
                 self.load_channel_messages(channel_id).await;
             }
+            ChatKeyResult::LoadDmMessages {
+                channel_id,
+                recipient_name,
+            } => {
+                debug!(channel_id = %channel_id, recipient = %recipient_name, "Loading DM messages");
+                self.load_channel_messages(channel_id).await;
+            }
             ChatKeyResult::ReplyToMessage {
                 message_id,
                 mention,

@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::domain::entities::{Channel, ChannelId, Guild, GuildId, Message, User};
+use crate::domain::entities::{Channel, ChannelId, ChannelKind, Guild, GuildId, Message, User};
 use crate::presentation::widgets::{
     GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, MessagePane, MessagePaneAction,
     MessagePaneData, MessagePaneState,
@@ -61,6 +61,33 @@ impl ChatFocus {
     }
 }
 
+/// Represents a stored DM channel for lookup.
+#[derive(Debug, Clone)]
+pub struct DmChannelInfo {
+    channel_id: ChannelId,
+    recipient_name: String,
+}
+
+impl DmChannelInfo {
+    #[must_use]
+    pub fn new(channel_id: ChannelId, recipient_name: String) -> Self {
+        Self {
+            channel_id,
+            recipient_name,
+        }
+    }
+
+    #[must_use]
+    pub fn channel_id(&self) -> ChannelId {
+        self.channel_id
+    }
+
+    #[must_use]
+    pub fn recipient_name(&self) -> &str {
+        &self.recipient_name
+    }
+}
+
 /// State for the chat screen.
 pub struct ChatScreenState {
     user: User,
@@ -72,6 +99,7 @@ pub struct ChatScreenState {
     message_pane_data: MessagePaneData,
     selected_guild: Option<GuildId>,
     selected_channel: Option<Channel>,
+    dm_channels: std::collections::HashMap<String, DmChannelInfo>,
 }
 
 impl ChatScreenState {
@@ -91,6 +119,7 @@ impl ChatScreenState {
             message_pane_data: MessagePaneData::new(),
             selected_guild: None,
             selected_channel: None,
+            dm_channels: std::collections::HashMap::new(),
         }
     }
 
@@ -128,8 +157,15 @@ impl ChatScreenState {
         self.guilds_tree_data.set_channels(guild_id, channels);
     }
 
-    /// Sets the DM users list.
+    /// Sets the DM users list and stores channel info for lookup.
     pub fn set_dm_users(&mut self, users: Vec<(String, String)>) {
+        self.dm_channels.clear();
+        for (channel_id_str, recipient_name) in &users {
+            if let Ok(channel_id) = channel_id_str.parse::<u64>() {
+                let info = DmChannelInfo::new(ChannelId(channel_id), recipient_name.clone());
+                self.dm_channels.insert(channel_id_str.clone(), info);
+            }
+        }
         self.guilds_tree_data.set_dm_users(users);
     }
 
@@ -236,7 +272,11 @@ impl ChatScreenState {
                         return result;
                     }
                 }
-                GuildsTreeAction::SelectDirectMessage(_user_id) => {}
+                GuildsTreeAction::SelectDirectMessage(dm_channel_id) => {
+                    if let Some(result) = self.on_dm_selected(&dm_channel_id) {
+                        return result;
+                    }
+                }
                 GuildsTreeAction::YankId(id) => {
                     return ChatKeyResult::CopyToClipboard(id);
                 }
@@ -317,6 +357,26 @@ impl ChatScreenState {
         None
     }
 
+    fn on_dm_selected(&mut self, dm_channel_id: &str) -> Option<ChatKeyResult> {
+        if let Some(dm_info) = self.dm_channels.get(dm_channel_id) {
+            let channel_id = dm_info.channel_id();
+            let recipient_name = dm_info.recipient_name().to_string();
+
+            let dm_channel = Channel::new(channel_id, recipient_name.clone(), ChannelKind::Dm);
+            self.selected_channel = Some(dm_channel);
+            self.selected_guild = None;
+
+            let display_name = format!("@{recipient_name}");
+            self.message_pane_data.set_channel(channel_id, display_name);
+
+            return Some(ChatKeyResult::LoadDmMessages {
+                channel_id,
+                recipient_name,
+            });
+        }
+        None
+    }
+
     /// Returns a reference to the guilds tree data.
     #[must_use]
     pub fn guilds_tree_data(&self) -> &GuildsTreeData {
@@ -386,6 +446,13 @@ pub enum ChatKeyResult {
     LoadGuildChannels(GuildId),
     /// Request to load messages for a channel.
     LoadChannelMessages(ChannelId),
+    /// Request to load messages for a DM channel.
+    LoadDmMessages {
+        /// The DM channel ID.
+        channel_id: ChannelId,
+        /// The recipient's display name.
+        recipient_name: String,
+    },
     /// Request to reply to a message.
     ReplyToMessage {
         /// The message ID to reply to.
