@@ -15,6 +15,7 @@ use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 use crate::domain::entities::{ChannelId, Message, MessageId};
 
 const SCROLL_AMOUNT: u16 = 3;
+const SCROLLBAR_MARGIN: u16 = 2;
 const CHANNEL_NAME_PREFIX: &str = "[ ";
 const CHANNEL_NAME_SUFFIX: &str = " ]";
 const DM_CHANNEL_PREFIX: &str = "[ ";
@@ -624,7 +625,9 @@ impl<'a> MessagePane<'a> {
         width: u16,
     ) -> u16 {
         let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
-        let content_width = (width).saturating_sub(indent_width);
+        let content_width = (width)
+            .saturating_sub(indent_width)
+            .saturating_sub(SCROLLBAR_MARGIN);
 
         let text = markdown_service.render(message.content(), Some(self.data));
 
@@ -660,23 +663,15 @@ impl<'a> MessagePane<'a> {
         height
     }
 
-    fn render_message(
+    fn render_reply(
         &self,
         message: &Message,
-        y_offset: u16,
         width: u16,
+        base_style: Style,
         is_selected: bool,
+        current_y: &mut u16,
         scroll_view: &mut ScrollView,
-    ) -> u16 {
-        let mut current_y = y_offset;
-        let base_style = if is_selected {
-            self.style.selected_style
-        } else {
-            Style::default()
-        };
-
-        let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
-
+    ) {
         if message.is_reply()
             && let Some(referenced) = message.referenced()
         {
@@ -692,15 +687,28 @@ impl<'a> MessagePane<'a> {
                 self.style.reply_style
             };
 
-            let reply_line = Line::from(vec![
-                indent_span.clone(),
-                Span::styled(reply_text, reply_style),
-            ]);
-            let reply_para = Paragraph::new(reply_line).style(base_style);
-            scroll_view.render_widget(reply_para, Rect::new(0, current_y, width, 1));
-            current_y += 1;
+            let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
+            let reply_line = Line::from(vec![indent_span, Span::styled(reply_text, reply_style)]);
+            let reply_block = Block::default()
+                .padding(Padding::new(0, SCROLLBAR_MARGIN, 0, 0))
+                .style(base_style);
+            let reply_para = Paragraph::new(reply_line)
+                .block(reply_block)
+                .style(base_style);
+            scroll_view.render_widget(reply_para, Rect::new(0, *current_y, width, 1));
+            *current_y += 1;
         }
+    }
 
+    fn render_header(
+        &self,
+        message: &Message,
+        width: u16,
+        base_style: Style,
+        is_selected: bool,
+        current_y: &mut u16,
+        scroll_view: &mut ScrollView,
+    ) {
         let (timestamp_style, edited_style) = if is_selected {
             (
                 Style::default().fg(Color::White),
@@ -735,9 +743,73 @@ impl<'a> MessagePane<'a> {
         }
 
         let header_line = Line::from(header_spans);
-        let header_para = Paragraph::new(header_line).style(base_style);
-        scroll_view.render_widget(header_para, Rect::new(0, current_y, width, 1));
-        current_y += 1;
+        let header_block = Block::default()
+            .padding(Padding::new(0, SCROLLBAR_MARGIN, 0, 0))
+            .style(base_style);
+        let header_para = Paragraph::new(header_line)
+            .block(header_block)
+            .style(base_style);
+        scroll_view.render_widget(header_para, Rect::new(0, *current_y, width, 1));
+        *current_y += 1;
+    }
+
+    fn render_attachments(
+        &self,
+        message: &Message,
+        width: u16,
+        base_style: Style,
+        current_y: &mut u16,
+        scroll_view: &mut ScrollView,
+    ) {
+        let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
+        for attachment in message.attachments() {
+            let attachment_text = format!("📎 {}", attachment.filename());
+            let attachment_line = Line::from(vec![
+                indent_span.clone(),
+                Span::styled(attachment_text, self.style.attachment_style),
+            ]);
+            let attachment_block = Block::default()
+                .padding(Padding::new(0, SCROLLBAR_MARGIN, 0, 0))
+                .style(base_style);
+            let attachment_para = Paragraph::new(attachment_line)
+                .block(attachment_block)
+                .style(base_style);
+            scroll_view.render_widget(attachment_para, Rect::new(0, *current_y, width, 1));
+            *current_y += 1;
+        }
+    }
+
+    fn render_message(
+        &self,
+        message: &Message,
+        y_offset: u16,
+        width: u16,
+        is_selected: bool,
+        scroll_view: &mut ScrollView,
+    ) -> u16 {
+        let mut current_y = y_offset;
+        let base_style = if is_selected {
+            self.style.selected_style
+        } else {
+            Style::default()
+        };
+
+        self.render_reply(
+            message,
+            width,
+            base_style,
+            is_selected,
+            &mut current_y,
+            scroll_view,
+        );
+        self.render_header(
+            message,
+            width,
+            base_style,
+            is_selected,
+            &mut current_y,
+            scroll_view,
+        );
 
         let content_style = if message.kind().is_system() {
             self.style.system_message_style
@@ -758,7 +830,9 @@ impl<'a> MessagePane<'a> {
             .render(message.content(), Some(self.data));
         let rendered_text = text;
 
-        let block = Block::default().padding(Padding::new(indent_width, 0, 0, 0));
+        let block = Block::default()
+            .padding(Padding::new(indent_width, SCROLLBAR_MARGIN, 0, 0))
+            .style(paragraph_style);
         let para = Paragraph::new(rendered_text)
             .block(block)
             .style(paragraph_style)
@@ -771,16 +845,7 @@ impl<'a> MessagePane<'a> {
 
         current_y += content_height;
 
-        for attachment in message.attachments() {
-            let attachment_text = format!("📎 {}", attachment.filename());
-            let attachment_line = Line::from(vec![
-                indent_span.clone(),
-                Span::styled(attachment_text, self.style.attachment_style),
-            ]);
-            let attachment_para = Paragraph::new(attachment_line).style(base_style);
-            scroll_view.render_widget(attachment_para, Rect::new(0, current_y, width, 1));
-            current_y += 1;
-        }
+        self.render_attachments(message, width, base_style, &mut current_y, scroll_view);
 
         current_y - y_offset
     }
@@ -873,8 +938,15 @@ impl StatefulWidget for MessagePane<'_> {
         state.update_dimensions(content_height, inner_area.height);
         state.last_width = content_width;
 
+        let vertical_scroll = if content_height <= inner_area.height {
+            ScrollbarVisibility::Never
+        } else {
+            ScrollbarVisibility::Always
+        };
+
         let mut scroll_view = ScrollView::new(Size::new(content_width, content_height))
-            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never)
+            .vertical_scrollbar_visibility(vertical_scroll);
 
         let mut y_offset: u16 = 0;
         let mut selected_position = None;
