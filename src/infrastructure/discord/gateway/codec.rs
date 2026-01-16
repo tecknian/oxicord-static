@@ -15,7 +15,7 @@ use super::payloads::{
 
 use crate::domain::entities::{
     Attachment, ChannelId, GuildId, Message, MessageAuthor, MessageId, MessageKind,
-    MessageReference,
+    MessageReference, User,
 };
 
 const INITIAL_BUFFER_SIZE: usize = 32 * 1024;
@@ -613,6 +613,15 @@ impl EventParser {
             message = message.with_referenced(ref_message);
         }
 
+        if !payload.mentions.is_empty() {
+            let mentions: Vec<User> = payload
+                .mentions
+                .into_iter()
+                .map(|m| User::new(m.id, m.username, m.discriminator, m.avatar, m.bot))
+                .collect();
+            message = message.with_mentions(mentions);
+        }
+
         Ok(message)
     }
 
@@ -650,5 +659,63 @@ mod tests {
         codec.compressed_buffer.extend_from_slice(&[1, 2, 3]);
         codec.reset();
         assert!(codec.compressed_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_parse_typing_start() {
+        let data = serde_json::json!({
+            "channel_id": "123456789",
+            "guild_id": "987654321",
+            "user_id": "111222333",
+            "timestamp": 1234567890,
+            "member": {
+                "user": {
+                    "username": "TestUser"
+                },
+                "nick": null
+            }
+        });
+        let result = EventParser::parse_dispatch("TYPING_START", Some(data)).unwrap();
+        match result {
+            DispatchEvent::TypingStart {
+                channel_id,
+                guild_id,
+                user_id,
+                username,
+                ..
+            } => {
+                assert_eq!(channel_id, ChannelId(123456789));
+                assert_eq!(guild_id, Some(GuildId(987654321)));
+                assert_eq!(user_id, "111222333");
+                assert_eq!(username, Some("TestUser".to_string()));
+            }
+            _ => panic!("Expected TypingStart event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_typing_start_dm() {
+        // DM typing events don't have member field
+        let data = serde_json::json!({
+            "channel_id": "123456789",
+            "user_id": "111222333",
+            "timestamp": 1234567890
+        });
+        let result = EventParser::parse_dispatch("TYPING_START", Some(data)).unwrap();
+        match result {
+            DispatchEvent::TypingStart {
+                channel_id,
+                guild_id,
+                user_id,
+                username,
+                ..
+            } => {
+                assert_eq!(channel_id, ChannelId(123456789));
+                assert!(guild_id.is_none());
+                assert_eq!(user_id, "111222333");
+                assert!(username.is_none());
+            }
+            _ => panic!("Expected TypingStart event"),
+        }
     }
 }

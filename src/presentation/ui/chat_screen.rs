@@ -391,7 +391,10 @@ impl ChatScreenState {
             if let Some(topic) = topic {
                 self.message_pane_data.set_channel_topic(Some(topic));
             }
-            return Some(ChatKeyResult::LoadChannelMessages(channel_id));
+            return Some(ChatKeyResult::LoadChannelMessages {
+                channel_id,
+                guild_id: self.selected_guild,
+            });
         }
         None
     }
@@ -461,9 +464,10 @@ impl ChatScreenState {
         }
 
         let width = self.message_pane_state.last_width();
+        let pane = MessagePane::new(&self.message_pane_data, &self.markdown_service);
         let added_height: u16 = new_messages
             .iter()
-            .map(|m| MessagePane::calculate_message_height(m, width, &self.markdown_service))
+            .map(|m| pane.calculate_message_height(m, width, &self.markdown_service))
             .sum();
 
         let added_count = self.message_pane_data.prepend_messages(new_messages);
@@ -522,7 +526,7 @@ impl ChatScreenState {
             .messages()
             .iter()
             .find(|m| m.id() == message_id)
-            .map(|m| m.author().display_name().to_string())
+            .map(|m| m.author().display_name().clone())
     }
 
     pub fn message_input_parts_mut(&mut self) -> &mut MessageInputState<'static> {
@@ -559,7 +563,10 @@ pub enum ChatKeyResult {
     Logout,
     CopyToClipboard(String),
     LoadGuildChannels(GuildId),
-    LoadChannelMessages(ChannelId),
+    LoadChannelMessages {
+        channel_id: ChannelId,
+        guild_id: Option<GuildId>,
+    },
     LoadDmMessages {
         channel_id: ChannelId,
         recipient_name: String,

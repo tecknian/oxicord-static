@@ -9,7 +9,8 @@ pub mod storage;
 
 pub use config::{AppConfig, LogLevel};
 pub use discord::{
-    DiscordClient, DispatchEvent, GatewayClient, GatewayClientConfig, GatewayEventKind,
-    GatewayIntents, PresenceStatus, TypingIndicatorManager, TypingIndicatorState, TypingUser,
+    DiscordClient, DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand,
+    GatewayEventKind, GatewayIntents, PresenceStatus, TypingIndicatorManager, TypingIndicatorState,
+    TypingUser,
 };
 pub use storage::KeyringTokenStorage;

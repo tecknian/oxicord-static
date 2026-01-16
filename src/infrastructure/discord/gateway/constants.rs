@@ -16,9 +16,9 @@ pub const IDENTIFY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub const TYPING_INDICATOR_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub const CLIENT_PROPERTIES_OS: &str = "linux";
-pub const CLIENT_PROPERTIES_BROWSER: &str = "discordo";
-pub const CLIENT_PROPERTIES_DEVICE: &str = "discordo";
+pub const CLIENT_PROPERTIES_OS: &str = "Linux";
+pub const CLIENT_PROPERTIES_BROWSER: &str = "Discord Client";
+pub const CLIENT_PROPERTIES_DEVICE: &str = "";
 
 pub const LARGE_THRESHOLD: u16 = 250;
 
@@ -36,6 +36,9 @@ pub enum GatewayOpcode {
     InvalidSession = 9,
     Hello = 10,
     HeartbeatAck = 11,
+    /// Opcode 14: Subscribe to guild events (typing, presence, etc.)
+    /// Required for user accounts to receive TYPING_START events.
+    LazyRequest = 14,
 }
 
 impl GatewayOpcode {
@@ -53,6 +56,7 @@ impl GatewayOpcode {
             9 => Some(Self::InvalidSession),
             10 => Some(Self::Hello),
             11 => Some(Self::HeartbeatAck),
+            14 => Some(Self::LazyRequest),
             _ => None,
         }
     }

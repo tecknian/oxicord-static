@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::codec::{EventParser, GatewayCodec};
 use super::constants::{
@@ -387,6 +387,8 @@ impl GatewayConnectionHandler {
         match opcode {
             Some(GatewayOpcode::Dispatch) => {
                 if let Some(event_type) = message.t.as_deref() {
+                    // Log raw dispatch events at trace level for debugging
+                    trace!(event = event_type, "Raw dispatch received");
                     self.handle_dispatch(event_type, message.d);
                 }
             }

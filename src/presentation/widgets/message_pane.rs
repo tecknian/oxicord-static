@@ -1,6 +1,6 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::application::services::markdown_service::MarkdownService;
+use crate::application::services::markdown_service::{MarkdownService, MentionResolver};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -58,11 +58,12 @@ pub struct MessagePaneData {
     error_message: Option<String>,
     is_dm: bool,
     typing_indicator: Option<String>,
+    authors: HashMap<String, String>,
 }
 
 impl MessagePaneData {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             channel_id: None,
             channel_name: None,
@@ -74,6 +75,7 @@ impl MessagePaneData {
             error_message: None,
             is_dm: false,
             typing_indicator: None,
+            authors: HashMap::new(),
         }
     }
 
@@ -99,6 +101,14 @@ impl MessagePaneData {
     }
 
     pub fn set_messages(&mut self, messages: Vec<Message>) {
+        for msg in &messages {
+            self.authors
+                .insert(msg.author().id().to_string(), msg.author().display_name());
+            for mention in msg.mentions() {
+                self.authors
+                    .insert(mention.id().to_string(), mention.display_name());
+            }
+        }
         self.messages = messages.into();
         self.loading_state = LoadingState::Loaded;
         self.error_message = None;
@@ -108,6 +118,14 @@ impl MessagePaneData {
         if self.channel_id == Some(message.channel_id())
             && !self.messages.iter().any(|m| m.id() == message.id())
         {
+            self.authors.insert(
+                message.author().id().to_string(),
+                message.author().display_name(),
+            );
+            for mention in message.mentions() {
+                self.authors
+                    .insert(mention.id().to_string(), mention.display_name());
+            }
             self.messages.push_back(message);
         }
     }
@@ -121,6 +139,12 @@ impl MessagePaneData {
         let mut added = 0;
         for msg in new_messages.into_iter().rev() {
             if !existing_ids.contains(&msg.id()) {
+                self.authors
+                    .insert(msg.author().id().to_string(), msg.author().display_name());
+                for mention in msg.mentions() {
+                    self.authors
+                        .insert(mention.id().to_string(), mention.display_name());
+                }
                 self.messages.push_front(msg);
                 added += 1;
             }
@@ -154,6 +178,7 @@ impl MessagePaneData {
         self.error_message = None;
         self.is_dm = false;
         self.typing_indicator = None;
+        self.authors.clear();
     }
 
     pub fn set_typing_indicator(&mut self, indicator: Option<String>) {
@@ -230,6 +255,16 @@ impl MessagePaneData {
                 format!("{CHANNEL_NAME_PREFIX}{display_name}{CHANNEL_NAME_SUFFIX}")
             }
         })
+    }
+
+    pub fn get_author_name(&self, user_id: &str) -> Option<&str> {
+        self.authors.get(user_id).map(String::as_str)
+    }
+}
+
+impl MentionResolver for MessagePaneData {
+    fn resolve(&self, user_id: &str) -> Option<String> {
+        self.authors.get(user_id).cloned()
     }
 }
 
@@ -578,12 +613,12 @@ impl<'a> MessagePane<'a> {
         self.data
             .messages()
             .iter()
-            .map(|m| Self::calculate_message_height(m, width, self.markdown_service))
+            .map(|m| self.calculate_message_height(m, width, self.markdown_service))
             .sum()
     }
 
-    #[must_use]
     fn calculate_content_lines_count(
+        &self,
         markdown_service: &MarkdownService,
         message: &Message,
         width: u16,
@@ -591,7 +626,7 @@ impl<'a> MessagePane<'a> {
         let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
         let content_width = (width).saturating_sub(indent_width);
 
-        let text = markdown_service.render(message.content());
+        let text = markdown_service.render(message.content(), Some(self.data));
 
         let mut content_lines = 0;
         for line in text.lines {
@@ -605,11 +640,12 @@ impl<'a> MessagePane<'a> {
     #[allow(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn calculate_message_height(
+        &self,
         message: &Message,
         width: u16,
         markdown_service: &MarkdownService,
     ) -> u16 {
-        let content_lines = Self::calculate_content_lines_count(markdown_service, message, width);
+        let content_lines = self.calculate_content_lines_count(markdown_service, message, width);
 
         let mut height = 1 + content_lines;
 
@@ -649,9 +685,16 @@ impl<'a> MessagePane<'a> {
                 referenced.author().display_name(),
                 truncate_string(referenced.content(), 50)
             );
+
+            let reply_style = if is_selected {
+                self.style.reply_style.fg(Color::White)
+            } else {
+                self.style.reply_style
+            };
+
             let reply_line = Line::from(vec![
                 indent_span.clone(),
-                Span::styled(reply_text, self.style.reply_style),
+                Span::styled(reply_text, reply_style),
             ]);
             let reply_para = Paragraph::new(reply_line).style(base_style);
             scroll_view.render_widget(reply_para, Rect::new(0, current_y, width, 1));
@@ -710,7 +753,9 @@ impl<'a> MessagePane<'a> {
 
         let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
 
-        let text = self.markdown_service.render(message.content());
+        let text = self
+            .markdown_service
+            .render(message.content(), Some(self.data));
         let rendered_text = text;
 
         let block = Block::default().padding(Padding::new(indent_width, 0, 0, 0));
@@ -720,7 +765,7 @@ impl<'a> MessagePane<'a> {
             .wrap(ratatui::widgets::Wrap { trim: false });
 
         let content_height =
-            Self::calculate_content_lines_count(self.markdown_service, message, width);
+            self.calculate_content_lines_count(self.markdown_service, message, width);
 
         scroll_view.render_widget(para, Rect::new(0, current_y, width, content_height));
 
@@ -769,7 +814,7 @@ impl<'a> MessagePane<'a> {
         if let Some(typing) = self.data.typing_indicator() {
             block = block.title_bottom(
                 Line::from(Span::styled(
-                    typing,
+                    format!(" {typing} "),
                     Style::default()
                         .fg(Color::DarkGray)
                         .add_modifier(Modifier::ITALIC),
@@ -1007,5 +1052,22 @@ mod tests {
             dm_data.formatted_channel_title(),
             Some("[ USERNAME ]".to_string())
         );
+    }
+
+    #[test]
+    fn test_typing_indicator() {
+        let mut data = MessagePaneData::new();
+        data.set_channel(ChannelId(100), "general".to_string());
+
+        assert!(data.typing_indicator().is_none());
+        assert!(!data.has_typing_indicator());
+
+        data.set_typing_indicator(Some("Alice is typing...".to_string()));
+        assert_eq!(data.typing_indicator(), Some("Alice is typing..."));
+        assert!(data.has_typing_indicator());
+
+        data.set_typing_indicator(None);
+        assert!(data.typing_indicator().is_none());
+        assert!(!data.has_typing_indicator());
     }
 }

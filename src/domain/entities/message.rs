@@ -277,8 +277,12 @@ impl MessageAuthor {
     }
 
     #[must_use]
-    pub fn display_name(&self) -> &str {
-        &self.username
+    pub fn display_name(&self) -> String {
+        if self.discriminator == "0" {
+            self.username.clone()
+        } else {
+            format!("{}#{}", self.username, self.discriminator)
+        }
     }
 }
 
@@ -309,6 +313,8 @@ pub struct Message {
     reference: Option<MessageReference>,
     referenced: Option<Box<Self>>,
     pinned: bool,
+    #[serde(default)]
+    mentions: Vec<User>,
 }
 
 #[allow(missing_docs)]
@@ -333,6 +339,7 @@ impl Message {
             reference: None,
             referenced: None,
             pinned: false,
+            mentions: Vec::new(),
         }
     }
 
@@ -369,6 +376,12 @@ impl Message {
     #[must_use]
     pub const fn with_pinned(mut self, pinned: bool) -> Self {
         self.pinned = pinned;
+        self
+    }
+
+    #[must_use]
+    pub fn with_mentions(mut self, mentions: Vec<User>) -> Self {
+        self.mentions = mentions;
         self
     }
 
@@ -450,6 +463,11 @@ impl Message {
     #[must_use]
     pub fn formatted_date(&self) -> String {
         self.timestamp.format("%Y-%m-%d").to_string()
+    }
+
+    #[must_use]
+    pub fn mentions(&self) -> &[User] {
+        &self.mentions
     }
 }
 

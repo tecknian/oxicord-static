@@ -4,7 +4,19 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::entities::{ChannelId, GuildId, Message, MessageId};
 
+/// Commands that can be sent to the gateway.
 #[derive(Debug, Clone)]
+pub enum GatewayCommand {
+    /// Subscribe to a guild channel to receive typing events.
+    /// Required for user accounts to receive TYPING_START.
+    SubscribeChannel {
+        guild_id: String,
+        channel_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum GatewayEventKind {
     Connected {
         session_id: String,
@@ -21,6 +33,7 @@ pub enum GatewayEventKind {
     HeartbeatAck {
         latency_ms: u64,
     },
+    #[allow(clippy::large_enum_variant)]
     Dispatch(DispatchEvent),
     Error {
         message: String,

@@ -145,6 +145,19 @@ pub struct MessageResponse {
     pub referenced_message: Option<Box<Self>>,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub mentions: Vec<MentionUserResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MentionUserResponse {
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub discriminator: String,
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub bot: bool,
 }
 
 #[derive(Debug, serde::Serialize)]

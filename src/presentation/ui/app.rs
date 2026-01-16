@@ -13,14 +13,14 @@ use tracing::{debug, error, info, warn};
 use crate::application::dto::{LoginRequest, TokenSource};
 use crate::application::services::markdown_service::MarkdownService;
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
-use crate::domain::entities::{AuthToken, ChannelId, GuildId, MessageId, User};
+use crate::domain::entities::{AuthToken, ChannelId, GuildId, MessageId, User, UserCache};
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
     AuthPort, DiscordDataPort, FetchMessagesOptions, SendMessageRequest, TokenStoragePort,
 };
 use crate::infrastructure::discord::{
-    DispatchEvent, GatewayClient, GatewayClientConfig, GatewayEventKind, GatewayIntents,
-    TypingIndicatorManager,
+    DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
+    GatewayIntents, TypingIndicatorManager,
 };
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen};
@@ -63,6 +63,8 @@ pub struct App {
     last_typing_cleanup: Instant,
     last_typing_sent: Option<(ChannelId, Instant)>,
     markdown_service: Arc<MarkdownService>,
+    user_cache: UserCache,
+    current_user_id: Option<String>,
 }
 
 impl App {
@@ -93,6 +95,8 @@ impl App {
             last_typing_cleanup: Instant::now(),
             last_typing_sent: None,
             markdown_service,
+            user_cache: UserCache::new(),
+            current_user_id: None,
         }
     }
 
@@ -238,7 +242,14 @@ impl App {
             ChatKeyResult::LoadGuildChannels(guild_id) => {
                 self.load_guild_channels(guild_id).await;
             }
-            ChatKeyResult::LoadChannelMessages(channel_id) => {
+            ChatKeyResult::LoadChannelMessages {
+                channel_id,
+                guild_id,
+            } => {
+                // Subscribe to channel for typing events (required for user accounts)
+                if let Some(guild_id) = guild_id {
+                    self.subscribe_to_channel(guild_id, channel_id);
+                }
                 self.load_channel_messages(channel_id).await;
             }
             ChatKeyResult::LoadDmMessages {
@@ -329,6 +340,7 @@ impl App {
 
     async fn transition_to_chat(&mut self, user: User) {
         self.state = AppState::Chat;
+        self.current_user_id = Some(user.id().to_string());
         let mut chat_state = ChatScreenState::new(user, self.markdown_service.clone());
 
         let token_clone = self.current_token.clone();
@@ -506,6 +518,7 @@ impl App {
                 user_id, username, ..
             } => {
                 debug!(user_id = %user_id, username = %username, "User updated");
+                self.user_cache.update_username(&user_id, &username);
             }
             DispatchEvent::Ready {
                 user_id, guilds, ..
@@ -518,14 +531,33 @@ impl App {
 
     fn handle_message_create(&mut self, message: crate::domain::entities::Message) {
         let channel_id = message.channel_id();
+        let user_id = message.author().id().to_string();
         debug!(message_id = %message.id(), channel_id = %channel_id, "New message received");
+
+        self.cache_users_from_message(&message);
 
         if let CurrentScreen::Chat(ref mut state) = self.screen {
             state.add_message(message);
         }
 
-        self.typing_manager.remove_typing(channel_id, "");
+        self.typing_manager.remove_typing(channel_id, &user_id);
         self.update_typing_indicator(channel_id);
+    }
+
+    fn cache_users_from_message(&self, message: &crate::domain::entities::Message) {
+        let author = message.author();
+        self.user_cache
+            .insert(crate::domain::entities::CachedUser::new(
+                author.id(),
+                author.username(),
+                author.discriminator(),
+                author.avatar().map(String::from),
+                author.is_bot(),
+            ));
+
+        for mention in message.mentions() {
+            self.user_cache.insert_from_user(mention);
+        }
     }
 
     fn handle_message_update(&mut self, message: crate::domain::entities::Message) {
@@ -541,7 +573,29 @@ impl App {
         user_id: String,
         username: Option<String>,
     ) {
-        let display_name = username.unwrap_or_else(|| user_id.clone());
+        // Ignore self-typing events
+        if self.current_user_id.as_deref() == Some(user_id.as_str()) {
+            return;
+        }
+
+        if let Some(ref name) = username {
+            self.user_cache.insert_basic(&user_id, name);
+        }
+
+        let display_name = username
+            .or_else(|| self.user_cache.get_display_name(&user_id))
+            .or_else(|| {
+                if let CurrentScreen::Chat(ref state) = self.screen {
+                    state
+                        .message_pane_data()
+                        .get_author_name(&user_id)
+                        .map(String::from)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| user_id.clone());
+
         debug!(user = %display_name, channel_id = %channel_id, "User started typing");
 
         self.typing_manager
@@ -550,11 +604,23 @@ impl App {
     }
 
     fn update_typing_indicator(&mut self, channel_id: ChannelId) {
-        if let CurrentScreen::Chat(ref mut state) = self.screen
-            && state.message_pane_data().channel_id() == Some(channel_id)
-        {
-            let indicator = self.typing_manager.format_typing_indicator(channel_id);
-            state.set_typing_indicator(indicator);
+        if let CurrentScreen::Chat(ref mut state) = self.screen {
+            let current_channel = state.message_pane_data().channel_id();
+            debug!(
+                typing_channel = %channel_id,
+                current_channel = ?current_channel,
+                "Updating typing indicator"
+            );
+
+            if current_channel == Some(channel_id) {
+                let indicator = self.typing_manager.format_typing_indicator(channel_id);
+                debug!(indicator = ?indicator, "Setting typing indicator");
+                state.set_typing_indicator(indicator);
+            } else {
+                debug!("Channel mismatch, not updating indicator");
+            }
+        } else {
+            debug!("Not in chat screen, skipping typing indicator update");
         }
     }
 
@@ -570,13 +636,19 @@ impl App {
         }
     }
 
-    async fn load_discord_data(&self, state: &mut ChatScreenState, token: &AuthToken) {
+    async fn load_discord_data(&mut self, state: &mut ChatScreenState, token: &AuthToken) {
         let guilds_future = self.discord_data.fetch_guilds(token);
         let dms_future = self.discord_data.fetch_dm_channels(token);
 
         let (guilds_result, dms_result) = tokio::join!(guilds_future, dms_future);
 
         if let Ok(dm_channels) = dms_result {
+            // Cache DM recipient user IDs -> names for typing indicator resolution
+            for dm in &dm_channels {
+                self.user_cache
+                    .insert_basic(&dm.recipient_id, &dm.recipient_name);
+            }
+
             let dm_users: Vec<(String, String)> = dm_channels
                 .into_iter()
                 .map(|dm| (dm.channel_id, dm.recipient_name))
@@ -650,9 +722,31 @@ impl App {
             None
         };
 
+        if let Some(ref messages_list) = messages {
+            for message in messages_list {
+                self.cache_users_from_message(message);
+            }
+        }
+
         if let (Some(messages), CurrentScreen::Chat(state)) = (messages, &mut self.screen) {
             state.set_messages(messages);
             state.set_typing_indicator(None);
+        }
+    }
+
+    /// Send a subscription to the gateway to receive typing events for a channel.
+    /// This is required for user accounts to receive TYPING_START events.
+    fn subscribe_to_channel(&mut self, guild_id: GuildId, channel_id: ChannelId) {
+        if let Some(ref gateway_client) = self.gateway_client {
+            debug!(
+                guild_id = %guild_id,
+                channel_id = %channel_id,
+                "Subscribing to channel for typing events"
+            );
+            gateway_client.send_command(GatewayCommand::SubscribeChannel {
+                guild_id: guild_id.as_u64().to_string(),
+                channel_id: channel_id.as_u64().to_string(),
+            });
         }
     }
 
@@ -684,6 +778,9 @@ impl App {
     fn handle_action(&mut self, action: Action) {
         match action {
             Action::HistoryLoaded(messages) => {
+                for message in &messages {
+                    self.cache_users_from_message(message);
+                }
                 if let CurrentScreen::Chat(ref mut state) = self.screen {
                     state.prepend_messages(messages);
                 }
@@ -698,7 +795,9 @@ impl App {
         self.disconnect_gateway();
         self.state = AppState::Login;
         self.current_token = None;
+        self.current_user_id = None;
         self.typing_manager = TypingIndicatorManager::new();
+        self.user_cache.clear();
         self.screen = CurrentScreen::Login(LoginScreen::new());
     }
 

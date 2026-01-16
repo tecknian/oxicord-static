@@ -6,6 +6,10 @@ use std::sync::Arc;
 
 use super::syntax_highlighting::{SyntaxHighlighter, SyntectHighlighter};
 
+pub trait MentionResolver: Send + Sync {
+    fn resolve(&self, user_id: &str) -> Option<String>;
+}
+
 #[derive(Debug, Clone)]
 enum MdNode {
     Text(String),
@@ -14,6 +18,7 @@ enum MdNode {
     Strike(Vec<MdNode>),
     CodeInline(String),
     CodeBlock { lang: Option<String>, code: String },
+    Mention(String),
 }
 
 pub struct MarkdownService {
@@ -34,17 +39,27 @@ impl MarkdownService {
     }
 
     #[must_use]
-    pub fn render(&self, content: &str) -> Text<'static> {
+    pub fn render(&self, content: &str, resolver: Option<&dyn MentionResolver>) -> Text<'static> {
         let nodes = parse_markdown(content);
-        self.render_nodes(&nodes)
+        self.render_nodes(&nodes, resolver)
     }
 
-    fn render_nodes(&self, nodes: &[MdNode]) -> Text<'static> {
+    fn render_nodes(
+        &self,
+        nodes: &[MdNode],
+        resolver: Option<&dyn MentionResolver>,
+    ) -> Text<'static> {
         let mut lines = Vec::new();
         let mut current_line_spans = Vec::new();
 
         for node in nodes {
-            self.render_node(node, &mut lines, &mut current_line_spans, Style::default());
+            self.render_node(
+                node,
+                &mut lines,
+                &mut current_line_spans,
+                Style::default(),
+                resolver,
+            );
         }
 
         if !current_line_spans.is_empty() {
@@ -64,6 +79,7 @@ impl MarkdownService {
         lines: &mut Vec<Line<'static>>,
         current_line: &mut Vec<Span<'static>>,
         style: Style,
+        resolver: Option<&dyn MentionResolver>,
     ) {
         match node {
             MdNode::Text(text) => {
@@ -80,19 +96,19 @@ impl MarkdownService {
             MdNode::Bold(children) => {
                 let new_style = style.add_modifier(Modifier::BOLD);
                 for child in children {
-                    self.render_node(child, lines, current_line, new_style);
+                    self.render_node(child, lines, current_line, new_style, resolver);
                 }
             }
             MdNode::Italic(children) => {
                 let new_style = style.add_modifier(Modifier::ITALIC);
                 for child in children {
-                    self.render_node(child, lines, current_line, new_style);
+                    self.render_node(child, lines, current_line, new_style, resolver);
                 }
             }
             MdNode::Strike(children) => {
                 let new_style = style.add_modifier(Modifier::CROSSED_OUT);
                 for child in children {
-                    self.render_node(child, lines, current_line, new_style);
+                    self.render_node(child, lines, current_line, new_style, resolver);
                 }
             }
             MdNode::CodeInline(code) => {
@@ -128,6 +144,13 @@ impl MarkdownService {
                     lines.push(Line::from(block_line));
                 }
             }
+            MdNode::Mention(user_id) => {
+                let name = resolver
+                    .and_then(|r| r.resolve(user_id))
+                    .map_or_else(|| format!("<@{user_id}>"), |n| format!("@{n}"));
+                let mention_style = style.fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                current_line.push(Span::styled(name, mention_style));
+            }
         }
     }
 }
@@ -152,6 +175,7 @@ fn parse_inline(input: &str) -> Vec<MdNode> {
             '`' => handle_backtick(input, idx, &mut start, &mut nodes, &mut chars),
             '*' => handle_asterisk(input, idx, &mut start, &mut nodes, &mut chars),
             '~' => handle_tilde(input, idx, &mut start, &mut nodes, &mut chars),
+            '<' => handle_bracket(input, idx, &mut start, &mut nodes, &mut chars),
             _ => {}
         }
     }
@@ -288,12 +312,89 @@ fn handle_tilde(
     }
 }
 
+fn handle_bracket(
+    input: &str,
+    idx: usize,
+    start: &mut usize,
+    nodes: &mut Vec<MdNode>,
+    chars: &mut Peekable<CharIndices>,
+) {
+    let remaining = &input[idx..];
+    if remaining.starts_with("<@") {
+        let mut end_idx = 0;
+        let mut found = false;
+
+        for (i, c) in remaining.char_indices() {
+            if c == '>' {
+                end_idx = i;
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            let content = &remaining[2..end_idx];
+            let id_part = content.strip_prefix('!').unwrap_or(content);
+
+            if id_part.chars().all(char::is_numeric) && !id_part.is_empty() {
+                if idx > *start {
+                    nodes.push(MdNode::Text(input[*start..idx].to_string()));
+                }
+
+                nodes.push(MdNode::Mention(id_part.to_string()));
+
+                let end_total = idx + end_idx + 1;
+                advance_chars(chars, end_total);
+                *start = end_total;
+            }
+        }
+    }
+}
+
 fn advance_chars(chars: &mut Peekable<CharIndices>, target: usize) {
     while let Some((curr_idx, _)) = chars.peek() {
         if *curr_idx < target {
             chars.next();
         } else {
             break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mention() {
+        let input = "<@826391343525789726> cool name";
+        let nodes = parse_markdown(input);
+
+        assert_eq!(nodes.len(), 2);
+
+        if let MdNode::Mention(id) = &nodes[0] {
+            assert_eq!(id, "826391343525789726");
+        } else {
+            panic!("Expected first node to be Mention, got {:?}", nodes[0]);
+        }
+
+        if let MdNode::Text(text) = &nodes[1] {
+            assert_eq!(text, " cool name");
+        } else {
+            panic!("Expected second node to be Text, got {:?}", nodes[1]);
+        }
+    }
+
+    #[test]
+    fn test_parse_mention_with_bang() {
+        let input = "<@!826391343525789726>";
+        let nodes = parse_markdown(input);
+
+        assert_eq!(nodes.len(), 1);
+        if let MdNode::Mention(id) = &nodes[0] {
+            assert_eq!(id, "826391343525789726");
+        } else {
+            panic!("Expected Mention node");
         }
     }
 }

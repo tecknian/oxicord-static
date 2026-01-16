@@ -15,8 +15,8 @@ pub use connection::GatewayConnection;
 pub use constants::{GatewayIntent, GatewayIntents, GatewayOpcode};
 pub use error::{GatewayCloseCode, GatewayError, GatewayResult};
 pub use events::{
-    Activity, ActivityKind, DispatchEvent, GatewayEventKind, PresenceStatus, ReactionEmoji,
-    TypingUser, UnavailableGuild,
+    Activity, ActivityKind, DispatchEvent, GatewayCommand, GatewayEventKind, PresenceStatus,
+    ReactionEmoji, TypingUser, UnavailableGuild,
 };
 pub use session::SessionInfo;
 pub use state::{ConnectionState, GatewayState};

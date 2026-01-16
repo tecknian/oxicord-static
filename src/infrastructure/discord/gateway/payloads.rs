@@ -65,6 +65,33 @@ impl GatewayPayload {
             t: None,
         }
     }
+
+    /// Creates a LazyRequest (Opcode 14) payload to subscribe to a guild channel.
+    /// This is required for user accounts to receive TYPING_START events.
+    #[must_use]
+    pub fn lazy_request(guild_id: &str, channel_id: &str) -> Self {
+        use serde_json::json;
+
+        // Discord expects channels as: { "channel_id": [[0, 99]] }
+        // The [[0, 99]] is a member list range - we request the first 100 members
+        // This also subscribes us to typing events for this channel
+        let data = json!({
+            "guild_id": guild_id,
+            "typing": true,
+            "activities": true,
+            "threads": true,
+            "channels": {
+                channel_id: [[0, 99]]
+            }
+        });
+
+        Self {
+            op: 14,
+            d: data,
+            s: None,
+            t: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +170,19 @@ pub struct MessagePayload {
     pub referenced_message: Option<Box<Self>>,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub mentions: Vec<MentionUserPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MentionUserPayload {
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub discriminator: String,
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub bot: bool,
 }
 
 #[derive(Debug, Deserialize)]

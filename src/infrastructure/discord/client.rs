@@ -146,6 +146,15 @@ impl DiscordClient {
             message = message.with_attachments(attachments);
         }
 
+        if !response.mentions.is_empty() {
+            let mentions: Vec<User> = response
+                .mentions
+                .into_iter()
+                .map(|m| User::new(m.id, m.username, m.discriminator, m.avatar, m.bot))
+                .collect();
+            message = message.with_mentions(mentions);
+        }
+
         if let Some(edited) = response.edited_timestamp
             && let Ok(edited_ts) = edited.parse::<DateTime<Utc>>()
         {

@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::connection::{GatewayConnectionHandler, WebSocketConnection};
 use super::constants::{
@@ -13,8 +13,9 @@ use super::constants::{
     RECONNECT_JITTER_MAX,
 };
 use super::error::{GatewayCloseCode, GatewayError, GatewayResult};
-use super::events::GatewayEventKind;
+use super::events::{GatewayCommand, GatewayEventKind};
 use super::heartbeat::HeartbeatManager;
+use super::payloads::GatewayPayload;
 use super::session::SessionInfo;
 
 pub struct GatewayClientConfig {
@@ -61,6 +62,7 @@ impl GatewayClientConfig {
 pub struct GatewayClient {
     config: GatewayClientConfig,
     running: Arc<AtomicBool>,
+    command_tx: Option<mpsc::UnboundedSender<GatewayCommand>>,
 }
 
 impl GatewayClient {
@@ -69,6 +71,7 @@ impl GatewayClient {
         Self {
             config,
             running: Arc::new(AtomicBool::new(false)),
+            command_tx: None,
         }
     }
 
@@ -89,6 +92,9 @@ impl GatewayClient {
         }
 
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+
+        self.command_tx = Some(command_tx);
 
         let config = GatewayLoopConfig {
             token: token.to_string(),
@@ -104,6 +110,7 @@ impl GatewayClient {
             let result = std::panic::AssertUnwindSafe(run_gateway_loop(
                 config,
                 event_tx.clone(),
+                command_rx,
                 running.clone(),
             ));
 
@@ -128,6 +135,13 @@ impl GatewayClient {
         Ok(event_rx)
     }
 
+    /// Send a command to the gateway (e.g., subscribe to channel typing events).
+    pub fn send_command(&self, command: GatewayCommand) {
+        if let Some(ref tx) = self.command_tx {
+            let _ = tx.send(command);
+        }
+    }
+
     pub fn disconnect(&self) {
         self.running.store(false, Ordering::SeqCst);
     }
@@ -149,6 +163,7 @@ struct GatewayLoopConfig {
 async fn run_gateway_loop(
     config: GatewayLoopConfig,
     event_tx: mpsc::UnboundedSender<GatewayEventKind>,
+    mut command_rx: mpsc::UnboundedReceiver<GatewayCommand>,
     running: Arc<AtomicBool>,
 ) {
     let mut reconnect_attempts: u32 = 0;
@@ -169,6 +184,7 @@ async fn run_gateway_loop(
         let result = run_single_connection(
             handler,
             &payload_tx,
+            &mut command_rx,
             &running,
             &mut session,
             &mut reconnect_attempts,
@@ -252,6 +268,7 @@ enum ConnectionResult {
 async fn run_single_connection(
     mut handler: GatewayConnectionHandler,
     payload_tx: &mpsc::Sender<String>,
+    command_rx: &mut mpsc::UnboundedReceiver<GatewayCommand>,
     running: &Arc<AtomicBool>,
     session: &mut SessionInfo,
     reconnect_attempts: &mut u32,
@@ -265,7 +282,8 @@ async fn run_single_connection(
                 let heartbeat = HeartbeatManager::new(interval);
                 let _heartbeat_handle = heartbeat.start(payload_tx.clone());
 
-                let run_result = run_connection_loop(&mut handler, running).await;
+                let run_result =
+                    run_connection_loop(&mut handler, payload_tx, command_rx, running).await;
 
                 heartbeat.stop();
 
@@ -284,13 +302,39 @@ async fn run_single_connection(
 
 async fn run_connection_loop(
     handler: &mut GatewayConnectionHandler,
+    payload_tx: &mpsc::Sender<String>,
+    command_rx: &mut mpsc::UnboundedReceiver<GatewayCommand>,
     running: &Arc<AtomicBool>,
 ) -> GatewayResult<()> {
+    use tokio::select;
+
     while running.load(Ordering::SeqCst) && handler.state().connection().is_connected() {
-        handler.run().await?;
+        select! {
+            result = handler.run() => {
+                result?;
+            }
+            Some(command) = command_rx.recv() => {
+                process_gateway_command(command, payload_tx).await;
+            }
+        }
     }
 
     Ok(())
+}
+
+async fn process_gateway_command(command: GatewayCommand, payload_tx: &mpsc::Sender<String>) {
+    match command {
+        GatewayCommand::SubscribeChannel {
+            guild_id,
+            channel_id,
+        } => {
+            let payload = GatewayPayload::lazy_request(&guild_id, &channel_id);
+            if let Ok(json) = serde_json::to_string(&payload) {
+                debug!(guild_id = %guild_id, channel_id = %channel_id, "Sending channel subscription (LazyRequest)");
+                let _ = payload_tx.send(json).await;
+            }
+        }
+    }
 }
 
 fn handle_connection_error(
