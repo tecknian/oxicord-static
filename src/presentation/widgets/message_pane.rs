@@ -15,7 +15,7 @@ const CHANNEL_NAME_PREFIX: &str = "[ ";
 const CHANNEL_NAME_SUFFIX: &str = " ]";
 const DM_CHANNEL_PREFIX: &str = "[ ";
 const TIMESTAMP_WIDTH: usize = 6;
-const CONTENT_INDENT_WIDTH: usize = 6;
+const CONTENT_INDENT: usize = 6;
 
 #[derive(Debug, Clone)]
 pub enum MessagePaneAction {
@@ -493,7 +493,7 @@ impl Default for MessagePaneStyle {
                 .add_modifier(Modifier::ITALIC),
             selected_style: Style::default().bg(Color::DarkGray),
             reply_style: Style::default()
-                .fg(Color::Gray)
+                .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
             attachment_style: Style::default().fg(Color::Blue),
             system_message_style: Style::default()
@@ -537,11 +537,11 @@ impl<'a> MessagePane<'a> {
 
     #[allow(clippy::cast_possible_truncation)]
     fn calculate_message_height(message: &Message, width: u16) -> u16 {
-        let indent_width = u16::try_from(CONTENT_INDENT_WIDTH).unwrap_or(0);
+        let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
         let content_width = (width).saturating_sub(indent_width);
         let content_lines = wrap_text(message.content(), content_width as usize).len() as u16;
 
-        let mut height = 1 + content_lines; // Header + Content
+        let mut height = 1 + content_lines;
 
         if message.is_reply() && message.referenced().is_some() {
             height += 1;
@@ -569,15 +569,20 @@ impl<'a> MessagePane<'a> {
             Style::default()
         };
 
+        let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
+
         if message.is_reply()
             && let Some(referenced) = message.referenced()
         {
             let reply_text = format!(
-                "↳ {} {}",
+                "↱ Replying to {}: {}",
                 referenced.author().display_name(),
                 truncate_string(referenced.content(), 50)
             );
-            let reply_line = Line::from(Span::styled(reply_text, self.style.reply_style));
+            let reply_line = Line::from(vec![
+                indent_span.clone(),
+                Span::styled(reply_text, self.style.reply_style),
+            ]);
             let reply_para = Paragraph::new(reply_line).style(base_style);
             scroll_view.render_widget(reply_para, Rect::new(0, current_y, width, 1));
             current_y += 1;
@@ -627,10 +632,9 @@ impl<'a> MessagePane<'a> {
             self.style.content_style
         };
 
-        let indent_width = u16::try_from(CONTENT_INDENT_WIDTH).unwrap_or(0);
+        let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
         let content_width = (width).saturating_sub(indent_width);
         let content_lines = wrap_text(message.content(), content_width as usize);
-        let indent_span = Span::raw(" ".repeat(CONTENT_INDENT_WIDTH));
 
         for line_text in content_lines {
             let content_line = Line::from(vec![
