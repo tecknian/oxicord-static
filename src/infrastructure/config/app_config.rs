@@ -5,7 +5,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-const APP_NAME: &str = "discordo";
+const APP_NAME: &str = "oxicord";
 const APP_QUALIFIER: &str = "com";
 const APP_ORGANIZATION: &str = "ayn2op";
 
@@ -55,14 +55,14 @@ impl std::fmt::Display for LogLevel {
 /// Application configuration from CLI.
 #[derive(Debug, Parser)]
 #[command(
-    name = "discordo",
+    name = "oxicord",
     version,
     about = "A lightweight, secure Discord terminal client",
     long_about = None
 )]
 pub struct AppConfig {
     /// Discord authentication token.
-    #[arg(short, long, env = "DISCORDO_TOKEN", hide_env_values = true)]
+    #[arg(short, long, env = "OXICORD_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
 
     /// Configuration file path.
@@ -100,7 +100,7 @@ impl AppConfig {
     #[must_use]
     pub fn default_log_path() -> Option<PathBuf> {
         ProjectDirs::from(APP_QUALIFIER, APP_ORGANIZATION, APP_NAME)
-            .map(|dirs| dirs.data_dir().join("discordo.log"))
+            .map(|dirs| dirs.data_dir().join("oxicord.log"))
     }
 
     /// Returns effective config path.

@@ -636,7 +636,7 @@ mod tests {
             Guild::new(1_u64, "Nix/NixOS (unofficial)"),
             Guild::new(2_u64, "r/Unixporn"),
             Guild::new(3_u64, "RespriteApp"),
-            Guild::new(4_u64, "Discordo"),
+            Guild::new(4_u64, "Oxicord"),
             Guild::new(5_u64, "Noctalia"),
             Guild::new(6_u64, "L I N U X's TEST SERVER"),
             Guild::new(7_u64, "OpenCode"),

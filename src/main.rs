@@ -5,8 +5,8 @@ use color_eyre::eyre::Result;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-use discord_tui::infrastructure::{AppConfig, DiscordClient, KeyringTokenStorage};
-use discord_tui::presentation::App;
+use oxicord::infrastructure::{AppConfig, DiscordClient, KeyringTokenStorage};
+use oxicord::presentation::App;
 
 fn init_logging(config: &AppConfig) -> Result<()> {
     let filter = EnvFilter::try_from_default_env()
@@ -47,7 +47,7 @@ fn create_app() -> Result<(App, Option<String>)> {
 
     init_logging(&config)?;
 
-    info!(version = discord_tui::VERSION, "Starting Discordo");
+    info!(version = oxicord::VERSION, "Starting Oxicord");
 
     let discord_client = Arc::new(DiscordClient::new()?);
     let token_storage = Arc::new(KeyringTokenStorage::new());

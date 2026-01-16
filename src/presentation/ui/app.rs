@@ -735,7 +735,7 @@ impl App {
     }
 
     /// Send a subscription to the gateway to receive typing events for a channel.
-    /// This is required for user accounts to receive TYPING_START events.
+    /// This is required for user accounts to receive `TYPING_START` events.
     fn subscribe_to_channel(&mut self, guild_id: GuildId, channel_id: ChannelId) {
         if let Some(ref gateway_client) = self.gateway_client {
             debug!(
@@ -932,7 +932,7 @@ impl App {
 
         // Create temp file with .md extension
         let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join(format!("discordo_message_{}.md", std::process::id()));
+        let temp_path = temp_dir.join(format!("oxicord_message_{}.md", std::process::id()));
 
         // Write current content to temp file
         {

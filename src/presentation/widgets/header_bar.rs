@@ -192,9 +192,9 @@ mod tests {
     #[test]
     fn test_header_bar_creation() {
         let header =
-            HeaderBar::new("discordo", "0.0.1").connection_status(ConnectionStatus::Connected);
+            HeaderBar::new("oxicord", "0.0.1").connection_status(ConnectionStatus::Connected);
 
-        assert_eq!(header.app_name, "discordo");
+        assert_eq!(header.app_name, "oxicord");
         assert_eq!(header.version, "0.0.1");
     }
 }

@@ -598,7 +598,7 @@ mod tests {
             {"id": "1234567890123456789", "name": "Nix/NixOS (unofficial)", "icon": "abc123", "owner": true, "permissions": "36953089", "features": ["COMMUNITY"]},
             {"id": "2234567890123456789", "name": "r/Unixporn", "icon": null, "owner": false, "permissions": "36953089", "features": []},
             {"id": "3234567890123456789", "name": "RespriteApp", "icon": "def456", "owner": false, "permissions": "36953089", "features": ["ANIMATED_ICON"]},
-            {"id": "4234567890123456789", "name": "Discordo", "icon": null, "owner": true, "permissions": "36953089", "features": []},
+            {"id": "4234567890123456789", "name": "Oxicord", "icon": null, "owner": true, "permissions": "36953089", "features": []},
             {"id": "5234567890123456789", "name": "Noctalia", "icon": "ghi789", "owner": false, "permissions": "36953089", "features": []},
             {"id": "6234567890123456789", "name": "L I N U X's TEST SERVER", "icon": null, "owner": true, "permissions": "36953089", "features": []},
             {"id": "7234567890123456789", "name": "OpenCode", "icon": "jkl012", "owner": false, "permissions": "36953089", "features": []},
@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(guilds.len(), 8, "All 8 guilds should be converted");
         assert_eq!(guilds[0].name(), "Nix/NixOS (unofficial)");
         assert_eq!(guilds[2].name(), "RespriteApp");
-        assert_eq!(guilds[3].name(), "Discordo");
+        assert_eq!(guilds[3].name(), "Oxicord");
         assert_eq!(guilds[4].name(), "Noctalia");
     }
 

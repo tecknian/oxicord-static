@@ -8,7 +8,7 @@ use crate::domain::entities::{ChannelId, GuildId, Message, MessageId};
 #[derive(Debug, Clone)]
 pub enum GatewayCommand {
     /// Subscribe to a guild channel to receive typing events.
-    /// Required for user accounts to receive TYPING_START.
+    /// Required for user accounts to receive `TYPING_START`.
     SubscribeChannel {
         guild_id: String,
         channel_id: String,

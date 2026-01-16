@@ -1,4 +1,4 @@
-//! Discordo - A lightweight Discord terminal client.
+//! Oxicord - A lightweight Discord terminal client.
 //!
 //! This crate provides a terminal-based Discord client with clean architecture,
 //! implementing authentication, token management, and a TUI interface.
@@ -21,4 +21,4 @@ pub mod presentation;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Application name.
-pub const NAME: &str = "discordo";
+pub const NAME: &str = "oxicord";

@@ -154,7 +154,7 @@ impl LoginScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
-            .title(" Discordo Login ");
+            .title(" Oxicord Login ");
 
         let inner = block.inner(content_area);
         block.render(content_area, buf);

@@ -49,7 +49,7 @@ impl Widget for &MainScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
-            .title(" Discordo ");
+            .title(" Oxicord ");
 
         let inner = block.inner(content_area);
         block.render(content_area, buf);
@@ -70,7 +70,7 @@ impl Widget for &MainScreen {
 
         let lines = vec![
             Line::from(vec![Span::styled(
-                "Welcome to Discordo!",
+                "Welcome to Oxicord!",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),

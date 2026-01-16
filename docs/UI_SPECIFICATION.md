@@ -1,8 +1,8 @@
-# Discordo UI Specification for Ratatui Implementation
+# Oxicord UI Specification for Ratatui Implementation
 
 ## Executive Summary
 
-This document provides a comprehensive specification for implementing the Discordo terminal user interface using ratatui (Rust). It is based on a detailed analysis of the existing Go/tview implementation and follows clean architecture principles.
+This document provides a comprehensive specification for implementing the Oxicord terminal user interface using ratatui (Rust). It is based on a detailed analysis of the existing Go/tview implementation and follows clean architecture principles.
 
 ---
 
@@ -254,7 +254,7 @@ enum QrLoginState {
 |                                                                                |
 |                                                                                |
 |                       +-----------------------------------------+              |
-|                       |            Discordo Login              |              |
+|                       |            Oxicord Login              |              |
 |                       +-----------------------------------------+              |
 |                       |                                         |              |
 |                       |  Email                                  |              |
@@ -315,7 +315,7 @@ enum QrLoginState {
 |                                                                                |
 |                                                                                |
 |                       +-----------------------------------------+              |
-|                       |           Discordo Login               |              |
+|                       |           Oxicord Login               |              |
 |                       +-----------------------------------------+              |
 |                       |                                         |              |
 |                       | Enter your Discord token to login       |              |
@@ -1025,7 +1025,7 @@ mod tests {
 ## Appendix A: Configuration Schema
 
 ```toml
-# Discordo Configuration (config.toml)
+# Oxicord Configuration (config.toml)
 
 auto_focus = true
 mouse = true
@@ -1118,5 +1118,5 @@ textwrap = "0.16"        # For message wrapping
 ---
 
 _Document Version: 1.0_
-_Generated from Discordo Go implementation analysis_
+_Generated from Oxicord Go implementation analysis_
 _Target: ratatui 0.29+ with async runtime_

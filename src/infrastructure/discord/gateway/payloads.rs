@@ -66,8 +66,8 @@ impl GatewayPayload {
         }
     }
 
-    /// Creates a LazyRequest (Opcode 14) payload to subscribe to a guild channel.
-    /// This is required for user accounts to receive TYPING_START events.
+    /// Creates a `LazyRequest` (Opcode 14) payload to subscribe to a guild channel.
+    /// This is required for user accounts to receive `TYPING_START` events.
     #[must_use]
     pub fn lazy_request(guild_id: &str, channel_id: &str) -> Self {
         use serde_json::json;

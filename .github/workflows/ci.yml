@@ -29,14 +29,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
         with:
-          name: discordo_${{ runner.os }}_${{ runner.arch }}
+          name: oxicord_${{ runner.os }}_${{ runner.arch }}
           path: |
-            discordo
-            discordo.exe
+            oxicord
+            oxicord.exe
 
       - name: Send repository dispatch
         if: ${{ runner.os == 'Windows' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          gh api --method POST -H "Accept: application/vnd.github+json" -f "event_type=discordo-ci-completed" /repos/vvirtues/bucket/dispatches
+          gh api --method POST -H "Accept: application/vnd.github+json" -f "event_type=oxicord-ci-completed" /repos/vvirtues/bucket/dispatches

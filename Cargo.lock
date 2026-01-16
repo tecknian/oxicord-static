@@ -581,39 +581,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "discord-tui"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "chrono",
- "clap",
- "color-eyre",
- "crossterm 0.28.1",
- "directories",
- "dotenvy",
- "flate2",
- "futures-util",
- "keyring",
- "mockall",
- "ratatui 0.30.0",
- "reqwest",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tokio-test",
- "tokio-tungstenite",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tui-scrollview",
- "tui-textarea",
- "tui-tree-widget",
-]
-
-[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1588,6 +1555,39 @@ name = "owo-colors"
 version = "4.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c6901729fa79e91a0913333229e9ca5dc725089d1c363b2f4b4760709dc4a52"
+
+[[package]]
+name = "oxicord"
+version = "0.1.5"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "crossterm 0.28.1",
+ "directories",
+ "dotenvy",
+ "flate2",
+ "futures-util",
+ "keyring",
+ "mockall",
+ "ratatui 0.30.0",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tokio-tungstenite",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tui-scrollview",
+ "tui-textarea",
+ "tui-tree-widget",
+]
 
 [[package]]
 name = "parking_lot"

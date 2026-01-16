@@ -1,11 +1,11 @@
 [package]
-name = "discord-tui"
-version = "0.0.1"
+name = "oxicord"
+version = "0.1.5"
 edition = "2024"
 authors = ["linuxmobile"]
 description = "A lightweight, secure Discord terminal client"
 license = "MIT"
-repository = "https://github.com/linuxmobile/discordo"
+repository = "https://github.com/linuxmobile/oxicord"
 keywords = ["discord", "tui", "terminal", "client"]
 categories = ["command-line-utilities"]
 

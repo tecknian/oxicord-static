@@ -8,7 +8,7 @@ use crate::domain::entities::AuthToken;
 use crate::domain::errors::AuthError;
 use crate::domain::ports::TokenStoragePort;
 
-const KEYRING_SERVICE: &str = "discordo";
+const KEYRING_SERVICE: &str = "oxicord";
 const KEYRING_USER: &str = "token";
 
 /// System keyring token storage adapter.
@@ -114,7 +114,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires system keyring"]
     async fn test_store_and_retrieve_token() {
-        let storage = KeyringTokenStorage::with_names("discordo-test", "test-token");
+        let storage = KeyringTokenStorage::with_names("oxicord-test", "test-token");
         let token = AuthToken::new_unchecked(
             "MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.XXXXXX.YYYYYYYYYYYYYYYYYYYYYYYYYYYY",
         );
