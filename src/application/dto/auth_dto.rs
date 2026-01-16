@@ -18,7 +18,7 @@ pub enum TokenSource {
 impl TokenSource {
     /// Returns human-readable description.
     #[must_use]
-    pub fn description(&self) -> &'static str {
+    pub const fn description(&self) -> &'static str {
         match self {
             Self::CommandLine => "command-line argument",
             Self::Environment => "environment variable",
@@ -48,9 +48,9 @@ pub struct LoginRequest {
 impl LoginRequest {
     /// Creates new login request.
     #[must_use]
-    pub fn new(token: impl Into<String>, source: TokenSource) -> Self {
+    pub const fn new(token: String, source: TokenSource) -> Self {
         Self {
-            token: token.into(),
+            token,
             source,
             persist_token: true,
         }
@@ -58,7 +58,7 @@ impl LoginRequest {
 
     /// Disables token persistence.
     #[must_use]
-    pub fn without_persistence(mut self) -> Self {
+    pub const fn without_persistence(mut self) -> Self {
         self.persist_token = false;
         self
     }
@@ -78,7 +78,7 @@ pub struct LoginResponse {
 impl LoginResponse {
     /// Creates new login response.
     #[must_use]
-    pub fn new(user: User, token_source: TokenSource, token_persisted: bool) -> Self {
+    pub const fn new(user: User, token_source: TokenSource, token_persisted: bool) -> Self {
         Self {
             user,
             token_source,

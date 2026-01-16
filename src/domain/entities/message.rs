@@ -10,7 +10,7 @@ pub struct MessageId(pub u64);
 impl MessageId {
     /// Returns the underlying u64 value.
     #[must_use]
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         self.0
     }
 }
@@ -113,13 +113,13 @@ impl From<u8> for MessageKind {
 impl MessageKind {
     /// Returns true if this is a regular user message.
     #[must_use]
-    pub fn is_regular(self) -> bool {
+    pub const fn is_regular(self) -> bool {
         matches!(self, Self::Default | Self::Reply)
     }
 
     /// Returns true if this is a system message.
     #[must_use]
-    pub fn is_system(self) -> bool {
+    pub const fn is_system(self) -> bool {
         !self.is_regular()
     }
 }
@@ -170,7 +170,7 @@ impl Attachment {
     }
 
     #[must_use]
-    pub fn size(&self) -> u64 {
+    pub const fn size(&self) -> u64 {
         self.size
     }
 
@@ -203,7 +203,7 @@ pub struct MessageReference {
 #[allow(missing_docs)]
 impl MessageReference {
     #[must_use]
-    pub fn new(message_id: Option<MessageId>, channel_id: Option<ChannelId>) -> Self {
+    pub const fn new(message_id: Option<MessageId>, channel_id: Option<ChannelId>) -> Self {
         Self {
             message_id,
             channel_id,
@@ -211,12 +211,12 @@ impl MessageReference {
     }
 
     #[must_use]
-    pub fn message_id(&self) -> Option<MessageId> {
+    pub const fn message_id(&self) -> Option<MessageId> {
         self.message_id
     }
 
     #[must_use]
-    pub fn channel_id(&self) -> Option<ChannelId> {
+    pub const fn channel_id(&self) -> Option<ChannelId> {
         self.channel_id
     }
 }
@@ -272,7 +272,7 @@ impl MessageAuthor {
     }
 
     #[must_use]
-    pub fn is_bot(&self) -> bool {
+    pub const fn is_bot(&self) -> bool {
         self.bot
     }
 
@@ -307,7 +307,7 @@ pub struct Message {
     kind: MessageKind,
     attachments: Vec<Attachment>,
     reference: Option<MessageReference>,
-    referenced: Option<Box<Message>>,
+    referenced: Option<Box<Self>>,
     pinned: bool,
 }
 
@@ -337,7 +337,7 @@ impl Message {
     }
 
     #[must_use]
-    pub fn with_kind(mut self, kind: MessageKind) -> Self {
+    pub const fn with_kind(mut self, kind: MessageKind) -> Self {
         self.kind = kind;
         self
     }
@@ -349,41 +349,41 @@ impl Message {
     }
 
     #[must_use]
-    pub fn with_reference(mut self, reference: MessageReference) -> Self {
+    pub const fn with_reference(mut self, reference: MessageReference) -> Self {
         self.reference = Some(reference);
         self
     }
 
     #[must_use]
-    pub fn with_referenced(mut self, message: Message) -> Self {
+    pub fn with_referenced(mut self, message: Self) -> Self {
         self.referenced = Some(Box::new(message));
         self
     }
 
     #[must_use]
-    pub fn with_edited_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
+    pub const fn with_edited_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.edited_timestamp = Some(timestamp);
         self
     }
 
     #[must_use]
-    pub fn with_pinned(mut self, pinned: bool) -> Self {
+    pub const fn with_pinned(mut self, pinned: bool) -> Self {
         self.pinned = pinned;
         self
     }
 
     #[must_use]
-    pub fn id(&self) -> MessageId {
+    pub const fn id(&self) -> MessageId {
         self.id
     }
 
     #[must_use]
-    pub fn channel_id(&self) -> ChannelId {
+    pub const fn channel_id(&self) -> ChannelId {
         self.channel_id
     }
 
     #[must_use]
-    pub fn author(&self) -> &MessageAuthor {
+    pub const fn author(&self) -> &MessageAuthor {
         &self.author
     }
 
@@ -393,17 +393,17 @@ impl Message {
     }
 
     #[must_use]
-    pub fn timestamp(&self) -> DateTime<Utc> {
+    pub const fn timestamp(&self) -> DateTime<Utc> {
         self.timestamp
     }
 
     #[must_use]
-    pub fn edited_timestamp(&self) -> Option<DateTime<Utc>> {
+    pub const fn edited_timestamp(&self) -> Option<DateTime<Utc>> {
         self.edited_timestamp
     }
 
     #[must_use]
-    pub fn kind(&self) -> MessageKind {
+    pub const fn kind(&self) -> MessageKind {
         self.kind
     }
 
@@ -413,22 +413,22 @@ impl Message {
     }
 
     #[must_use]
-    pub fn reference(&self) -> Option<&MessageReference> {
+    pub const fn reference(&self) -> Option<&MessageReference> {
         self.reference.as_ref()
     }
 
     #[must_use]
-    pub fn referenced(&self) -> Option<&Message> {
+    pub fn referenced(&self) -> Option<&Self> {
         self.referenced.as_deref()
     }
 
     #[must_use]
-    pub fn is_edited(&self) -> bool {
+    pub const fn is_edited(&self) -> bool {
         self.edited_timestamp.is_some()
     }
 
     #[must_use]
-    pub fn is_pinned(&self) -> bool {
+    pub const fn is_pinned(&self) -> bool {
         self.pinned
     }
 
@@ -438,7 +438,7 @@ impl Message {
     }
 
     #[must_use]
-    pub fn has_attachments(&self) -> bool {
+    pub const fn has_attachments(&self) -> bool {
         !self.attachments.is_empty()
     }
 
@@ -465,7 +465,7 @@ mod tests {
     fn test_message_creation() {
         let author = create_test_author();
         let timestamp = Utc::now();
-        let message = Message::new(1_u64, 100_u64, author.clone(), "Hello, world!", timestamp);
+        let message = Message::new(1_u64, 100_u64, author, "Hello, world!", timestamp);
 
         assert_eq!(message.id().as_u64(), 1);
         assert_eq!(message.channel_id().as_u64(), 100);

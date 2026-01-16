@@ -18,7 +18,7 @@ pub enum ConnectionStatus {
 
 impl ConnectionStatus {
     #[must_use]
-    pub fn display_text(self) -> &'static str {
+    pub const fn display_text(self) -> &'static str {
         match self {
             Self::Disconnected => "DISCONNECTED",
             Self::Connecting => "CONNECTING",
@@ -29,7 +29,7 @@ impl ConnectionStatus {
     }
 
     #[must_use]
-    pub fn indicator(self) -> &'static str {
+    pub const fn indicator(self) -> &'static str {
         match self {
             Self::Connected => "●",
             Self::Connecting | Self::Reconnecting => "◐",
@@ -38,7 +38,7 @@ impl ConnectionStatus {
     }
 
     #[must_use]
-    pub fn color(self) -> Color {
+    pub const fn color(self) -> Color {
         match self {
             Self::Connected => Color::Green,
             Self::Connecting | Self::Reconnecting => Color::Yellow,
@@ -95,18 +95,18 @@ impl<'a> HeaderBar<'a> {
     }
 
     #[must_use]
-    pub fn connection_status(mut self, status: ConnectionStatus) -> Self {
+    pub const fn connection_status(mut self, status: ConnectionStatus) -> Self {
         self.connection_status = status;
         self
     }
 
     #[must_use]
-    pub fn style(mut self, style: HeaderBarStyle) -> Self {
+    pub const fn style(mut self, style: HeaderBarStyle) -> Self {
         self.style = style;
         self
     }
 
-    fn status_style(&self) -> Style {
+    const fn status_style(&self) -> Style {
         match self.connection_status {
             ConnectionStatus::Connected => self.style.status_connected,
             ConnectionStatus::Connecting | ConnectionStatus::Reconnecting => {

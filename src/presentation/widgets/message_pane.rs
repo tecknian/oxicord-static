@@ -10,11 +10,12 @@ use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use crate::domain::entities::{ChannelId, Message, MessageId};
 
-const MESSAGE_CONTENT_PADDING: u16 = 2;
 const SCROLL_AMOUNT: u16 = 3;
-const CHANNEL_NAME_PREFIX: &str = "[";
-const CHANNEL_NAME_SUFFIX: &str = "]";
-const DM_CHANNEL_PREFIX: &str = "[";
+const CHANNEL_NAME_PREFIX: &str = "[ ";
+const CHANNEL_NAME_SUFFIX: &str = " ]";
+const DM_CHANNEL_PREFIX: &str = "[ ";
+const TIMESTAMP_WIDTH: usize = 6;
+const CONTENT_INDENT_WIDTH: usize = 6;
 
 #[derive(Debug, Clone)]
 pub enum MessagePaneAction {
@@ -51,11 +52,12 @@ pub struct MessagePaneData {
     loading_state: LoadingState,
     error_message: Option<String>,
     is_dm: bool,
+    typing_indicator: Option<String>,
 }
 
 impl MessagePaneData {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             channel_id: None,
             channel_name: None,
@@ -66,6 +68,7 @@ impl MessagePaneData {
             loading_state: LoadingState::Idle,
             error_message: None,
             is_dm: false,
+            typing_indicator: None,
         }
     }
 
@@ -86,7 +89,7 @@ impl MessagePaneData {
         self.channel_icon = icon;
     }
 
-    pub fn set_online_count(&mut self, count: Option<u32>) {
+    pub const fn set_online_count(&mut self, count: Option<u32>) {
         self.online_count = count;
     }
 
@@ -127,10 +130,25 @@ impl MessagePaneData {
         self.loading_state = LoadingState::Idle;
         self.error_message = None;
         self.is_dm = false;
+        self.typing_indicator = None;
+    }
+
+    pub fn set_typing_indicator(&mut self, indicator: Option<String>) {
+        self.typing_indicator = indicator;
     }
 
     #[must_use]
-    pub fn channel_id(&self) -> Option<ChannelId> {
+    pub fn typing_indicator(&self) -> Option<&str> {
+        self.typing_indicator.as_deref()
+    }
+
+    #[must_use]
+    pub const fn has_typing_indicator(&self) -> bool {
+        self.typing_indicator.is_some()
+    }
+
+    #[must_use]
+    pub const fn channel_id(&self) -> Option<ChannelId> {
         self.channel_id
     }
 
@@ -150,7 +168,7 @@ impl MessagePaneData {
     }
 
     #[must_use]
-    pub fn online_count(&self) -> Option<u32> {
+    pub const fn online_count(&self) -> Option<u32> {
         self.online_count
     }
 
@@ -160,22 +178,22 @@ impl MessagePaneData {
     }
 
     #[must_use]
-    pub fn loading_state(&self) -> LoadingState {
+    pub const fn loading_state(&self) -> LoadingState {
         self.loading_state
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
     #[must_use]
-    pub fn message_count(&self) -> usize {
+    pub const fn message_count(&self) -> usize {
         self.messages.len()
     }
 
     #[must_use]
-    pub fn is_dm(&self) -> bool {
+    pub const fn is_dm(&self) -> bool {
         self.is_dm
     }
 
@@ -212,7 +230,7 @@ impl MessagePaneState {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            scroll_state: ScrollViewState::default(),
+            scroll_state: ScrollViewState::new(),
             selected_index: None,
             focused: false,
             auto_scroll: true,
@@ -222,17 +240,17 @@ impl MessagePaneState {
         }
     }
 
-    pub fn set_focused(&mut self, focused: bool) {
+    pub const fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
     #[must_use]
-    pub fn is_focused(&self) -> bool {
+    pub const fn is_focused(&self) -> bool {
         self.focused
     }
 
     #[must_use]
-    pub fn selected_index(&self) -> Option<usize> {
+    pub const fn selected_index(&self) -> Option<usize> {
         self.selected_index
     }
 
@@ -243,10 +261,10 @@ impl MessagePaneState {
 
         self.auto_scroll = false;
         self.scroll_to_selection = true;
-        self.selected_index = Some(match self.selected_index {
-            Some(idx) => (idx + 1).min(message_count - 1),
-            None => message_count.saturating_sub(1),
-        });
+        self.selected_index = Some(self.selected_index.map_or_else(
+            || message_count.saturating_sub(1),
+            |idx| (idx + 1).min(message_count - 1),
+        ));
     }
 
     pub fn select_previous(&mut self, message_count: usize) {
@@ -256,12 +274,13 @@ impl MessagePaneState {
 
         self.auto_scroll = false;
         self.scroll_to_selection = true;
-        self.selected_index = Some(match self.selected_index {
-            Some(idx) => idx.saturating_sub(1),
-            None => message_count.saturating_sub(1),
-        });
+        self.selected_index = Some(self.selected_index.map_or_else(
+            || message_count.saturating_sub(1),
+            |idx| idx.saturating_sub(1),
+        ));
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn select_first(&mut self) {
         self.auto_scroll = false;
         self.scroll_to_selection = true;
@@ -279,11 +298,13 @@ impl MessagePaneState {
         self.scroll_to_bottom();
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn clear_selection(&mut self) {
         self.selected_index = None;
         self.auto_scroll = true;
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_down(&mut self) {
         self.auto_scroll = false;
         for _ in 0..SCROLL_AMOUNT {
@@ -291,6 +312,7 @@ impl MessagePaneState {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_up(&mut self) {
         self.auto_scroll = false;
         for _ in 0..SCROLL_AMOUNT {
@@ -298,6 +320,7 @@ impl MessagePaneState {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_to_bottom(&mut self) {
         if self.content_height > self.viewport_height {
             let offset = self.content_height.saturating_sub(self.viewport_height);
@@ -306,6 +329,7 @@ impl MessagePaneState {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_to_top(&mut self) {
         self.scroll_state.scroll_to_top();
     }
@@ -496,7 +520,7 @@ impl<'a> MessagePane<'a> {
     }
 
     #[must_use]
-    pub fn style(mut self, style: MessagePaneStyle) -> Self {
+    pub const fn style(mut self, style: MessagePaneStyle) -> Self {
         self.style = style;
         self
     }
@@ -511,10 +535,11 @@ impl<'a> MessagePane<'a> {
 
     #[allow(clippy::cast_possible_truncation)]
     fn calculate_message_height(message: &Message, width: u16) -> u16 {
-        let content_width = width.saturating_sub(MESSAGE_CONTENT_PADDING);
+        let indent_width = u16::try_from(CONTENT_INDENT_WIDTH).unwrap_or(0);
+        let content_width = (width).saturating_sub(indent_width);
         let content_lines = wrap_text(message.content(), content_width as usize).len() as u16;
 
-        let mut height = 1 + content_lines;
+        let mut height = 1 + content_lines; // Header + Content
 
         if message.is_reply() && message.referenced().is_some() {
             height += 1;
@@ -523,8 +548,6 @@ impl<'a> MessagePane<'a> {
         if message.has_attachments() {
             height += u16::try_from(message.attachments().len()).unwrap_or(u16::MAX);
         }
-
-        height += 1;
 
         height
     }
@@ -558,9 +581,26 @@ impl<'a> MessagePane<'a> {
             current_y += 1;
         }
 
+        let (timestamp_style, edited_style) = if is_selected {
+            (
+                Style::default().fg(Color::White),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::ITALIC),
+            )
+        } else {
+            (self.style.timestamp_style, self.style.edited_style)
+        };
+
         let mut header_spans = vec![
-            Span::styled(message.formatted_timestamp(), self.style.timestamp_style),
-            Span::raw(" "),
+            Span::styled(
+                format!(
+                    "{:<width$}",
+                    message.formatted_timestamp(),
+                    width = TIMESTAMP_WIDTH
+                ),
+                timestamp_style,
+            ),
             Span::styled(message.author().display_name(), self.style.author_style),
         ];
 
@@ -571,7 +611,7 @@ impl<'a> MessagePane<'a> {
 
         if message.is_edited() {
             header_spans.push(Span::raw(" "));
-            header_spans.push(Span::styled("(edited)", self.style.edited_style));
+            header_spans.push(Span::styled("(edited)", edited_style));
         }
 
         let header_line = Line::from(header_spans);
@@ -585,33 +625,32 @@ impl<'a> MessagePane<'a> {
             self.style.content_style
         };
 
-        let content = message.content();
-        let content_width = width.saturating_sub(MESSAGE_CONTENT_PADDING);
-        let content_lines = wrap_text(content, content_width as usize);
+        let indent_width = u16::try_from(CONTENT_INDENT_WIDTH).unwrap_or(0);
+        let content_width = (width).saturating_sub(indent_width);
+        let content_lines = wrap_text(message.content(), content_width as usize);
+        let indent_span = Span::raw(" ".repeat(CONTENT_INDENT_WIDTH));
 
         for line_text in content_lines {
-            let content_line = Line::from(Span::styled(line_text, content_style));
+            let content_line = Line::from(vec![
+                indent_span.clone(),
+                Span::styled(line_text, content_style),
+            ]);
             let content_para = Paragraph::new(content_line).style(base_style);
-            scroll_view.render_widget(
-                content_para,
-                Rect::new(2, current_y, width.saturating_sub(2), 1),
-            );
+            scroll_view.render_widget(content_para, Rect::new(0, current_y, width, 1));
             current_y += 1;
         }
 
         for attachment in message.attachments() {
             let attachment_text = format!("📎 {}", attachment.filename());
-            let attachment_line =
-                Line::from(Span::styled(attachment_text, self.style.attachment_style));
+            let attachment_line = Line::from(vec![
+                indent_span.clone(),
+                Span::styled(attachment_text, self.style.attachment_style),
+            ]);
             let attachment_para = Paragraph::new(attachment_line).style(base_style);
-            scroll_view.render_widget(
-                attachment_para,
-                Rect::new(2, current_y, width.saturating_sub(2), 1),
-            );
+            scroll_view.render_widget(attachment_para, Rect::new(0, current_y, width, 1));
             current_y += 1;
         }
 
-        current_y += 1;
         current_y - y_offset
     }
 
@@ -633,8 +672,23 @@ impl<'a> MessagePane<'a> {
         if let Some(topic) = self.data.channel_topic() {
             let truncated_topic = truncate_string(topic, 60);
             block = block.title(
-                Line::from(Span::styled(truncated_topic, self.style.topic_style))
-                    .alignment(Alignment::Right),
+                Line::from(Span::styled(
+                    format!(" {truncated_topic} "),
+                    self.style.topic_style,
+                ))
+                .alignment(Alignment::Right),
+            );
+        }
+
+        if let Some(typing) = self.data.typing_indicator() {
+            block = block.title_bottom(
+                Line::from(Span::styled(
+                    typing,
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ))
+                .alignment(Alignment::Left),
             );
         }
 
@@ -857,14 +911,14 @@ mod tests {
         data.set_channel(ChannelId(100), "general".to_string());
         assert_eq!(
             data.formatted_channel_title(),
-            Some("[#-GENERAL]".to_string())
+            Some("[ GENERAL ]".to_string())
         );
 
         let mut dm_data = MessagePaneData::new();
         dm_data.set_channel(ChannelId(200), "@username".to_string());
         assert_eq!(
             dm_data.formatted_channel_title(),
-            Some("[@-USERNAME]".to_string())
+            Some("[ USERNAME ]".to_string())
         );
     }
 }

@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 tokio = { version = "1.49", features = ["full"] }
 
 ratatui = { version = "0.30", features = ["crossterm_0_28"] }
-crossterm = "0.28"
+crossterm = { version = "0.28", features = ["event-stream"] }
 tui-tree-widget = "0.24"
 tui-scrollview = "0.6.2"
 

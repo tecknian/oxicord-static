@@ -24,7 +24,7 @@ pub enum StatusLevel {
 impl StatusLevel {
     /// Returns color for level.
     #[must_use]
-    pub fn color(self) -> Color {
+    pub const fn color(self) -> Color {
         match self {
             Self::Info => Color::Cyan,
             Self::Success => Color::Green,
@@ -46,7 +46,7 @@ pub struct StatusBar {
 impl StatusBar {
     /// Creates empty status bar.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             left: String::new(),
             center: String::new(),
@@ -78,7 +78,7 @@ impl StatusBar {
 
     /// Sets status level.
     #[must_use]
-    pub fn level(mut self, level: StatusLevel) -> Self {
+    pub const fn level(mut self, level: StatusLevel) -> Self {
         self.level = level;
         self
     }

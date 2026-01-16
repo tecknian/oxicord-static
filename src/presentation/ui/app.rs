@@ -1,9 +1,13 @@
 //! Main application orchestrator.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyEvent};
+use crossterm::event::{Event, EventStream, KeyEvent};
+use futures_util::StreamExt;
 use ratatui::{DefaultTerminal, Frame};
+use tokio::sync::mpsc;
+use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 use crate::application::dto::{LoginRequest, TokenSource};
@@ -11,8 +15,15 @@ use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
 use crate::domain::entities::{AuthToken, ChannelId, GuildId, User};
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{AuthPort, DiscordDataPort, FetchMessagesOptions, TokenStoragePort};
+use crate::infrastructure::discord::{
+    DispatchEvent, GatewayClient, GatewayClientConfig, GatewayEventKind, GatewayIntents,
+    TypingIndicatorManager,
+};
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen};
+use crate::presentation::widgets::ConnectionStatus;
+
+const TYPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppState {
@@ -26,20 +37,21 @@ enum CurrentScreen {
     Chat(Box<ChatScreenState>),
 }
 
-/// Main application.
 pub struct App {
     state: AppState,
     screen: CurrentScreen,
     login_use_case: LoginUseCase,
     resolve_token_use_case: ResolveTokenUseCase,
     discord_data: Arc<dyn DiscordDataPort>,
-    event_handler: EventHandler,
     pending_token: Option<(String, TokenSource)>,
     current_token: Option<AuthToken>,
+    gateway_client: Option<GatewayClient>,
+    gateway_rx: Option<mpsc::UnboundedReceiver<GatewayEventKind>>,
+    typing_manager: TypingIndicatorManager,
+    last_typing_cleanup: Instant,
 }
 
 impl App {
-    /// Creates new application.
     #[must_use]
     pub fn new(
         auth_port: Arc<dyn AuthPort>,
@@ -55,14 +67,15 @@ impl App {
             login_use_case,
             resolve_token_use_case,
             discord_data,
-            event_handler: EventHandler::new(),
             pending_token: None,
             current_token: None,
+            gateway_client: None,
+            gateway_rx: None,
+            typing_manager: TypingIndicatorManager::new(),
+            last_typing_cleanup: Instant::now(),
         }
     }
 
-    /// Runs the application.
-    ///
     /// # Errors
     /// Returns error if terminal or token resolution fails.
     pub async fn run(
@@ -79,16 +92,62 @@ impl App {
             self.attempt_auto_login(token, source).await;
         }
 
-        while self.state != AppState::Exiting {
-            terminal.draw(|frame| self.render(frame))?;
+        self.run_event_loop(terminal).await?;
 
-            if let Some(event) = self.event_handler.poll()? {
-                self.handle_event(event).await;
+        self.disconnect_gateway();
+        info!("Application exiting normally");
+        Ok(())
+    }
+
+    async fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
+        let mut terminal_events = EventStream::new();
+        let mut typing_cleanup_interval = interval(TYPING_CLEANUP_INTERVAL);
+
+        terminal.draw(|frame| self.render(frame))?;
+
+        while self.state != AppState::Exiting {
+            let gateway_event = self.receive_gateway_event();
+            let terminal_event = terminal_events.next();
+
+            tokio::select! {
+                biased;
+
+                Some(event) = gateway_event => {
+                    self.handle_gateway_event(event);
+                    terminal.draw(|frame| self.render(frame))?;
+                }
+
+                Some(Ok(event)) = terminal_event => {
+                    self.handle_terminal_event(event).await;
+                    terminal.draw(|frame| self.render(frame))?;
+                }
+
+                _ = typing_cleanup_interval.tick() => {
+                    self.cleanup_typing_indicators();
+                    terminal.draw(|frame| self.render(frame))?;
+                }
             }
         }
 
-        info!("Application exiting normally");
         Ok(())
+    }
+
+    async fn receive_gateway_event(&mut self) -> Option<GatewayEventKind> {
+        match &mut self.gateway_rx {
+            Some(rx) => rx.recv().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    async fn handle_terminal_event(&mut self, event: Event) {
+        let result = match event {
+            Event::Key(key) => self.handle_key(key).await,
+            _ => EventResult::Continue,
+        };
+
+        if result == EventResult::Exit {
+            self.state = AppState::Exiting;
+        }
     }
 
     async fn attempt_auto_login(&mut self, token: String, source: TokenSource) {
@@ -124,17 +183,6 @@ impl App {
             CurrentScreen::Chat(state) => {
                 frame.render_stateful_widget(ChatScreen::new(), frame.area(), state);
             }
-        }
-    }
-
-    async fn handle_event(&mut self, event: Event) {
-        let result = match event {
-            Event::Key(key) => self.handle_key(key).await,
-            _ => EventResult::Continue,
-        };
-
-        if result == EventResult::Exit {
-            self.state = AppState::Exiting;
         }
     }
 
@@ -240,11 +288,243 @@ impl App {
         self.state = AppState::Chat;
         let mut chat_state = ChatScreenState::new(user);
 
-        if let Some(ref token) = self.current_token {
+        let token_clone = self.current_token.clone();
+        if let Some(ref token) = token_clone {
             self.load_discord_data(&mut chat_state, token).await;
         }
 
         self.screen = CurrentScreen::Chat(Box::new(chat_state));
+
+        if let Some(ref token) = self.current_token.clone() {
+            self.connect_gateway(token);
+        }
+    }
+
+    fn connect_gateway(&mut self, token: &AuthToken) {
+        let config = GatewayClientConfig::new()
+            .with_intents(
+                GatewayIntents::default_client()
+                    .with_presence()
+                    .with_reactions(),
+            )
+            .with_auto_reconnect(true)
+            .with_max_reconnect_attempts(10);
+
+        let mut client = GatewayClient::new(config);
+
+        match client.connect(token.as_str()) {
+            Ok(rx) => {
+                info!("Gateway connection initiated");
+                self.gateway_rx = Some(rx);
+                self.gateway_client = Some(client);
+
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_connection_status(ConnectionStatus::Connecting);
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to initiate gateway connection");
+            }
+        }
+    }
+
+    fn disconnect_gateway(&mut self) {
+        if let Some(ref client) = self.gateway_client {
+            client.disconnect();
+        }
+        self.gateway_client = None;
+        self.gateway_rx = None;
+    }
+
+    fn handle_gateway_event(&mut self, event: GatewayEventKind) {
+        match event {
+            GatewayEventKind::Connected { session_id, .. } => {
+                info!(session_id = %session_id, "Gateway connected");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_connection_status(ConnectionStatus::Connected);
+                }
+            }
+            GatewayEventKind::Disconnected { reason, can_resume } => {
+                warn!(reason = %reason, can_resume = can_resume, "Gateway disconnected");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_connection_status(ConnectionStatus::Disconnected);
+                }
+            }
+            GatewayEventKind::Reconnecting { attempt } => {
+                info!(attempt = attempt, "Gateway reconnecting");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_connection_status(ConnectionStatus::Connecting);
+                }
+            }
+            GatewayEventKind::Resumed => {
+                info!("Gateway session resumed");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_connection_status(ConnectionStatus::Connected);
+                }
+            }
+            GatewayEventKind::HeartbeatAck { latency_ms } => {
+                debug!(latency_ms = latency_ms, "Heartbeat acknowledged");
+            }
+            GatewayEventKind::Dispatch(dispatch) => {
+                self.handle_dispatch_event(dispatch);
+            }
+            GatewayEventKind::Error {
+                message,
+                recoverable,
+            } => {
+                if recoverable {
+                    warn!(error = %message, "Recoverable gateway error");
+                } else {
+                    error!(error = %message, "Fatal gateway error");
+                }
+            }
+        }
+    }
+
+    fn handle_dispatch_event(&mut self, event: DispatchEvent) {
+        match event {
+            DispatchEvent::MessageCreate { message } => {
+                self.handle_message_create(message);
+            }
+            DispatchEvent::MessageUpdate { message } => {
+                self.handle_message_update(message);
+            }
+            DispatchEvent::MessageDelete { message_id, .. } => {
+                debug!(message_id = %message_id, "Message deleted");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.remove_message(message_id);
+                }
+            }
+            DispatchEvent::MessageDeleteBulk { message_ids, .. } => {
+                debug!(count = message_ids.len(), "Bulk message delete");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    for message_id in message_ids {
+                        state.remove_message(message_id);
+                    }
+                }
+            }
+            DispatchEvent::TypingStart {
+                channel_id,
+                user_id,
+                username,
+                ..
+            } => {
+                self.handle_typing_start(channel_id, user_id, username);
+            }
+            DispatchEvent::PresenceUpdate {
+                user_id, status, ..
+            } => {
+                debug!(user_id = %user_id, status = ?status, "Presence updated");
+            }
+            DispatchEvent::MessageReactionAdd {
+                message_id, emoji, ..
+            } => {
+                debug!(message_id = %message_id, emoji = %emoji.display(), "Reaction added");
+            }
+            DispatchEvent::MessageReactionRemove {
+                message_id, emoji, ..
+            } => {
+                debug!(message_id = %message_id, emoji = %emoji.display(), "Reaction removed");
+            }
+            DispatchEvent::ChannelCreate {
+                channel_id, name, ..
+            }
+            | DispatchEvent::ChannelUpdate {
+                channel_id, name, ..
+            } => {
+                debug!(channel_id = %channel_id, name = %name, "Channel created/updated");
+            }
+            DispatchEvent::ChannelDelete { channel_id, .. } => {
+                info!(channel_id = %channel_id, "Channel deleted");
+            }
+            DispatchEvent::GuildCreate {
+                guild_id,
+                name,
+                unavailable,
+            } => {
+                if !unavailable {
+                    info!(guild_id = %guild_id, name = %name, "Guild available");
+                }
+            }
+            DispatchEvent::GuildUpdate { guild_id, name } => {
+                debug!(guild_id = %guild_id, name = %name, "Guild updated");
+            }
+            DispatchEvent::GuildDelete {
+                guild_id,
+                unavailable,
+            } => {
+                if unavailable {
+                    warn!(guild_id = %guild_id, "Guild became unavailable");
+                } else {
+                    info!(guild_id = %guild_id, "Left guild");
+                }
+            }
+            DispatchEvent::UserUpdate {
+                user_id, username, ..
+            } => {
+                debug!(user_id = %user_id, username = %username, "User updated");
+            }
+            DispatchEvent::Ready {
+                user_id, guilds, ..
+            } => {
+                info!(user_id = %user_id, guild_count = guilds.len(), "Gateway ready");
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_message_create(&mut self, message: crate::domain::entities::Message) {
+        let channel_id = message.channel_id();
+        debug!(message_id = %message.id(), channel_id = %channel_id, "New message received");
+
+        if let CurrentScreen::Chat(ref mut state) = self.screen {
+            state.add_message(message);
+        }
+
+        self.typing_manager.remove_typing(channel_id, "");
+        self.update_typing_indicator(channel_id);
+    }
+
+    fn handle_message_update(&mut self, message: crate::domain::entities::Message) {
+        debug!(message_id = %message.id(), "Message updated");
+        if let CurrentScreen::Chat(ref mut state) = self.screen {
+            state.update_message(message);
+        }
+    }
+
+    fn handle_typing_start(
+        &mut self,
+        channel_id: ChannelId,
+        user_id: String,
+        username: Option<String>,
+    ) {
+        let display_name = username.unwrap_or_else(|| user_id.clone());
+        debug!(user = %display_name, channel_id = %channel_id, "User started typing");
+
+        self.typing_manager
+            .add_typing(channel_id, user_id, display_name);
+        self.update_typing_indicator(channel_id);
+    }
+
+    fn update_typing_indicator(&mut self, channel_id: ChannelId) {
+        if let CurrentScreen::Chat(ref mut state) = self.screen
+            && state.message_pane_data().channel_id() == Some(channel_id)
+        {
+            let indicator = self.typing_manager.format_typing_indicator(channel_id);
+            state.set_typing_indicator(indicator);
+        }
+    }
+
+    fn cleanup_typing_indicators(&mut self) {
+        self.last_typing_cleanup = Instant::now();
+        self.typing_manager.cleanup_expired();
+
+        if let CurrentScreen::Chat(ref mut state) = self.screen
+            && let Some(channel_id) = state.message_pane_data().channel_id()
+        {
+            let indicator = self.typing_manager.format_typing_indicator(channel_id);
+            state.set_typing_indicator(indicator);
+        }
     }
 
     async fn load_discord_data(&self, state: &mut ChatScreenState, token: &AuthToken) {
@@ -302,6 +582,8 @@ impl App {
     }
 
     async fn load_channel_messages(&mut self, channel_id: ChannelId) {
+        self.typing_manager.clear_channel(channel_id);
+
         let messages = if let Some(ref token) = self.current_token {
             let options = FetchMessagesOptions::default().with_limit(50);
             match self
@@ -327,12 +609,15 @@ impl App {
 
         if let (Some(messages), CurrentScreen::Chat(state)) = (messages, &mut self.screen) {
             state.set_messages(messages);
+            state.set_typing_indicator(None);
         }
     }
 
     fn transition_to_login(&mut self) {
+        self.disconnect_gateway();
         self.state = AppState::Login;
         self.current_token = None;
+        self.typing_manager = TypingIndicatorManager::new();
         self.screen = CurrentScreen::Login(LoginScreen::new());
     }
 

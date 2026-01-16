@@ -82,7 +82,7 @@ impl AuthError {
 
     /// Returns whether error is recoverable.
     #[must_use]
-    pub fn is_recoverable(&self) -> bool {
+    pub const fn is_recoverable(&self) -> bool {
         matches!(
             self,
             Self::NetworkError { .. }
@@ -94,7 +94,7 @@ impl AuthError {
 
     /// Returns whether error is network related.
     #[must_use]
-    pub fn is_network_error(&self) -> bool {
+    pub const fn is_network_error(&self) -> bool {
         matches!(self, Self::NetworkError { .. } | Self::RateLimited { .. })
     }
 }

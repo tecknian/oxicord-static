@@ -31,7 +31,7 @@ impl MainScreen {
 
     /// Returns current user.
     #[must_use]
-    pub fn user(&self) -> &User {
+    pub const fn user(&self) -> &User {
         &self.user
     }
 

@@ -9,7 +9,7 @@ pub struct GuildId(pub u64);
 impl GuildId {
     /// Returns the underlying u64 value.
     #[must_use]
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         self.0
     }
 }
@@ -64,14 +64,14 @@ impl Guild {
 
     /// Sets whether the guild has unread messages.
     #[must_use]
-    pub fn with_unread(mut self, has_unread: bool) -> Self {
+    pub const fn with_unread(mut self, has_unread: bool) -> Self {
         self.has_unread = has_unread;
         self
     }
 
     /// Returns the guild ID.
     #[must_use]
-    pub fn id(&self) -> GuildId {
+    pub const fn id(&self) -> GuildId {
         self.id
     }
 
@@ -89,12 +89,12 @@ impl Guild {
 
     /// Returns whether the guild has unread messages.
     #[must_use]
-    pub fn has_unread(&self) -> bool {
+    pub const fn has_unread(&self) -> bool {
         self.has_unread
     }
 
     /// Sets whether the guild has unread messages.
-    pub fn set_unread(&mut self, has_unread: bool) {
+    pub const fn set_unread(&mut self, has_unread: bool) {
         self.has_unread = has_unread;
     }
 }

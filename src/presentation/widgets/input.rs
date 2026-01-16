@@ -34,7 +34,7 @@ impl TextInput {
 
     /// Enables password masking.
     #[must_use]
-    pub fn password(mut self) -> Self {
+    pub const fn password(mut self) -> Self {
         self.masked = true;
         self
     }
@@ -47,13 +47,13 @@ impl TextInput {
     }
 
     /// Sets focus state.
-    pub fn set_focused(&mut self, focused: bool) {
+    pub const fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
     /// Returns focus state.
     #[must_use]
-    pub fn is_focused(&self) -> bool {
+    pub const fn is_focused(&self) -> bool {
         self.focused
     }
 
@@ -97,24 +97,24 @@ impl TextInput {
     }
 
     /// Moves cursor left.
-    pub fn move_left(&mut self) {
+    pub const fn move_left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
     /// Moves cursor right.
-    pub fn move_right(&mut self) {
+    pub const fn move_right(&mut self) {
         if self.cursor < self.value.len() {
             self.cursor += 1;
         }
     }
 
     /// Moves cursor to start.
-    pub fn move_start(&mut self) {
+    pub const fn move_start(&mut self) {
         self.cursor = 0;
     }
 
     /// Moves cursor to end.
-    pub fn move_end(&mut self) {
+    pub const fn move_end(&mut self) {
         self.cursor = self.value.len();
     }
 

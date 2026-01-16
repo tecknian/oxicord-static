@@ -1,0 +1,330 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::constants::{
+    CLIENT_PROPERTIES_BROWSER, CLIENT_PROPERTIES_DEVICE, CLIENT_PROPERTIES_OS, LARGE_THRESHOLD,
+};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GatewayPayload {
+    pub op: u8,
+    pub d: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub t: Option<String>,
+}
+
+impl GatewayPayload {
+    #[must_use]
+    pub fn heartbeat(sequence: Option<u64>) -> Self {
+        Self {
+            op: 1,
+            d: sequence.map_or(Value::Null, |s| Value::Number(s.into())),
+            s: None,
+            t: None,
+        }
+    }
+
+    #[must_use]
+    pub fn identify(token: &str, intents: u32) -> Self {
+        let properties = IdentifyProperties {
+            os: CLIENT_PROPERTIES_OS.to_string(),
+            browser: CLIENT_PROPERTIES_BROWSER.to_string(),
+            device: CLIENT_PROPERTIES_DEVICE.to_string(),
+        };
+
+        let identify = IdentifyData {
+            token: token.to_string(),
+            properties,
+            compress: true,
+            large_threshold: LARGE_THRESHOLD,
+            intents,
+        };
+
+        Self {
+            op: 2,
+            d: serde_json::to_value(identify).unwrap_or(Value::Null),
+            s: None,
+            t: None,
+        }
+    }
+
+    #[must_use]
+    pub fn resume(token: &str, session_id: &str, sequence: u64) -> Self {
+        let resume = ResumeData {
+            token: token.to_string(),
+            session_id: session_id.to_string(),
+            seq: sequence,
+        };
+
+        Self {
+            op: 6,
+            d: serde_json::to_value(resume).unwrap_or(Value::Null),
+            s: None,
+            t: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct IdentifyData {
+    token: String,
+    properties: IdentifyProperties,
+    compress: bool,
+    large_threshold: u16,
+    intents: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct IdentifyProperties {
+    #[serde(rename = "$os")]
+    os: String,
+    #[serde(rename = "$browser")]
+    browser: String,
+    #[serde(rename = "$device")]
+    device: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ResumeData {
+    token: String,
+    session_id: String,
+    seq: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GatewayMessage {
+    pub op: u8,
+    pub d: Option<Value>,
+    pub s: Option<u64>,
+    pub t: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelloPayload {
+    pub heartbeat_interval: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadyPayload {
+    pub session_id: String,
+    pub resume_gateway_url: Option<String>,
+    pub user: ReadyUser,
+    #[serde(default)]
+    pub guilds: Vec<ReadyGuild>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadyUser {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadyGuild {
+    pub id: String,
+    #[serde(default)]
+    pub unavailable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MessagePayload {
+    pub id: String,
+    pub channel_id: String,
+    pub author: AuthorPayload,
+    pub content: String,
+    pub timestamp: String,
+    pub edited_timestamp: Option<String>,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    #[serde(default)]
+    pub attachments: Vec<AttachmentPayload>,
+    pub message_reference: Option<MessageReferencePayload>,
+    pub referenced_message: Option<Box<Self>>,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorPayload {
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub discriminator: String,
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub bot: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttachmentPayload {
+    pub id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub size: u64,
+    pub url: String,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MessageReferencePayload {
+    pub message_id: Option<String>,
+    pub channel_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MessageDeletePayload {
+    pub id: String,
+    pub channel_id: String,
+    pub guild_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MessageDeleteBulkPayload {
+    pub ids: Vec<String>,
+    pub channel_id: String,
+    pub guild_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TypingStartPayload {
+    pub channel_id: String,
+    pub guild_id: Option<String>,
+    pub user_id: String,
+    pub timestamp: i64,
+    pub member: Option<TypingMemberPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TypingMemberPayload {
+    pub user: Option<TypingUserPayload>,
+    pub nick: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TypingUserPayload {
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PresenceUpdatePayload {
+    pub user: PresenceUserPayload,
+    pub guild_id: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub activities: Vec<ActivityPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PresenceUserPayload {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActivityPayload {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    pub details: Option<String>,
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReactionPayload {
+    pub user_id: String,
+    pub channel_id: String,
+    pub message_id: String,
+    pub guild_id: Option<String>,
+    pub emoji: EmojiPayload,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmojiPayload {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub animated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReactionRemoveAllPayload {
+    #[serde(rename = "channel_id")]
+    pub channel: String,
+    #[serde(rename = "message_id")]
+    pub message: String,
+    #[serde(rename = "guild_id")]
+    pub guild: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChannelPayload {
+    pub id: String,
+    pub guild_id: Option<String>,
+    pub name: Option<String>,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GuildCreatePayload {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub unavailable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GuildDeletePayload {
+    pub id: String,
+    #[serde(default)]
+    pub unavailable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserUpdatePayload {
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub discriminator: String,
+    pub avatar: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_heartbeat_payload() {
+        let payload = GatewayPayload::heartbeat(Some(42));
+        assert_eq!(payload.op, 1);
+        assert_eq!(payload.d, Value::Number(42.into()));
+    }
+
+    #[test]
+    fn test_heartbeat_null_sequence() {
+        let payload = GatewayPayload::heartbeat(None);
+        assert_eq!(payload.d, Value::Null);
+    }
+
+    #[test]
+    fn test_identify_payload_structure() {
+        let payload = GatewayPayload::identify("test_token", 513);
+        assert_eq!(payload.op, 2);
+        assert!(payload.d.is_object());
+
+        let obj = payload.d.as_object().unwrap();
+        assert!(obj.contains_key("token"));
+        assert!(obj.contains_key("properties"));
+        assert!(obj.contains_key("intents"));
+    }
+
+    #[test]
+    fn test_resume_payload() {
+        let payload = GatewayPayload::resume("token", "session123", 100);
+        assert_eq!(payload.op, 6);
+
+        let obj = payload.d.as_object().unwrap();
+        assert_eq!(obj.get("session_id").unwrap(), "session123");
+        assert_eq!(obj.get("seq").unwrap(), 100);
+    }
+}

@@ -57,7 +57,7 @@ impl User {
 
     /// Returns whether user is a bot.
     #[must_use]
-    pub fn is_bot(&self) -> bool {
+    pub const fn is_bot(&self) -> bool {
         self.bot
     }
 

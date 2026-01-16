@@ -24,7 +24,7 @@ pub struct ResolvedToken {
 impl ResolvedToken {
     /// Creates new resolved token.
     #[must_use]
-    pub fn new(token: AuthToken, source: TokenSource) -> Self {
+    pub const fn new(token: AuthToken, source: TokenSource) -> Self {
         Self { token, source }
     }
 }
@@ -37,7 +37,7 @@ pub struct ResolveTokenUseCase {
 impl ResolveTokenUseCase {
     /// Creates new use case.
     #[must_use]
-    pub fn new(storage_port: Arc<dyn TokenStoragePort>) -> Self {
+    pub const fn new(storage_port: Arc<dyn TokenStoragePort>) -> Self {
         Self { storage_port }
     }
 

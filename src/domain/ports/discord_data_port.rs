@@ -27,19 +27,19 @@ pub struct FetchMessagesOptions {
 
 impl FetchMessagesOptions {
     #[must_use]
-    pub fn with_limit(mut self, limit: u8) -> Self {
-        self.limit = Some(limit.min(100));
+    pub const fn with_limit(mut self, limit: u8) -> Self {
+        self.limit = Some(if limit < 100 { limit } else { 100 });
         self
     }
 
     #[must_use]
-    pub fn before_message(mut self, message_id: u64) -> Self {
+    pub const fn before_message(mut self, message_id: u64) -> Self {
         self.before = Some(message_id);
         self
     }
 
     #[must_use]
-    pub fn after_message(mut self, message_id: u64) -> Self {
+    pub const fn after_message(mut self, message_id: u64) -> Self {
         self.after = Some(message_id);
         self
     }

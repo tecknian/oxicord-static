@@ -20,8 +20,7 @@ impl AuthToken {
             return None;
         }
 
-        let parts: Vec<&str> = value.split('.').collect();
-        if parts.len() != 3 {
+        if value.split('.').count() != 3 {
             return None;
         }
 

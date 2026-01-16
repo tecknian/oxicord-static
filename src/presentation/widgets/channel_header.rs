@@ -51,31 +51,31 @@ impl<'a> ChannelHeader<'a> {
     }
 
     #[must_use]
-    pub fn channel_name(mut self, name: Option<&'a str>) -> Self {
+    pub const fn channel_name(mut self, name: Option<&'a str>) -> Self {
         self.channel_name = name;
         self
     }
 
     #[must_use]
-    pub fn channel_icon(mut self, icon: Option<&'a str>) -> Self {
+    pub const fn channel_icon(mut self, icon: Option<&'a str>) -> Self {
         self.channel_icon = icon;
         self
     }
 
     #[must_use]
-    pub fn online_count(mut self, count: Option<u32>) -> Self {
+    pub const fn online_count(mut self, count: Option<u32>) -> Self {
         self.online_count = count;
         self
     }
 
     #[must_use]
-    pub fn topic(mut self, topic: Option<&'a str>) -> Self {
+    pub const fn topic(mut self, topic: Option<&'a str>) -> Self {
         self.topic = topic;
         self
     }
 
     #[must_use]
-    pub fn style(mut self, style: ChannelHeaderStyle) -> Self {
+    pub const fn style(mut self, style: ChannelHeaderStyle) -> Self {
         self.style = style;
         self
     }

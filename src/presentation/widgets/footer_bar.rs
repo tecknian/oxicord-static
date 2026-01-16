@@ -42,7 +42,7 @@ impl FocusContext {
     }
 
     #[must_use]
-    pub fn display_name(self) -> &'static str {
+    pub const fn display_name(self) -> &'static str {
         match self {
             Self::GuildsTree => "GUILDS",
             Self::MessagesList => "MESSAGES",
@@ -133,13 +133,13 @@ impl<'a> FooterBar<'a> {
     }
 
     #[must_use]
-    pub fn right_info(mut self, info: Option<&'a str>) -> Self {
+    pub const fn right_info(mut self, info: Option<&'a str>) -> Self {
         self.right_info = info;
         self
     }
 
     #[must_use]
-    pub fn style(mut self, style: FooterBarStyle) -> Self {
+    pub const fn style(mut self, style: FooterBarStyle) -> Self {
         self.style = style;
         self
     }

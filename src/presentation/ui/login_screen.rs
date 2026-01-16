@@ -46,7 +46,7 @@ impl LoginScreen {
 
     /// Returns current state.
     #[must_use]
-    pub fn state(&self) -> LoginState {
+    pub const fn state(&self) -> LoginState {
         self.state
     }
 
@@ -59,7 +59,7 @@ impl LoginScreen {
 
     /// Returns persistence preference.
     #[must_use]
-    pub fn should_persist(&self) -> bool {
+    pub const fn should_persist(&self) -> bool {
         self.persist_token
     }
 

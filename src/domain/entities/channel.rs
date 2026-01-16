@@ -11,7 +11,7 @@ pub struct ChannelId(pub u64);
 impl ChannelId {
     /// Returns the underlying u64 value.
     #[must_use]
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         self.0
     }
 }
@@ -70,7 +70,7 @@ pub enum ChannelKind {
 impl ChannelKind {
     /// Returns true if this channel type supports text messages.
     #[must_use]
-    pub fn is_text_based(self) -> bool {
+    pub const fn is_text_based(self) -> bool {
         matches!(
             self,
             Self::Text
@@ -85,19 +85,19 @@ impl ChannelKind {
 
     /// Returns true if this is a category channel.
     #[must_use]
-    pub fn is_category(self) -> bool {
+    pub const fn is_category(self) -> bool {
         matches!(self, Self::Category)
     }
 
     /// Returns true if this is a voice channel.
     #[must_use]
-    pub fn is_voice(self) -> bool {
+    pub const fn is_voice(self) -> bool {
         matches!(self, Self::Voice | Self::StageVoice)
     }
 
     /// Returns the display prefix for this channel type.
     #[must_use]
-    pub fn prefix(self) -> &'static str {
+    pub const fn prefix(self) -> &'static str {
         match self {
             Self::Voice | Self::StageVoice => "🔊",
             Self::Dm | Self::GroupDm => "@",
@@ -173,7 +173,7 @@ impl Channel {
 
     /// Sets the position of this channel in the channel list.
     #[must_use]
-    pub fn with_position(mut self, position: i32) -> Self {
+    pub const fn with_position(mut self, position: i32) -> Self {
         self.position = position;
         self
     }
@@ -187,20 +187,20 @@ impl Channel {
 
     /// Sets whether this channel has unread messages.
     #[must_use]
-    pub fn with_unread(mut self, has_unread: bool) -> Self {
+    pub const fn with_unread(mut self, has_unread: bool) -> Self {
         self.has_unread = has_unread;
         self
     }
 
     /// Returns the channel ID.
     #[must_use]
-    pub fn id(&self) -> ChannelId {
+    pub const fn id(&self) -> ChannelId {
         self.id
     }
 
     /// Returns the guild ID, if this is a guild channel.
     #[must_use]
-    pub fn guild_id(&self) -> Option<GuildId> {
+    pub const fn guild_id(&self) -> Option<GuildId> {
         self.guild_id
     }
 
@@ -212,19 +212,19 @@ impl Channel {
 
     /// Returns the channel type.
     #[must_use]
-    pub fn kind(&self) -> ChannelKind {
+    pub const fn kind(&self) -> ChannelKind {
         self.kind
     }
 
     /// Returns the parent category ID, if any.
     #[must_use]
-    pub fn parent_id(&self) -> Option<ChannelId> {
+    pub const fn parent_id(&self) -> Option<ChannelId> {
         self.parent_id
     }
 
     /// Returns the channel position in the channel list.
     #[must_use]
-    pub fn position(&self) -> i32 {
+    pub const fn position(&self) -> i32 {
         self.position
     }
 
@@ -236,12 +236,12 @@ impl Channel {
 
     /// Returns whether this channel has unread messages.
     #[must_use]
-    pub fn has_unread(&self) -> bool {
+    pub const fn has_unread(&self) -> bool {
         self.has_unread
     }
 
     /// Sets whether this channel has unread messages.
-    pub fn set_unread(&mut self, has_unread: bool) {
+    pub const fn set_unread(&mut self, has_unread: bool) {
         self.has_unread = has_unread;
     }
 

@@ -2,7 +2,10 @@
 
 mod client;
 mod dto;
-mod gateway;
+pub mod gateway;
 
 pub use client::DiscordClient;
-pub use gateway::DiscordGateway;
+pub use gateway::{
+    DispatchEvent, GatewayClient, GatewayClientConfig, GatewayEventKind, GatewayIntents,
+    PresenceStatus, TypingIndicatorManager, TypingIndicatorState, TypingUser,
+};

@@ -25,7 +25,7 @@ pub enum ChatFocus {
 }
 
 impl ChatFocus {
-    fn next(self, guilds_visible: bool) -> Self {
+    const fn next(self, guilds_visible: bool) -> Self {
         if guilds_visible {
             match self {
                 Self::GuildsTree => Self::MessagesList,
@@ -40,7 +40,7 @@ impl ChatFocus {
         }
     }
 
-    fn previous(self, guilds_visible: bool) -> Self {
+    const fn previous(self, guilds_visible: bool) -> Self {
         if guilds_visible {
             match self {
                 Self::GuildsTree => Self::MessageInput,
@@ -56,7 +56,7 @@ impl ChatFocus {
     }
 
     #[must_use]
-    pub fn to_focus_context(self) -> FocusContext {
+    pub const fn to_focus_context(self) -> FocusContext {
         match self {
             Self::GuildsTree => FocusContext::GuildsTree,
             Self::MessagesList => FocusContext::MessagesList,
@@ -73,7 +73,7 @@ pub struct DmChannelInfo {
 
 impl DmChannelInfo {
     #[must_use]
-    pub fn new(channel_id: ChannelId, recipient_name: String) -> Self {
+    pub const fn new(channel_id: ChannelId, recipient_name: String) -> Self {
         Self {
             channel_id,
             recipient_name,
@@ -81,7 +81,7 @@ impl DmChannelInfo {
     }
 
     #[must_use]
-    pub fn channel_id(&self) -> ChannelId {
+    pub const fn channel_id(&self) -> ChannelId {
         self.channel_id
     }
 
@@ -127,36 +127,36 @@ impl ChatScreenState {
     }
 
     #[must_use]
-    pub fn user(&self) -> &User {
+    pub const fn user(&self) -> &User {
         &self.user
     }
 
     #[must_use]
-    pub fn focus(&self) -> ChatFocus {
+    pub const fn focus(&self) -> ChatFocus {
         self.focus
     }
 
     #[must_use]
-    pub fn is_guilds_tree_visible(&self) -> bool {
+    pub const fn is_guilds_tree_visible(&self) -> bool {
         self.guilds_tree_visible
     }
 
     #[must_use]
-    pub fn selected_channel(&self) -> Option<&Channel> {
+    pub const fn selected_channel(&self) -> Option<&Channel> {
         self.selected_channel.as_ref()
     }
 
     #[must_use]
-    pub fn selected_guild(&self) -> Option<GuildId> {
+    pub const fn selected_guild(&self) -> Option<GuildId> {
         self.selected_guild
     }
 
     #[must_use]
-    pub fn connection_status(&self) -> ConnectionStatus {
+    pub const fn connection_status(&self) -> ConnectionStatus {
         self.connection_status
     }
 
-    pub fn set_connection_status(&mut self, status: ConnectionStatus) {
+    pub const fn set_connection_status(&mut self, status: ConnectionStatus) {
         self.connection_status = status;
     }
 
@@ -330,7 +330,7 @@ impl ChatScreenState {
         ChatKeyResult::Consumed
     }
 
-    fn handle_message_input_key(&mut self, _key: KeyEvent) -> ChatKeyResult {
+    const fn handle_message_input_key(&self, _key: KeyEvent) -> ChatKeyResult {
         let _ = self;
         ChatKeyResult::Consumed
     }
@@ -395,15 +395,15 @@ impl ChatScreenState {
     }
 
     #[must_use]
-    pub fn guilds_tree_data(&self) -> &GuildsTreeData {
+    pub const fn guilds_tree_data(&self) -> &GuildsTreeData {
         &self.guilds_tree_data
     }
 
-    pub fn guilds_tree_state_mut(&mut self) -> &mut GuildsTreeState {
+    pub const fn guilds_tree_state_mut(&mut self) -> &mut GuildsTreeState {
         &mut self.guilds_tree_state
     }
 
-    pub fn guilds_tree_parts_mut(&mut self) -> (&GuildsTreeData, &mut GuildsTreeState) {
+    pub const fn guilds_tree_parts_mut(&mut self) -> (&GuildsTreeData, &mut GuildsTreeState) {
         (&self.guilds_tree_data, &mut self.guilds_tree_state)
     }
 
@@ -428,16 +428,20 @@ impl ChatScreenState {
         self.message_pane_data.set_error(error);
     }
 
+    pub fn set_typing_indicator(&mut self, indicator: Option<String>) {
+        self.message_pane_data.set_typing_indicator(indicator);
+    }
+
     #[must_use]
-    pub fn message_pane_data(&self) -> &MessagePaneData {
+    pub const fn message_pane_data(&self) -> &MessagePaneData {
         &self.message_pane_data
     }
 
-    pub fn message_pane_data_mut(&mut self) -> &mut MessagePaneData {
+    pub const fn message_pane_data_mut(&mut self) -> &mut MessagePaneData {
         &mut self.message_pane_data
     }
 
-    pub fn message_pane_parts_mut(&mut self) -> (&MessagePaneData, &mut MessagePaneState) {
+    pub const fn message_pane_parts_mut(&mut self) -> (&MessagePaneData, &mut MessagePaneState) {
         (&self.message_pane_data, &mut self.message_pane_state)
     }
 }
@@ -468,7 +472,7 @@ pub struct ChatScreen;
 
 impl ChatScreen {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }

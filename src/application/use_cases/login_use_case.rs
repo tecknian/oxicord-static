@@ -18,7 +18,10 @@ pub struct LoginUseCase {
 impl LoginUseCase {
     /// Creates new login use case.
     #[must_use]
-    pub fn new(auth_port: Arc<dyn AuthPort>, storage_port: Arc<dyn TokenStoragePort>) -> Self {
+    pub const fn new(
+        auth_port: Arc<dyn AuthPort>,
+        storage_port: Arc<dyn TokenStoragePort>,
+    ) -> Self {
         Self {
             auth_port,
             storage_port,
@@ -104,7 +107,7 @@ mod tests {
         let storage_port = Arc::new(MockTokenStorage::new());
 
         let use_case = LoginUseCase::new(auth_port, storage_port);
-        let request = LoginRequest::new("invalid", TokenSource::UserInput);
+        let request = LoginRequest::new("invalid".to_string(), TokenSource::UserInput);
 
         let result = use_case.execute(request).await;
 

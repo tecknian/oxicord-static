@@ -74,13 +74,13 @@ impl GuildsTreeState {
     }
 
     /// Sets whether the tree is focused.
-    pub fn set_focused(&mut self, focused: bool) {
+    pub const fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
     /// Returns whether the tree is focused.
     #[must_use]
-    pub fn is_focused(&self) -> bool {
+    pub const fn is_focused(&self) -> bool {
         self.focused
     }
 
@@ -219,7 +219,7 @@ impl GuildsTreeState {
     }
 
     /// Returns a mutable reference to the underlying tree state.
-    pub fn tree_state_mut(&mut self) -> &mut TreeState<TreeNodeId> {
+    pub const fn tree_state_mut(&mut self) -> &mut TreeState<TreeNodeId> {
         &mut self.tree_state
     }
 }
@@ -347,12 +347,12 @@ impl GuildsTreeData {
     }
 
     /// Sets the active guild.
-    pub fn set_active_guild(&mut self, guild_id: Option<GuildId>) {
+    pub const fn set_active_guild(&mut self, guild_id: Option<GuildId>) {
         self.active_guild_id = guild_id;
     }
 
     /// Sets the active channel.
-    pub fn set_active_channel(&mut self, channel_id: Option<ChannelId>) {
+    pub const fn set_active_channel(&mut self, channel_id: Option<ChannelId>) {
         self.active_channel_id = channel_id;
     }
 
@@ -363,13 +363,13 @@ impl GuildsTreeData {
 
     /// Returns the active guild ID.
     #[must_use]
-    pub fn active_guild_id(&self) -> Option<GuildId> {
+    pub const fn active_guild_id(&self) -> Option<GuildId> {
         self.active_guild_id
     }
 
     /// Returns the active channel ID.
     #[must_use]
-    pub fn active_channel_id(&self) -> Option<ChannelId> {
+    pub const fn active_channel_id(&self) -> Option<ChannelId> {
         self.active_channel_id
     }
 
@@ -406,14 +406,14 @@ impl<'a> GuildsTree<'a> {
 
     /// Sets the style configuration.
     #[must_use]
-    pub fn style(mut self, style: GuildsTreeStyle) -> Self {
+    pub const fn style(mut self, style: GuildsTreeStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Sets the title.
     #[must_use]
-    pub fn title(mut self, title: &'a str) -> Self {
+    pub const fn title(mut self, title: &'a str) -> Self {
         self.title = title;
         self
     }
@@ -468,10 +468,10 @@ impl<'a> GuildsTree<'a> {
 
         let guild_text = Line::from(Span::styled(guild.name().to_string(), guild_style));
 
-        let channel_items = match self.data.channels(guild.id()) {
-            Some(channels) => self.build_channel_nodes(channels),
-            None => vec![self.build_placeholder_node(guild.id())],
-        };
+        let channel_items = self.data.channels(guild.id()).map_or_else(
+            || vec![self.build_placeholder_node(guild.id())],
+            |channels| self.build_channel_nodes(channels),
+        );
 
         TreeItem::new(TreeNodeId::Guild(guild.id()), guild_text, channel_items)
             .expect("Guild node should have unique children")
@@ -674,7 +674,7 @@ mod tests {
             .map(|i| Guild::new(i, format!("Guild {i}")))
             .collect();
 
-        data.set_guilds(guilds.clone());
+        data.set_guilds(guilds);
 
         let tree = GuildsTree::new(&data);
         let items = tree.build_tree_items();

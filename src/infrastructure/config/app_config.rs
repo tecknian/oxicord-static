@@ -29,7 +29,7 @@ pub enum LogLevel {
 impl LogLevel {
     /// Converts to tracing level.
     #[must_use]
-    pub fn to_tracing_level(self) -> tracing::Level {
+    pub const fn to_tracing_level(self) -> tracing::Level {
         match self {
             Self::Trace => tracing::Level::TRACE,
             Self::Debug => tracing::Level::DEBUG,

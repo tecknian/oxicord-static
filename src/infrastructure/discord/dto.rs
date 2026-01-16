@@ -142,7 +142,7 @@ pub struct MessageResponse {
     #[serde(default)]
     pub attachments: Vec<AttachmentResponse>,
     pub message_reference: Option<MessageReferenceResponse>,
-    pub referenced_message: Option<Box<MessageResponse>>,
+    pub referenced_message: Option<Box<Self>>,
     #[serde(default)]
     pub pinned: bool,
 }

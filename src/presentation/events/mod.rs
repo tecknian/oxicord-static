@@ -25,7 +25,7 @@ impl EventHandler {
 
     /// Creates new handler with default timeout.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             poll_timeout: Duration::from_millis(Self::DEFAULT_POLL_TIMEOUT_MS),
         }
@@ -33,7 +33,7 @@ impl EventHandler {
 
     /// Creates handler with custom timeout.
     #[must_use]
-    pub fn with_timeout(timeout: Duration) -> Self {
+    pub const fn with_timeout(timeout: Duration) -> Self {
         Self {
             poll_timeout: timeout,
         }
@@ -53,7 +53,7 @@ impl EventHandler {
 
     /// Checks if key is a quit event.
     #[must_use]
-    pub fn is_quit_event(key: &KeyEvent) -> bool {
+    pub const fn is_quit_event(key: &KeyEvent) -> bool {
         matches!(
             key,
             KeyEvent {
@@ -74,7 +74,7 @@ impl EventHandler {
 
     /// Checks if key is a submit event.
     #[must_use]
-    pub fn is_submit_event(key: &KeyEvent) -> bool {
+    pub const fn is_submit_event(key: &KeyEvent) -> bool {
         matches!(
             key,
             KeyEvent {
