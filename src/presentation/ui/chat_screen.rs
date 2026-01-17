@@ -317,7 +317,16 @@ impl ChatScreenState {
                     };
                 }
                 MessagePaneAction::Edit(message_id) => {
-                    return ChatKeyResult::EditMessage(message_id);
+                    if let Some(message) = self
+                        .message_pane_data
+                        .messages()
+                        .iter()
+                        .find(|m| m.id() == message_id)
+                    {
+                        self.message_input_state
+                            .start_edit(message_id, message.content());
+                        self.focus_message_input();
+                    }
                 }
                 MessagePaneAction::Delete(message_id) => {
                     return ChatKeyResult::DeleteMessage(message_id);
@@ -354,6 +363,15 @@ impl ChatScreenState {
             match action {
                 MessageInputAction::SendMessage { content, reply_to } => {
                     return ChatKeyResult::SendMessage { content, reply_to };
+                }
+                MessageInputAction::EditMessage {
+                    message_id,
+                    content,
+                } => {
+                    return ChatKeyResult::SubmitEdit {
+                        message_id,
+                        content,
+                    };
                 }
                 MessageInputAction::StartTyping => {
                     return ChatKeyResult::StartTyping;
@@ -522,7 +540,7 @@ impl ChatScreenState {
     }
 
     pub fn cancel_reply(&mut self) {
-        self.message_input_state.cancel_reply();
+        self.message_input_state.reset_mode();
     }
 
     pub fn clear_input(&mut self) {
@@ -554,7 +572,7 @@ impl ChatScreenState {
     pub fn message_input_reply_info(&self) -> Option<(MessageId, String)> {
         match self.message_input_state.mode() {
             MessageInputMode::Reply { message_id, author } => Some((*message_id, author.clone())),
-            MessageInputMode::Normal => None,
+            MessageInputMode::Normal | MessageInputMode::Editing { .. } => None,
         }
     }
 
@@ -582,6 +600,10 @@ pub enum ChatKeyResult {
     ReplyToMessage {
         message_id: crate::domain::entities::MessageId,
         mention: bool,
+    },
+    SubmitEdit {
+        message_id: crate::domain::entities::MessageId,
+        content: String,
     },
     LoadHistory {
         channel_id: ChannelId,

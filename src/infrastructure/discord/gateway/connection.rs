@@ -373,10 +373,16 @@ impl GatewayConnectionHandler {
                 }
 
                 Some(payload) = self.payload_rx.recv() => {
-                    if let Ok(gateway_payload) = serde_json::from_str::<GatewayPayload>(&payload)
-                        && let Err(e) = self.connection.send(&gateway_payload).await
-                    {
-                        warn!(error = %e, "Failed to send payload");
+                    match serde_json::from_str::<GatewayPayload>(&payload) {
+                        Ok(gateway_payload) => {
+                            trace!(op = gateway_payload.op, "Sending payload to gateway");
+                            if let Err(e) = self.connection.send(&gateway_payload).await {
+                                warn!(error = %e, "Failed to send payload");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, payload = %payload, "Failed to parse outgoing payload");
+                        }
                     }
                 }
             }
@@ -397,6 +403,7 @@ impl GatewayConnectionHandler {
                 }
             }
             Some(GatewayOpcode::HeartbeatAck) => {
+                trace!("Received heartbeat ACK from gateway");
                 self.state.record_heartbeat_ack();
                 self.ack_received.store(true, Ordering::SeqCst);
                 if let Some(latency) = self.state.latency_ms() {

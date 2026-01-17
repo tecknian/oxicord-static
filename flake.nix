@@ -27,7 +27,16 @@
           packages = [
             rustToolchain
             pkgs.cargo-watch
+            pkgs.pkg-config
           ];
+
+          buildInputs = [
+            pkgs.chafa
+            pkgs.glib
+          ];
+
+          PKG_CONFIG_PATH = "${pkgs.chafa}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig";
+          LD_LIBRARY_PATH = "${pkgs.chafa}/lib:${pkgs.glib.out}/lib";
         };
       }
     );

@@ -69,6 +69,24 @@ impl SendMessageRequest {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EditMessageRequest {
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    pub content: String,
+}
+
+impl EditMessageRequest {
+    #[must_use]
+    pub fn new(channel_id: ChannelId, message_id: MessageId, content: impl Into<String>) -> Self {
+        Self {
+            channel_id,
+            message_id,
+            content: content.into(),
+        }
+    }
+}
+
 /// Port for fetching Discord data (guilds, channels, DMs, etc).
 #[async_trait]
 pub trait DiscordDataPort: Send + Sync {
@@ -110,6 +128,13 @@ pub trait DiscordDataPort: Send + Sync {
         &self,
         token: &AuthToken,
         request: SendMessageRequest,
+    ) -> Result<Message, AuthError>;
+
+    /// Edits an existing message.
+    async fn edit_message(
+        &self,
+        token: &AuthToken,
+        request: EditMessageRequest,
     ) -> Result<Message, AuthError>;
 
     /// Sends a typing indicator to a channel.

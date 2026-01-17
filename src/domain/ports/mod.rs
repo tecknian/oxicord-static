@@ -5,7 +5,8 @@ mod token_storage_port;
 
 pub use auth_port::AuthPort;
 pub use discord_data_port::{
-    DirectMessageChannel, DiscordDataPort, FetchMessagesOptions, SendMessageRequest,
+    DirectMessageChannel, DiscordDataPort, EditMessageRequest, FetchMessagesOptions,
+    SendMessageRequest,
 };
 pub use gateway_port::{GatewayEvent, GatewayPort};
 pub use token_storage_port::TokenStoragePort;

@@ -21,6 +21,9 @@ pub enum MessageInputMode {
         message_id: MessageId,
         author: String,
     },
+    Editing {
+        message_id: MessageId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +31,10 @@ pub enum MessageInputAction {
     SendMessage {
         content: String,
         reply_to: Option<MessageId>,
+    },
+    EditMessage {
+        message_id: MessageId,
+        content: String,
     },
     StartTyping,
     CancelReply,
@@ -94,11 +101,21 @@ impl MessageInputState<'_> {
         matches!(self.mode, MessageInputMode::Reply { .. })
     }
 
+    #[must_use]
+    pub fn is_editing(&self) -> bool {
+        matches!(self.mode, MessageInputMode::Editing { .. })
+    }
+
     pub fn start_reply(&mut self, message_id: MessageId, author: String) {
         self.mode = MessageInputMode::Reply { message_id, author };
     }
 
-    pub fn cancel_reply(&mut self) {
+    pub fn start_edit(&mut self, message_id: MessageId, content: &str) {
+        self.mode = MessageInputMode::Editing { message_id };
+        self.set_content(content);
+    }
+
+    pub fn reset_mode(&mut self) {
         self.mode = MessageInputMode::Normal;
     }
 
@@ -141,8 +158,8 @@ impl MessageInputState<'_> {
 
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
-                if self.is_replying() {
-                    self.cancel_reply();
+                if self.is_replying() || self.is_editing() {
+                    self.reset_mode();
                     Some(MessageInputAction::CancelReply)
                 } else {
                     Some(MessageInputAction::ExitInput)
@@ -153,9 +170,19 @@ impl MessageInputState<'_> {
                 if content.trim().is_empty() {
                     return None;
                 }
+
+                if let MessageInputMode::Editing { message_id } = &self.mode {
+                    let message_id = *message_id;
+                    self.clear();
+                    return Some(MessageInputAction::EditMessage {
+                        message_id,
+                        content,
+                    });
+                }
+
                 let reply_to = match &self.mode {
                     MessageInputMode::Reply { message_id, .. } => Some(*message_id),
-                    MessageInputMode::Normal => None,
+                    _ => None,
                 };
                 self.clear();
                 Some(MessageInputAction::SendMessage { content, reply_to })
@@ -201,6 +228,13 @@ impl MessageInputState<'_> {
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::ITALIC),
+            );
+        } else if let MessageInputMode::Editing { .. } = &self.mode {
+            let edit_title = " Editing Message ";
+            block = block.title(edit_title).title_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             );
         }
 
@@ -343,6 +377,7 @@ mod tests {
         assert!(state.is_empty());
         assert!(!state.is_focused());
         assert!(!state.is_replying());
+        assert!(!state.is_editing());
     }
 
     #[test]
@@ -375,8 +410,19 @@ mod tests {
         let mut state = MessageInputState::new();
         state.start_reply(MessageId(123), "testuser".to_string());
         assert!(state.is_replying());
-        state.cancel_reply();
+        state.reset_mode();
         assert!(!state.is_replying());
+    }
+
+    #[test]
+    fn test_edit_mode() {
+        let mut state = MessageInputState::new();
+        state.start_edit(MessageId(123), "old content");
+        assert!(state.is_editing());
+        assert_eq!(state.value(), "old content");
+        state.reset_mode();
+        assert!(!state.is_editing());
+        assert_eq!(state.value(), "old content");
     }
 
     #[test]

@@ -6,8 +6,8 @@ use reqwest::{Client, StatusCode, header};
 use tracing::{debug, warn};
 
 use super::dto::{
-    AttachmentResponse, ChannelResponse, DmChannelResponse, ErrorResponse, GuildResponse,
-    MessageReferencePayload, MessageResponse, SendMessagePayload, UserResponse,
+    AttachmentResponse, ChannelResponse, DmChannelResponse, EditMessagePayload, ErrorResponse,
+    GuildResponse, MessageReferencePayload, MessageResponse, SendMessagePayload, UserResponse,
 };
 use crate::domain::entities::{
     Attachment, AuthToken, Channel, ChannelId, ChannelKind, Guild, Message, MessageAuthor,
@@ -15,7 +15,8 @@ use crate::domain::entities::{
 };
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
-    AuthPort, DirectMessageChannel, DiscordDataPort, FetchMessagesOptions, SendMessageRequest,
+    AuthPort, DirectMessageChannel, DiscordDataPort, EditMessageRequest, FetchMessagesOptions,
+    SendMessageRequest,
 };
 
 const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
@@ -549,6 +550,58 @@ impl DiscordDataPort for DiscordClient {
 
         Self::parse_message_response(message_response, request.channel_id.as_u64())
             .ok_or_else(|| AuthError::unexpected("failed to parse sent message"))
+    }
+
+    async fn edit_message(
+        &self,
+        token: &AuthToken,
+        request: EditMessageRequest,
+    ) -> Result<Message, AuthError> {
+        let url = format!(
+            "{}/channels/{}/messages/{}",
+            self.base_url,
+            request.channel_id.as_u64(),
+            request.message_id.as_u64()
+        );
+
+        debug!(
+            channel_id = %request.channel_id,
+            message_id = %request.message_id,
+            "Editing message in Discord API"
+        );
+
+        let payload = EditMessagePayload {
+            content: request.content,
+        };
+
+        let response = self
+            .client
+            .patch(&url)
+            .header(header::AUTHORIZATION, token.as_str())
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to edit message");
+                AuthError::network(e.to_string())
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(self.handle_error_response(status, response).await);
+        }
+
+        let message_response: MessageResponse = response.json().await.map_err(|e| {
+            warn!(error = %e, "Failed to parse message response");
+            AuthError::unexpected(format!("failed to parse message response: {e}"))
+        })?;
+
+        debug!(message_id = %message_response.id, "Message edited successfully");
+
+        Self::parse_message_response(message_response, request.channel_id.as_u64())
+            .ok_or_else(|| AuthError::unexpected("failed to parse edited message"))
     }
 
     async fn send_typing_indicator(

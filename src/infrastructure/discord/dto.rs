@@ -171,3 +171,8 @@ pub struct SendMessagePayload {
 pub struct MessageReferencePayload {
     pub message_id: String,
 }
+
+#[derive(Debug, serde::Serialize)]
+pub struct EditMessagePayload {
+    pub content: String,
+}

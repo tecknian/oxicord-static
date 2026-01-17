@@ -9,9 +9,9 @@ use super::constants::{
 pub struct GatewayPayload {
     pub op: u8,
     pub d: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t: Option<String>,
 }
 

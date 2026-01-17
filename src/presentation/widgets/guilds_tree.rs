@@ -171,8 +171,16 @@ impl GuildsTreeState {
                 None
             }
             (KeyCode::Char('l') | KeyCode::Right, KeyModifiers::NONE) => {
+                let action = self.current_selection().and_then(|node| match node {
+                    TreeNodeId::Guild(id) => Some(GuildsTreeAction::LoadGuildChannels(*id)),
+                    TreeNodeId::Channel(id) => Some(GuildsTreeAction::SelectChannel(*id)),
+                    TreeNodeId::DirectMessageUser(id) => {
+                        Some(GuildsTreeAction::SelectDirectMessage(id.clone()))
+                    }
+                    _ => None,
+                });
                 self.tree_state.key_right();
-                None
+                action
             }
             (KeyCode::Char('g'), KeyModifiers::NONE) => {
                 self.select_first();

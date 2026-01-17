@@ -16,7 +16,8 @@ use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
 use crate::domain::entities::{AuthToken, ChannelId, GuildId, MessageId, User, UserCache};
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
-    AuthPort, DiscordDataPort, FetchMessagesOptions, SendMessageRequest, TokenStoragePort,
+    AuthPort, DiscordDataPort, EditMessageRequest, FetchMessagesOptions, SendMessageRequest,
+    TokenStoragePort,
 };
 use crate::infrastructure::discord::{
     DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
@@ -24,7 +25,7 @@ use crate::infrastructure::discord::{
 };
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen};
-use crate::presentation::widgets::ConnectionStatus;
+use crate::presentation::widgets::{ConnectionStatus, MessageInputMode};
 
 const TYPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(2);
 const TYPING_THROTTLE_DURATION: Duration = Duration::from_secs(8);
@@ -246,7 +247,6 @@ impl App {
                 channel_id,
                 guild_id,
             } => {
-                // Subscribe to channel for typing events (required for user accounts)
                 if let Some(guild_id) = guild_id {
                     self.subscribe_to_channel(guild_id, channel_id);
                 }
@@ -272,6 +272,12 @@ impl App {
             } => {
                 debug!(message_id = %message_id, mention = mention, "Reply to message requested");
                 self.handle_reply_to_message(message_id);
+            }
+            ChatKeyResult::SubmitEdit {
+                message_id,
+                content,
+            } => {
+                self.handle_edit_message(message_id, content).await;
             }
             ChatKeyResult::EditMessage(message_id) => {
                 debug!(message_id = %message_id, "Edit message requested");
@@ -573,7 +579,6 @@ impl App {
         user_id: String,
         username: Option<String>,
     ) {
-        // Ignore self-typing events
         if self.current_user_id.as_deref() == Some(user_id.as_str()) {
             return;
         }
@@ -643,7 +648,6 @@ impl App {
         let (guilds_result, dms_result) = tokio::join!(guilds_future, dms_future);
 
         if let Ok(dm_channels) = dms_result {
-            // Cache DM recipient user IDs -> names for typing indicator resolution
             for dm in &dm_channels {
                 self.user_cache
                     .insert_basic(&dm.recipient_id, &dm.recipient_name);
@@ -879,6 +883,49 @@ impl App {
         self.last_typing_sent = None;
     }
 
+    async fn handle_edit_message(
+        &mut self,
+        message_id: crate::domain::entities::MessageId,
+        content: String,
+    ) {
+        let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id)
+        } else {
+            None
+        };
+
+        let Some(channel_id) = channel_id else {
+            warn!("Cannot edit message: no channel selected");
+            return;
+        };
+
+        let Some(ref token) = self.current_token else {
+            warn!("Cannot edit message: no token available");
+            return;
+        };
+
+        let request = EditMessageRequest::new(channel_id, message_id, content);
+
+        debug!(channel_id = %channel_id, message_id = %message_id, "Editing message");
+
+        match self.discord_data.edit_message(token, request).await {
+            Ok(message) => {
+                info!(message_id = %message.id(), "Message edited successfully");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.update_message(message);
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to edit message");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_message_error(format!("Failed to edit: {e}"));
+                }
+            }
+        }
+    }
+
     async fn handle_start_typing(&mut self) {
         let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
             state
@@ -921,30 +968,25 @@ impl App {
     fn handle_open_editor(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         use std::io::Write;
 
-        // Get current input content and reply state
-        let (current_content, reply_info) = if let CurrentScreen::Chat(ref state) = self.screen {
+        let (current_content, input_mode) = if let CurrentScreen::Chat(ref state) = self.screen {
             let content = state.message_input_value();
-            let reply = state.message_input_reply_info();
-            (content, reply)
+            let mode = state.message_input_state().mode().clone();
+            (content, mode)
         } else {
             return Ok(());
         };
 
-        // Create temp file with .md extension
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join(format!("oxicord_message_{}.md", std::process::id()));
 
-        // Write current content to temp file
         {
             let mut file = std::fs::File::create(&temp_path)?;
             file.write_all(current_content.as_bytes())?;
         }
 
-        // Get editor from environment
         let editor = std::env::var("EDITOR")
             .or_else(|_| std::env::var("VISUAL"))
             .unwrap_or_else(|_| {
-                // Try common editors in order of preference
                 for editor in &["nvim", "vim", "nano", "vi"] {
                     if std::process::Command::new("which")
                         .arg(editor)
@@ -960,7 +1002,6 @@ impl App {
 
         debug!(editor = %editor, path = %temp_path.display(), "Opening external editor");
 
-        // Suspend TUI - restore terminal to normal state
         crossterm::terminal::disable_raw_mode()?;
         crossterm::execute!(
             std::io::stdout(),
@@ -968,10 +1009,8 @@ impl App {
             crossterm::cursor::Show
         )?;
 
-        // Spawn editor and wait
         let status = std::process::Command::new(&editor).arg(&temp_path).status();
 
-        // Resume TUI
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(
             std::io::stdout(),
@@ -979,21 +1018,26 @@ impl App {
             crossterm::cursor::Hide
         )?;
 
-        // Force terminal refresh
         terminal.clear()?;
 
         match status {
             Ok(exit_status) if exit_status.success() => {
-                // Read file content back
                 let new_content = std::fs::read_to_string(&temp_path).unwrap_or_default();
 
-                // Update message input with new content
                 if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_message_input_content(&new_content);
-
-                    // Restore reply state if it existed
-                    if let Some((message_id, author)) = reply_info {
-                        state.start_reply(message_id, author);
+                    match input_mode {
+                        MessageInputMode::Reply { message_id, author } => {
+                            state.set_message_input_content(&new_content);
+                            state.start_reply(message_id, author);
+                        }
+                        MessageInputMode::Editing { message_id } => {
+                            state
+                                .message_input_parts_mut()
+                                .start_edit(message_id, &new_content);
+                        }
+                        MessageInputMode::Normal => {
+                            state.set_message_input_content(&new_content);
+                        }
                     }
                 }
 
@@ -1013,7 +1057,6 @@ impl App {
             }
         }
 
-        // Clean up temp file
         if let Err(e) = std::fs::remove_file(&temp_path) {
             debug!(error = %e, "Failed to remove temp file");
         }
@@ -1077,6 +1120,14 @@ mod tests {
             &self,
             _token: &AuthToken,
             _request: SendMessageRequest,
+        ) -> Result<crate::domain::entities::Message, AuthError> {
+            Err(AuthError::unexpected("mock not implemented"))
+        }
+
+        async fn edit_message(
+            &self,
+            _token: &AuthToken,
+            _request: EditMessageRequest,
         ) -> Result<crate::domain::entities::Message, AuthError> {
             Err(AuthError::unexpected("mock not implemented"))
         }
