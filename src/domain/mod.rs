@@ -4,6 +4,8 @@
 pub mod entities;
 /// Error types.
 pub mod errors;
+/// Keybinding definitions.
+pub mod keybinding;
 /// Port definitions.
 pub mod ports;
 

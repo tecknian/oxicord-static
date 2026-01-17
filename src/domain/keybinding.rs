@@ -1,0 +1,85 @@
+use crossterm::event::KeyEvent;
+use std::borrow::Cow;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Action {
+    Quit,
+    Logout,
+    ToggleHelp,
+    ToggleGuildsTree,
+    ToggleFileExplorer,
+
+    // Navigation / Focus
+    FocusGuilds,
+    FocusMessages,
+    FocusInput,
+    FocusNext,
+    FocusPrevious,
+    NextTab,
+    NavigateUp,
+    NavigateDown,
+    NavigateLeft,
+    NavigateRight,
+    Select,
+    SelectFirst,
+    SelectLast,
+
+    // Message List
+    ScrollDown,
+    ScrollUp,
+    ScrollToTop,
+    ScrollToBottom,
+    LoadHistory,
+    ClearSelection,
+
+    // Message Actions
+    SendMessage,
+    Reply,
+    ReplyNoMention,
+    EditMessage,
+    DeleteMessage,
+    CopyContent,
+    YankId,
+    YankUrl,
+    OpenAttachments,
+    JumpToReply,
+
+    // Input
+    OpenEditor,
+    ClearInput,
+    Cancel,
+
+    // Guilds Tree Specific
+    Collapse,
+    Expand,
+    MoveToParent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keybind {
+    pub key: KeyEvent,
+    pub action: Action,
+    pub label: Cow<'static, str>,
+    pub visible_in_bar: bool,
+}
+
+impl Keybind {
+    pub fn new(key: KeyEvent, action: Action, label: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            key,
+            action,
+            label: label.into(),
+            visible_in_bar: true,
+        }
+    }
+
+    pub fn hidden(mut self) -> Self {
+        self.visible_in_bar = false;
+        self
+    }
+}
+
+pub struct KeyDefinition {
+    pub key: KeyEvent,
+    pub action: Action,
+}

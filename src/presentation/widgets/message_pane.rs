@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::application::services::markdown_service::{MarkdownService, MentionResolver};
+use crate::domain::keybinding::Action;
+use crate::presentation::commands::CommandRegistry;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect, Size},
@@ -430,83 +432,84 @@ impl MessagePaneState {
         &mut self,
         key: KeyEvent,
         data: &MessagePaneData,
+        registry: &CommandRegistry,
     ) -> Option<MessagePaneAction> {
         let message_count = data.message_count();
 
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
+        match registry.find_action(key) {
+            Some(Action::NavigateDown) => {
                 self.select_next(message_count);
                 None
             }
-            (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
+            Some(Action::NavigateUp) => {
                 if self.selected_index == Some(0) {
                     return Some(MessagePaneAction::LoadHistory);
                 }
                 self.select_previous(message_count);
                 None
             }
-            (KeyCode::Char('J'), KeyModifiers::SHIFT) => {
+            Some(Action::ScrollDown) => {
                 self.scroll_down();
                 None
             }
-            (KeyCode::Char('K'), KeyModifiers::SHIFT) => {
+            Some(Action::ScrollUp) => {
                 if self.scroll_state.offset().y == 0 {
                     return Some(MessagePaneAction::LoadHistory);
                 }
                 self.scroll_up();
                 None
             }
-            (KeyCode::Char('g'), KeyModifiers::NONE) => {
+            Some(Action::SelectFirst) => {
                 self.select_first();
                 Some(MessagePaneAction::LoadHistory)
             }
-            (KeyCode::Char('G'), KeyModifiers::SHIFT) => {
+            Some(Action::SelectLast) => {
                 self.select_last(message_count);
                 None
             }
-            (KeyCode::Home, KeyModifiers::NONE) => {
+            Some(Action::ScrollToTop) => {
                 self.scroll_to_top();
                 None
             }
-            (KeyCode::End, KeyModifiers::NONE) => {
+            Some(Action::ScrollToBottom) => {
                 self.scroll_to_bottom();
                 self.auto_scroll = true;
                 None
             }
-            (KeyCode::Esc, KeyModifiers::NONE) => {
+            Some(Action::Cancel) | Some(Action::ClearSelection) => {
                 self.clear_selection();
                 Some(MessagePaneAction::ClearSelection)
             }
-            (KeyCode::Char('r'), KeyModifiers::NONE) => {
+            Some(Action::Reply) => {
                 self.get_selected_message_id(data)
                     .map(|id| MessagePaneAction::Reply {
                         message_id: id,
                         mention: true,
                     })
             }
-            (KeyCode::Char('R'), KeyModifiers::SHIFT) => {
+            Some(Action::ReplyNoMention) => {
                 self.get_selected_message_id(data)
                     .map(|id| MessagePaneAction::Reply {
                         message_id: id,
                         mention: false,
                     })
             }
-            (KeyCode::Char('e'), KeyModifiers::NONE) => self
+            Some(Action::EditMessage) => self
                 .get_selected_message_id(data)
                 .map(MessagePaneAction::Edit),
-            (KeyCode::Char('d'), KeyModifiers::NONE) => self
+            Some(Action::DeleteMessage) => self
                 .get_selected_message_id(data)
                 .map(MessagePaneAction::Delete),
-            (KeyCode::Char('y'), KeyModifiers::NONE) => self
+            Some(Action::CopyContent) => self
                 .get_selected_message(data)
                 .map(|m| MessagePaneAction::YankContent(m.content().to_string())),
-            (KeyCode::Char('i'), KeyModifiers::NONE) => self
+            Some(Action::YankId) => self
                 .get_selected_message_id(data)
                 .map(|id| MessagePaneAction::YankId(id.to_string())),
-            (KeyCode::Char('o'), KeyModifiers::NONE) => self
+            Some(Action::OpenAttachments) => self
                 .get_selected_message_id(data)
                 .map(MessagePaneAction::OpenAttachments),
-            (KeyCode::Char('s'), KeyModifiers::NONE) => self
+            Some(Action::JumpToReply) => self
                 .get_selected_message(data)
                 .and_then(|m| m.reference())
                 .and_then(crate::domain::entities::MessageReference::message_id)

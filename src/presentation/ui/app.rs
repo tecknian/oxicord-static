@@ -305,7 +305,7 @@ impl App {
             ChatKeyResult::OpenEditor => {
                 return EventResult::OpenEditor;
             }
-            ChatKeyResult::Consumed => {}
+            ChatKeyResult::ToggleHelp | ChatKeyResult::Consumed => {}
         }
 
         EventResult::Continue

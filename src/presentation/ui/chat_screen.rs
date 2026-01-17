@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
@@ -10,6 +10,8 @@ use crate::application::services::markdown_service::MarkdownService;
 use crate::domain::entities::{
     Channel, ChannelId, ChannelKind, Guild, GuildId, Message, MessageId, User,
 };
+use crate::domain::keybinding::{Action, Keybind};
+use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::widgets::{
     ConnectionStatus, FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar,
     GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar, MessageInput,
@@ -111,6 +113,8 @@ pub struct ChatScreenState {
     markdown_service: Arc<MarkdownService>,
     file_explorer: Option<FileExplorerComponent>,
     show_file_explorer: bool,
+    show_help: bool,
+    registry: CommandRegistry,
 }
 
 impl ChatScreenState {
@@ -135,6 +139,8 @@ impl ChatScreenState {
             markdown_service,
             file_explorer: None,
             show_file_explorer: false,
+            show_help: false,
+            registry: CommandRegistry::default(),
         }
     }
 
@@ -233,7 +239,23 @@ impl ChatScreenState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> ChatKeyResult {
+        if self.show_help {
+            if let Some(action) = self.registry.find_action(key) {
+                if matches!(action, Action::ToggleHelp | Action::Quit | Action::Cancel) {
+                    self.toggle_help();
+                    return ChatKeyResult::Consumed;
+                }
+            }
+            return ChatKeyResult::Consumed;
+        }
+
         if self.show_file_explorer {
+            if let Some(action) = self.registry.find_action(key) {
+                if action == Action::ToggleFileExplorer || action == Action::Cancel {
+                    self.toggle_file_explorer();
+                    return ChatKeyResult::Consumed;
+                }
+            }
             return self.handle_file_explorer_key(key);
         }
 
@@ -249,47 +271,43 @@ impl ChatScreenState {
     }
 
     fn handle_global_key(&mut self, key: KeyEvent) -> Option<ChatKeyResult> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(ChatKeyResult::Quit),
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => Some(ChatKeyResult::Logout),
-            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+        match self.registry.find_action(key) {
+            Some(Action::Quit) => Some(ChatKeyResult::Quit),
+            Some(Action::Logout) => Some(ChatKeyResult::Logout),
+            Some(Action::FocusGuilds) => {
                 self.focus_guilds_tree();
                 Some(ChatKeyResult::Consumed)
             }
-            (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
+            Some(Action::FocusMessages) => {
                 self.focus_messages_list();
                 Some(ChatKeyResult::Consumed)
             }
-            (KeyCode::Char('i'), KeyModifiers::CONTROL) => {
+            Some(Action::FocusInput) => {
                 self.focus_message_input();
                 Some(ChatKeyResult::Consumed)
             }
-            (KeyCode::Tab, _) => {
-                self.focus_message_input();
-                Some(ChatKeyResult::Consumed)
-            }
-            (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+            Some(Action::FocusPrevious) => {
                 self.focus_previous();
                 Some(ChatKeyResult::Consumed)
             }
-            (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+            Some(Action::FocusNext) | Some(Action::NextTab) => {
                 self.focus_next();
                 Some(ChatKeyResult::Consumed)
             }
-            (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+            Some(Action::ToggleGuildsTree) => {
                 self.toggle_guilds_tree();
                 Some(ChatKeyResult::Consumed)
             }
-            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
-                self.toggle_file_explorer();
-                Some(ChatKeyResult::Consumed)
+            Some(Action::ToggleHelp) => {
+                self.toggle_help();
+                Some(ChatKeyResult::ToggleHelp)
             }
             _ => None,
         }
     }
 
     fn handle_guilds_tree_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) = self.guilds_tree_state.handle_key(key) {
+        if let Some(action) = self.guilds_tree_state.handle_key(key, &self.registry) {
             match action {
                 GuildsTreeAction::SelectChannel(channel_id) => {
                     if let Some(result) = self.on_channel_selected(channel_id) {
@@ -318,9 +336,9 @@ impl ChatScreenState {
     }
 
     fn handle_messages_list_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) = self
-            .message_pane_state
-            .handle_key(key, &self.message_pane_data)
+        if let Some(action) =
+            self.message_pane_state
+                .handle_key(key, &self.message_pane_data, &self.registry)
         {
             match action {
                 MessagePaneAction::ClearSelection | MessagePaneAction::SelectMessage(_) => {}
@@ -376,7 +394,12 @@ impl ChatScreenState {
     }
 
     fn handle_message_input_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) = self.message_input_state.handle_key(key) {
+        if self.registry.find_action(key) == Some(Action::ToggleFileExplorer) {
+            self.toggle_file_explorer();
+            return ChatKeyResult::Consumed;
+        }
+
+        if let Some(action) = self.message_input_state.handle_key(key, &self.registry) {
             match action {
                 MessageInputAction::SendMessage {
                     content,
@@ -615,6 +638,10 @@ impl ChatScreenState {
         }
     }
 
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
     fn handle_file_explorer_key(&mut self, key: KeyEvent) -> ChatKeyResult {
         if let Some(explorer) = &mut self.file_explorer {
             match explorer.handle_key(key) {
@@ -634,6 +661,52 @@ impl ChatScreenState {
         } else {
             ChatKeyResult::Consumed
         }
+    }
+}
+
+impl HasCommands for ChatScreenState {
+    fn get_commands(&self, registry: &CommandRegistry) -> Vec<Keybind> {
+        let mut commands = Vec::new();
+
+        let mut add = |action: Action, label: &'static str| {
+            if let Some(key) = registry.get(action) {
+                commands.push(Keybind::new(key, action, label));
+            }
+        };
+
+        if self.show_help {
+            add(Action::ToggleHelp, "Close Help");
+            return commands;
+        }
+
+        if self.show_file_explorer {
+            add(Action::Select, "Select");
+            add(Action::ToggleFileExplorer, "Close");
+        } else {
+            match self.focus {
+                ChatFocus::GuildsTree => {
+                    add(Action::NavigateUp, "Nav");
+                    add(Action::Select, "Select");
+                    add(Action::NavigateRight, "Expand");
+                }
+                ChatFocus::MessagesList => {
+                    add(Action::NavigateUp, "Nav");
+                    add(Action::Reply, "Reply");
+                    add(Action::EditMessage, "Edit");
+                    add(Action::DeleteMessage, "Del");
+                }
+                ChatFocus::MessageInput => {
+                    add(Action::SendMessage, "Send");
+                    add(Action::OpenEditor, "Editor");
+                    add(Action::Cancel, "Cancel");
+                }
+            }
+
+            add(Action::NextTab, "Next");
+            add(Action::ToggleHelp, "Help");
+        }
+
+        commands
     }
 }
 
@@ -675,6 +748,7 @@ pub enum ChatKeyResult {
     },
     StartTyping,
     OpenEditor,
+    ToggleHelp,
 }
 
 pub struct ChatScreen;
@@ -710,7 +784,153 @@ impl StatefulWidget for ChatScreen {
         if state.show_file_explorer {
             render_explorer_popup(state, area, buf);
         }
+
+        if state.show_help {
+            render_help_popup(state, area, buf);
+        }
     }
+}
+
+fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::domain::keybinding::Action;
+    use ratatui::layout::Alignment;
+    use ratatui::style::Style;
+    use ratatui::widgets::{Block, Borders, Cell, Clear, Row, Table};
+
+    let width = 80;
+    let height = 30;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width.min(area.width), height.min(area.height));
+
+    Clear.render(popup_area, buf);
+
+    let bindings = vec![
+        (
+            "GLOBAL",
+            vec![
+                (Action::Quit, "Quit Application"),
+                (Action::Logout, "Logout"),
+                (Action::ToggleHelp, "Toggle Help"),
+                (Action::FocusGuilds, "Focus Guilds"),
+                (Action::FocusMessages, "Focus Messages"),
+                (Action::FocusInput, "Focus Input"),
+                (Action::ToggleGuildsTree, "Toggle Guilds Tree"),
+                (Action::ToggleFileExplorer, "Toggle File Explorer"),
+            ],
+        ),
+        (
+            "NAVIGATION",
+            vec![
+                (Action::NavigateLeft, "Left"),
+                (Action::NavigateDown, "Down"),
+                (Action::NavigateUp, "Up"),
+                (Action::NavigateRight, "Right"),
+                (Action::NextTab, "Next Pane"),
+            ],
+        ),
+        (
+            "MESSAGES",
+            vec![
+                (Action::Reply, "Reply"),
+                (Action::ReplyNoMention, "Reply (no mention)"),
+                (Action::EditMessage, "Edit Message"),
+                (Action::DeleteMessage, "Delete Message"),
+                (Action::CopyContent, "Copy Content"),
+                (Action::YankId, "Copy Message ID"),
+                (Action::OpenAttachments, "Open Attachment"),
+                (Action::JumpToReply, "Jump to Reply"),
+            ],
+        ),
+        (
+            "INPUT",
+            vec![
+                (Action::SendMessage, "Send Message"),
+                (Action::OpenEditor, "Open External Editor"),
+                (Action::ClearInput, "Clear Input"),
+                (Action::Cancel, "Cancel Reply / Exit"),
+            ],
+        ),
+    ];
+
+    let format_key = |action: Action| -> String {
+        state
+            .registry
+            .get(action)
+            .map(|k| {
+                let mut s = String::new();
+                if k.modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                {
+                    s.push_str("Ctrl+");
+                }
+                if k.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+                    s.push_str("Alt+");
+                }
+                if k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                    // Shift is often implied by the char, but consistent formatting helps
+                }
+
+                match k.code {
+                    KeyCode::Char(c) => s.push(c),
+                    KeyCode::Enter => s.push_str("Enter"),
+                    KeyCode::Esc => s.push_str("Esc"),
+                    KeyCode::Tab => s.push_str("Tab"),
+                    KeyCode::Up => s.push_str("Up"),
+                    KeyCode::Down => s.push_str("Down"),
+                    KeyCode::Left => s.push_str("Left"),
+                    KeyCode::Right => s.push_str("Right"),
+                    KeyCode::F(n) => s.push_str(&format!("F{}", n)),
+                    KeyCode::Backspace => s.push_str("Backspace"),
+                    KeyCode::Delete => s.push_str("Delete"),
+                    KeyCode::Home => s.push_str("Home"),
+                    KeyCode::End => s.push_str("End"),
+                    KeyCode::PageUp => s.push_str("PageUp"),
+                    KeyCode::PageDown => s.push_str("PageDown"),
+                    KeyCode::BackTab => s.push_str("BackTab"),
+                    _ => s.push_str(&format!("{:?}", k.code)),
+                }
+                s
+            })
+            .unwrap_or_else(|| "N/A".to_string())
+    };
+
+    let mut rows = Vec::new();
+
+    for (category, keys) in bindings.iter() {
+        rows.push(Row::new(vec![
+            Cell::from(format!(" {category} ")).style(
+                Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Cell::from(""),
+        ]));
+
+        for (action, desc) in keys.iter() {
+            rows.push(Row::new(vec![
+                Cell::from(format!("  {}", format_key(*action)))
+                    .style(Style::default().fg(ratatui::style::Color::Cyan)),
+                Cell::from(*desc).style(Style::default().fg(ratatui::style::Color::Gray)),
+            ]));
+        }
+        rows.push(Row::new(vec!["", ""]));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Keyboard Shortcuts ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(ratatui::style::Color::Cyan));
+
+    let table = Table::new(
+        rows,
+        [Constraint::Percentage(40), Constraint::Percentage(60)],
+    )
+    .block(block)
+    .column_spacing(2);
+
+    Widget::render(table, popup_area, buf);
 }
 
 fn render_explorer_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
@@ -761,14 +981,15 @@ fn render_footer_bar(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
         String::new()
     };
 
-    let footer =
-        FooterBar::new()
-            .focus_context(focus_context)
-            .right_info(if right_info.is_empty() {
-                None
-            } else {
-                Some(Box::leak(right_info.into_boxed_str()))
-            });
+    let commands = state.get_commands(&state.registry);
+
+    let footer = FooterBar::new(&commands)
+        .focus_context(focus_context)
+        .right_info(if right_info.is_empty() {
+            None
+        } else {
+            Some(Box::leak(right_info.into_boxed_str()))
+        });
     Widget::render(footer, area, buf);
 }
 

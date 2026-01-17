@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -10,6 +10,8 @@ use ratatui::{
 use tui_textarea::TextArea;
 
 use crate::domain::entities::MessageId;
+use crate::domain::keybinding::Action;
+use crate::presentation::commands::CommandRegistry;
 
 const MAX_MESSAGE_LENGTH: usize = 2000;
 const PLACEHOLDER_TEXT: &str = "Type a message...";
@@ -165,7 +167,11 @@ impl MessageInputState<'_> {
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<MessageInputAction> {
+    pub fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        registry: &CommandRegistry,
+    ) -> Option<MessageInputAction> {
         if !self.has_channel {
             if key.code == KeyCode::Esc {
                 return Some(MessageInputAction::ExitInput);
@@ -173,8 +179,8 @@ impl MessageInputState<'_> {
             return None;
         }
 
-        match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) => {
+        match registry.find_action(key) {
+            Some(Action::Cancel) => {
                 if self.is_replying() || self.is_editing() {
                     self.reset_mode();
                     Some(MessageInputAction::CancelReply)
@@ -182,7 +188,7 @@ impl MessageInputState<'_> {
                     Some(MessageInputAction::ExitInput)
                 }
             }
-            (KeyCode::Enter, KeyModifiers::NONE) => {
+            Some(Action::SendMessage) => {
                 let content = self.value();
                 if content.trim().is_empty() && self.attachments.is_empty() {
                     return None;
@@ -210,8 +216,8 @@ impl MessageInputState<'_> {
                     attachments,
                 })
             }
-            (KeyCode::Char('e'), KeyModifiers::CONTROL) => Some(MessageInputAction::OpenEditor),
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+            Some(Action::OpenEditor) => Some(MessageInputAction::OpenEditor),
+            Some(Action::ClearInput) => {
                 self.clear();
                 None
             }
@@ -415,11 +421,18 @@ mod tests {
     #[test]
     fn test_input_via_key_handling() {
         let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
         state.set_has_channel(true);
         state.set_focused(true);
 
-        state.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &registry,
+        );
 
         assert_eq!(state.value(), "hi");
     }
@@ -427,11 +440,24 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
         state.set_has_channel(true);
-        state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &registry,
+        );
 
         state.clear();
         assert!(state.is_empty());
@@ -460,14 +486,27 @@ mod tests {
     #[test]
     fn test_send_message_clears_state() {
         let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
         state.set_has_channel(true);
-        state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
-        state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+            &registry,
+        );
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &registry,
+        );
         state.start_reply(MessageId(123), "user".to_string());
 
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &registry);
 
         assert!(matches!(
             action,
@@ -484,9 +523,13 @@ mod tests {
     #[test]
     fn test_open_editor_action() {
         let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
         state.set_has_channel(true);
 
-        let action = state.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        let action = state.handle_key(
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+            &registry,
+        );
         assert!(matches!(action, Some(MessageInputAction::OpenEditor)));
     }
 }

@@ -1,5 +1,7 @@
 //! Presentation layer with UI components and event handling.
 
+/// Command handling.
+pub mod commands;
 /// Event handling.
 pub mod events;
 /// UI screens.

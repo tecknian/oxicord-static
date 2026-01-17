@@ -12,7 +12,7 @@ mod status_bar;
 
 pub use channel_header::{ChannelHeader, ChannelHeaderStyle};
 pub use file_explorer::{FileExplorerAction, FileExplorerComponent};
-pub use footer_bar::{FocusContext, FooterBar, FooterBarStyle, KeyBinding};
+pub use footer_bar::{FocusContext, FooterBar, FooterBarStyle};
 pub use guilds_tree::{
     GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, GuildsTreeStyle, TreeNodeId,
 };

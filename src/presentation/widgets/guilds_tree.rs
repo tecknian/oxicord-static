@@ -1,6 +1,6 @@
 //! Guilds tree widget for server/channel navigation.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,6 +11,8 @@ use ratatui::{
 use tui_tree_widget::{Tree, TreeItem, TreeState};
 
 use crate::domain::entities::{Channel, ChannelId, Guild, GuildId};
+use crate::domain::keybinding::Action;
+use crate::presentation::commands::CommandRegistry;
 
 /// Unique identifier for nodes in the guilds tree.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -156,21 +158,25 @@ impl GuildsTreeState {
     }
 
     /// Handles a key event and returns an optional action.
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<GuildsTreeAction> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
+    pub fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        registry: &CommandRegistry,
+    ) -> Option<GuildsTreeAction> {
+        match registry.find_action(key) {
+            Some(Action::NavigateDown) => {
                 self.select_next();
                 None
             }
-            (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
+            Some(Action::NavigateUp) => {
                 self.select_previous();
                 None
             }
-            (KeyCode::Char('h') | KeyCode::Left, KeyModifiers::NONE) => {
+            Some(Action::NavigateLeft) => {
                 self.tree_state.key_left();
                 None
             }
-            (KeyCode::Char('l') | KeyCode::Right, KeyModifiers::NONE) => {
+            Some(Action::NavigateRight) => {
                 let action = self.current_selection().and_then(|node| match node {
                     TreeNodeId::Guild(id) => Some(GuildsTreeAction::LoadGuildChannels(*id)),
                     TreeNodeId::Channel(id) => Some(GuildsTreeAction::SelectChannel(*id)),
@@ -182,27 +188,27 @@ impl GuildsTreeState {
                 self.tree_state.key_right();
                 action
             }
-            (KeyCode::Char('g'), KeyModifiers::NONE) => {
+            Some(Action::SelectFirst) => {
                 self.select_first();
                 None
             }
-            (KeyCode::Char('G'), KeyModifiers::SHIFT) => {
+            Some(Action::SelectLast) => {
                 self.select_last();
                 None
             }
-            (KeyCode::Enter | KeyCode::Char(' '), KeyModifiers::NONE) => {
+            Some(Action::Select) => {
                 self.toggle_current();
                 self.get_selection_action()
             }
-            (KeyCode::Char('-'), KeyModifiers::NONE) => {
+            Some(Action::Collapse) => {
                 self.collapse_parent();
                 None
             }
-            (KeyCode::Char('p'), KeyModifiers::NONE) => {
+            Some(Action::MoveToParent) => {
                 self.move_to_parent();
                 None
             }
-            (KeyCode::Char('i'), KeyModifiers::NONE) => self.current_selection().map(|node| {
+            Some(Action::YankId) => self.current_selection().map(|node| {
                 let id = match node {
                     TreeNodeId::DirectMessages => "direct_messages".to_string(),
                     TreeNodeId::DirectMessageUser(id) => id.clone(),
@@ -640,12 +646,13 @@ mod tests {
     #[test]
     fn test_handle_navigation_keys() {
         let mut state = GuildsTreeState::new();
+        let registry = CommandRegistry::default();
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert!(state.handle_key(key_j).is_none());
+        assert!(state.handle_key(key_j, &registry).is_none());
 
         let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        assert!(state.handle_key(key_k).is_none());
+        assert!(state.handle_key(key_k, &registry).is_none());
     }
 
     #[test]
