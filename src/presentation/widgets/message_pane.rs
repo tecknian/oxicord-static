@@ -282,7 +282,7 @@ pub struct MessagePaneState {
     scroll_state: ScrollViewState,
     selected_index: Option<usize>,
     focused: bool,
-    auto_scroll: bool,
+    is_following: bool,
     scroll_to_selection: bool,
     content_height: u16,
     viewport_height: u16,
@@ -296,7 +296,7 @@ impl MessagePaneState {
             scroll_state: ScrollViewState::new(),
             selected_index: None,
             focused: false,
-            auto_scroll: true,
+            is_following: true,
             scroll_to_selection: false,
             content_height: 0,
             viewport_height: 0,
@@ -339,7 +339,7 @@ impl MessagePaneState {
             return;
         }
 
-        self.auto_scroll = false;
+        self.is_following = false;
         self.scroll_to_selection = true;
         self.selected_index = Some(self.selected_index.map_or_else(
             || message_count.saturating_sub(1),
@@ -352,7 +352,7 @@ impl MessagePaneState {
             return;
         }
 
-        self.auto_scroll = false;
+        self.is_following = false;
         self.scroll_to_selection = true;
         self.selected_index = Some(self.selected_index.map_or_else(
             || message_count.saturating_sub(1),
@@ -362,7 +362,7 @@ impl MessagePaneState {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn select_first(&mut self) {
-        self.auto_scroll = false;
+        self.is_following = false;
         self.scroll_to_selection = true;
         self.selected_index = Some(0);
         self.scroll_state.scroll_to_top();
@@ -373,7 +373,7 @@ impl MessagePaneState {
             return;
         }
         self.selected_index = Some(message_count - 1);
-        self.auto_scroll = true;
+        self.is_following = false;
         self.scroll_to_selection = true;
         self.scroll_to_bottom();
     }
@@ -381,12 +381,19 @@ impl MessagePaneState {
     #[allow(clippy::missing_const_for_fn)]
     pub fn clear_selection(&mut self) {
         self.selected_index = None;
-        self.auto_scroll = true;
+        self.is_following = true;
+        self.scroll_to_bottom();
+    }
+
+    pub fn on_new_message(&mut self) {
+        if self.is_following {
+            self.scroll_to_bottom();
+        }
     }
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_down(&mut self) {
-        self.auto_scroll = false;
+        self.is_following = false;
         for _ in 0..SCROLL_AMOUNT {
             self.scroll_state.scroll_down();
         }
@@ -394,7 +401,7 @@ impl MessagePaneState {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_up(&mut self) {
-        self.auto_scroll = false;
+        self.is_following = false;
         for _ in 0..SCROLL_AMOUNT {
             self.scroll_state.scroll_up();
         }
@@ -414,17 +421,11 @@ impl MessagePaneState {
         self.scroll_state.scroll_to_top();
     }
 
-    pub fn on_new_message(&mut self) {
-        if self.auto_scroll {
-            self.scroll_to_bottom();
-        }
-    }
-
     pub fn update_dimensions(&mut self, content_height: u16, viewport_height: u16) {
         self.content_height = content_height;
         self.viewport_height = viewport_height;
 
-        if self.auto_scroll {
+        if self.is_following {
             self.scroll_to_bottom();
         }
     }
@@ -474,7 +475,9 @@ impl MessagePaneState {
             }
             Some(Action::ScrollToBottom) => {
                 self.scroll_to_bottom();
-                self.auto_scroll = true;
+                if self.selected_index.is_none() {
+                    self.is_following = true;
+                }
                 None
             }
             Some(Action::Cancel | Action::ClearSelection) => {
@@ -1148,5 +1151,37 @@ mod tests {
         data.set_typing_indicator(None);
         assert!(data.typing_indicator().is_none());
         assert!(!data.has_typing_indicator());
+    }
+
+    #[test]
+    fn test_smart_scroll_logic() {
+        let mut state = MessagePaneState::new();
+        state.update_dimensions(100, 10);
+
+        state.set_focused(true);
+        state.select_last(10);
+        assert_eq!(state.selected_index(), Some(9));
+
+        state.scroll_to_top();
+        assert_eq!(state.scroll_state.offset().y, 0);
+
+        state.on_new_message();
+        assert_eq!(state.scroll_state.offset().y, 0);
+
+        state.clear_selection();
+        assert_eq!(state.selected_index(), None);
+        assert_eq!(state.scroll_state.offset().y, 90);
+
+        state.scroll_to_top();
+        state.on_new_message();
+        assert_eq!(state.scroll_state.offset().y, 90);
+
+        state.set_focused(false);
+        state.select_last(10);
+        state.scroll_to_top();
+        assert_eq!(state.scroll_state.offset().y, 0);
+
+        state.on_new_message();
+        assert_eq!(state.scroll_state.offset().y, 0);
     }
 }
