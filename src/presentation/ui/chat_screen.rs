@@ -533,9 +533,23 @@ impl ChatScreenState {
     }
 
     fn on_channel_selected(&mut self, channel_id: ChannelId) -> Option<ChatKeyResult> {
-        let guild_id = self
-            .selected_guild
-            .or_else(|| self.guilds_tree_data.find_guild_for_channel(channel_id));
+        let mut guild_id = self.selected_guild;
+
+        if let Some(id) = guild_id {
+            let channel_in_guild = self
+                .guilds_tree_data
+                .channels(id)
+                .map_or(false, |channels| {
+                    channels.iter().any(|c| c.id() == channel_id)
+                });
+            if !channel_in_guild {
+                guild_id = None;
+            }
+        }
+
+        if guild_id.is_none() {
+            guild_id = self.guilds_tree_data.find_guild_for_channel(channel_id);
+        }
 
         let channel_info = if let Some(guild_id) = guild_id
             && let Some(channels) = self.guilds_tree_data.channels(guild_id)
@@ -570,7 +584,13 @@ impl ChatScreenState {
     }
 
     fn on_guild_selected(&mut self, guild_id: GuildId) -> Option<ChatKeyResult> {
+        if self.selected_guild == Some(guild_id) {
+            return None;
+        }
+
         self.selected_guild = Some(guild_id);
+        self.selected_channel = None;
+        self.guilds_tree_data.set_active_channel(None);
         self.guilds_tree_data.set_active_guild(Some(guild_id));
 
         if self.guilds_tree_data.channels(guild_id).is_none() {
@@ -1247,6 +1267,127 @@ mod tests {
 
         state.set_guilds(guilds);
         assert_eq!(state.guilds_tree_data().guilds().len(), 2);
+    }
+
+    #[test]
+    fn test_channel_reset_on_guild_change() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownService::new()),
+            UserCache::new(),
+        );
+
+        let guild_a = Guild::new(1_u64, "Guild A");
+        let guild_b = Guild::new(2_u64, "Guild B");
+        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+
+        state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
+        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
+        state.set_channels(guild_b.id(), vec![]);
+
+        state.on_guild_selected(guild_a.id());
+        assert_eq!(state.selected_guild(), Some(guild_a.id()));
+
+        state.on_channel_selected(channel_a1.id());
+        assert_eq!(
+            state.selected_channel().map(|c| c.id()),
+            Some(channel_a1.id())
+        );
+        assert_eq!(
+            state.guilds_tree_data().active_channel_id(),
+            Some(channel_a1.id())
+        );
+
+        state.on_guild_selected(guild_b.id());
+
+        assert_eq!(state.selected_guild(), Some(guild_b.id()));
+        assert_eq!(
+            state.selected_channel(),
+            None,
+            "Selected channel should be cleared"
+        );
+        assert_eq!(
+            state.guilds_tree_data().active_channel_id(),
+            None,
+            "Active channel ID in tree data should be cleared"
+        );
+    }
+
+    #[test]
+    fn test_reselecting_same_guild_preserves_channel() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownService::new()),
+            UserCache::new(),
+        );
+
+        let guild_a = Guild::new(1_u64, "Guild A");
+        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+
+        state.set_guilds(vec![guild_a.clone()]);
+        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
+
+        state.on_guild_selected(guild_a.id());
+        state.on_channel_selected(channel_a1.id());
+
+        assert_eq!(state.selected_guild(), Some(guild_a.id()));
+        assert_eq!(
+            state.selected_channel().map(|c| c.id()),
+            Some(channel_a1.id())
+        );
+
+        state.on_guild_selected(guild_a.id());
+
+        assert_eq!(state.selected_guild(), Some(guild_a.id()));
+        assert_eq!(
+            state.selected_channel().map(|c| c.id()),
+            Some(channel_a1.id()),
+            "Reselecting the same guild should not clear the active channel"
+        );
+    }
+
+    #[test]
+    fn test_cross_guild_channel_selection() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownService::new()),
+            UserCache::new(),
+        );
+
+        let guild_a = Guild::new(1_u64, "Guild A");
+        let guild_b = Guild::new(2_u64, "Guild B");
+        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+        let channel_b1 = Channel::new(ChannelId(20), "Channel B1", ChannelKind::Text);
+
+        state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
+        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
+        state.set_channels(guild_b.id(), vec![channel_b1.clone()]);
+
+        state.on_guild_selected(guild_a.id());
+        state.on_channel_selected(channel_a1.id());
+
+        assert_eq!(state.selected_guild(), Some(guild_a.id()));
+        assert_eq!(
+            state.selected_channel().map(|c| c.id()),
+            Some(channel_a1.id())
+        );
+
+        let result = state.on_channel_selected(channel_b1.id());
+
+        assert!(
+            result.is_some(),
+            "Should return a result when selecting Channel B1"
+        );
+        assert_eq!(
+            state.selected_guild(),
+            Some(guild_b.id()),
+            "Should switch to Guild B"
+        );
+        assert_eq!(
+            state.selected_channel().map(|c| c.id()),
+            Some(channel_b1.id()),
+            "Should switch to Channel B1"
+        );
     }
 
     #[test]
