@@ -1,132 +1,100 @@
-# Discordo &middot; [![discord](https://img.shields.io/discord/1297292231299956788?color=5865F2&logo=discord&logoColor=white)](https://discord.com/invite/VzF9UFn2aB) [![ci](https://github.com/ayn2op/discordo/actions/workflows/ci.yml/badge.svg)](https://github.com/ayn2op/discordo/actions/workflows/ci.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/ayn2op/discordo)](https://goreportcard.com/report/github.com/ayn2op/discordo) [![license](https://img.shields.io/github/license/ayn2op/discordo?logo=github)](https://github.com/ayn2op/discordo/blob/master/LICENSE)
+# Oxicord
 
-Discordo is a lightweight, secure, and feature-rich Discord terminal client. Heavily work-in-progress, expect breaking changes.
+Oxicord is a high-performance, memory-safe Discord TUI client written in Rust. It is a spiritual successor to [Discordo](https://github.com/ayn2op/discordo), rewritten from scratch to leverage the performance and safety guarantees of Rust and the Ratatui ecosystem.
 
-![Preview](.github/preview.png)
+Designed for power users on Linux who demand speed, minimal resource usage, and terminal aesthetics, Oxicord aims to be the definitive CLI experience for Discord.
+
+## Why Oxicord?
+
+Oxicord distinguishes itself through a commitment to modern engineering principles and user experience:
+
+- **Uncompromising Performance:** Built with Rust, Oxicord delivers instant startup times and negligible memory footprint compared to Electron or Go-based alternatives.
+- **Clean Architecture:** The codebase follows strict Clean Architecture principles (Domain, Application, Infrastructure), making it robust, testable, and approachable for contributors.
+- **TUI Fidelity:** Utilizing `ratatui` and `tachyonfx`, Oxicord provides a fluid, glitch-free interface with full mouse support and responsive layouts.
 
 ## Features
 
-- Lightweight
-- Configurable
-- Mouse & clipboard support
-- Attachments
-- Notifications
-- 2-Factor & QR code authentication
-- Discord-flavored markdown
+Oxicord implements a focused set of "real" features designed for daily drivers, prioritizing stability over bloat:
 
-## Installation
+### Core Experience
 
-### Prebuilt binaries
+- **Vim-like Navigation:** Native `j`/`k` navigation, `g`/`G` scrolling, and intuitive focus management.
+- **Infinite Scrolling:** Seamless history loading. Scroll up, and history fetches automatically without manual "load more" buttons.
+- **Smart "Follow" Mode:** The view automatically snaps to new messages but respects your position when reading history.
 
-You can download and install a [prebuilt binary here](https://nightly.link/ayn2op/discordo/workflows/ci/main) for Windows, macOS, or Linux.
+### Visual Precision
 
-### Package managers
+- **Rich Text Rendering:** Full Markdown support with syntax highlighting (via `syntect`) for code blocks.
+- **Precision Timestamps:** 6-character timestamps (e.g., `14:05:32`) with automatic **Local Timezone** conversion—no more UTC mental math.
+- **Visual Indicators:**
+  - **Unread Markers:** Bold text and bullet indicators (`●`) for unread channels and guilds.
+  - **Typing Indicators:** Real-time feedback when others are typing.
+  - **Full-Width Selection:** Messages are selected across the full width of the pane for superior readability.
 
-- Arch Linux: `yay -S discordo-git`
-- Gentoo (available on the guru repos as a live ebuild): `emerge net-im/discordo`
-- FreeBSD: `pkg install discordo` or via the ports system `make -C /usr/ports/net-im/discordo install clean`.
-- Nix: Add `pkgs.discordo` to `environment.systemPackages` or `home.packages`.
+### System Integration
 
-- Windows (Scoop):
+- **Built-in File Explorer:** Integrated TUI file picker for attaching files without leaving the terminal.
+- **Secure Authentication:** Options for ephemeral Token login or secure storage using system keyrings (`libsecret`/`keyring`).
+- **Clipboard Integration:** One-key copying of message content or IDs to your system clipboard.
 
-```sh
-scoop bucket add vvxrtues https://github.com/vvirtues/bucket
-scoop install discordo
-```
+## Fair Play Comparison
 
-### Building from source
+We stand on the shoulders of giants. Here is how Oxicord compares to existing terminal clients:
+
+- **Endcord (Python):** Endcord is a feature beast (Voice, Plugins, Image previews). However, as a Python application, it carries the runtime overhead of an interpreted language. **Oxicord (Rust)** prioritizes raw performance, memory safety, and type-safe reliability, aiming for a "crash-proof" experience rather than feature parity at the cost of stability.
+- **Discordo (Go):** The original inspiration. While Discordo pioneered this TUI layout, it uses the `tview` library and a flatter Go architecture. **Oxicord** moves to `ratatui` for superior rendering control (no artifacts/flickering) and adopts a strict "Clean Architecture" to prevent the "spaghetti code" issues common in long-lived TUI projects.
+- **Rivet (Rust):** A fellow Rust client. While Rivet offers a solid experience, **Oxicord** specifically targets the "Power User" workflow with deeper Vim integration, specific optimizations for tiling window managers, and a visual style that favors information density (6-char timestamps, full selection) over standard layouts.
+
+## Installation & Configuration
+
+### Building from Source
 
 ```bash
-git clone https://github.com/ayn2op/discordo
-cd discordo
-go build .
+git clone https://github.com/linuxmobile/oxicord
+cd oxicord
+cargo build --release
+./target/release/oxicord
 ```
 
-### Wayland clipboard support
+### Configuration
 
-`wl-clipboard` is required for clipboard support.
+Oxicord is currently configured via command-line arguments. Full support for a persistent `config.toml` file adhering to the XDG Base Directory specification is **in development**:
 
-## Usage
+- **Linux:** `~/.config/oxicord/config.toml` (Planned)
 
-### Password
+## Roadmap
 
-1. Run the `discordo` executable with no arguments.
+### Core Features & Stability
 
-2. Enter your email and password and click on the "Login" button to continue.
+- [x] ~~Infinite scrolling / Auto-loading history~~
+- [x] ~~Configurable keybindings~~
+- [x] ~~Edit messages support~~
+- [x] ~~Smart selection behavior on new messages~~
+- [x] ~~Auto-focus message pane on channel selection~~
+- [x] ~~Streamlined authentication (Token/Libsecret only)~~
+- [x] ~~Connection status indicator fixes~~
+- [x] ~~Performance optimizations (reduce CPU spikes)~~
+- [ ] Forum channel support
 
-### Token
+### Visuals & UI
 
-Provide the `token` command-line flag to the executable. 
+- [x] ~~Rich Markdown rendering in message pane~~
+- [x] ~~Message reply previews~~
+- [x] ~~Animated loading screen (TachyonFX)~~
+- [x] ~~Unread indicators for guilds and channels~~
+- [x] ~~Compact file picker UI~~
+- [ ] Mention indicators for servers/channels and DMs
+- [ ] UI Animations (Guild tree, Typing indicators via TachyonFX)
+- [ ] Image modal viewer ('o' binding)
+- [ ] Image previews (Ratatui-image integration) _(Monitoring for performance impact)_
 
-```sh
-discordo --token "OTI2MDU5NTQxNDE2Nzc5ODA2.Yc2KKA.2iZ-5JxgxG-9Ub8GHzBSn-NJjNg"
-```
+### System & Documentation
 
-Alternatively, set the value of the `DISCORDO_TOKEN` environment variable to the authentication token.
+- [x] ~~Native file explorer for attachments~~
+- [x] ~~User mention support (@)~~
+- [x] ~~Comprehensive documentation update~~
+- [ ] XDG-compliant configuration support (`~/.config/oxicord/config.toml`)
 
-> [!TIP]
-> You can manually set the token to the keyring using the instructions [here](#manually-adding-token-to-keyring).
+## Credits
 
-### QR
-
-1. Run the `discordo` executable with no arguments.
-
-2. Click on the "Login with QR" button.
-
-3. Follow the instructions in the QR Login screen.
-
-## Configuration
-
-The configuration file allows you to configure and customize the behavior, keybindings, and theme of the application.
-
-- Unix: `$XDG_CONFIG_HOME/discordo/config.toml` or `$HOME/.config/discordo/config.toml`
-- Darwin: `$HOME/Library/Application Support/discordo/config.toml`
-- Windows: `%AppData%/discordo/config.toml`
-
-Discordo uses the default configuration if a configuration file is not found in the aforementioned path; however, the default configuration file is not written to the path. [The default configuration can be found here](./internal/config/config.toml).
-
-## FAQ
-
-### Manually adding token to keyring
-
-Do this if you get the error:
-
-> failed to get token from keyring: secret not found in keyring
-
-#### Windows
-
-Run the following command in a terminal window. Replace `YOUR_DISCORD_TOKEN` with your authentication token.
-
-```sh
-cmdkey /add:discordo /user:token /pass:YOUR_DISCORD_TOKEN
-```
-
-#### MacOS
-
-Run the following command in a terminal window. Replace `YOUR_DISCORD_TOKEN` with your authentication token.
-
-```sh
-security add-generic-password -s discordo -a token -w "YOUR_DISCORD_TOKEN"
-```
-
-#### Linux
-
-1. Start the keyring daemon.
-
-```sh
-eval $(gnome-keyring-daemon --start)
-export $(gnome-keyring-daemon --start)
-```
-
-2. Create the `login` keyring if it does not exist already. See [GNOME/Keyring](https://wiki.archlinux.org/title/GNOME/Keyring) for more information.
-
-3. Run the following command to create the `token` entry.
-
-```sh
-secret-tool store --label="Discord Token" service discordo username token
-```
-
-4. When it prompts for the password, paste your token, and hit enter to confirm.
-
-> [!IMPORTANT]
-> Automated user accounts or "self-bots" are against Discord's Terms of Service. I am not responsible for any loss caused by using "self-bots" or Discordo.
+Oxicord is a fork and full rewrite of [Discordo](https://github.com/ayn2op/discordo). We express our sincere gratitude to the original maintainers for their work, which served as the foundation and inspiration for this project.
