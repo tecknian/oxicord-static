@@ -41,6 +41,7 @@ enum Action {
         user: crate::domain::entities::User,
         guilds: Vec<crate::domain::entities::Guild>,
         dms: Vec<crate::domain::ports::DirectMessageChannel>,
+        read_states: std::collections::HashMap<ChannelId, crate::domain::entities::ReadState>,
     },
 }
 
@@ -77,6 +78,8 @@ pub struct App {
     user_cache: UserCache,
     current_user_id: Option<String>,
     pending_chat_state: Option<Box<ChatScreenState>>,
+    pending_read_states: Option<Vec<crate::domain::entities::ReadState>>,
+    gateway_ready: bool,
 }
 
 impl App {
@@ -110,6 +113,8 @@ impl App {
             user_cache: UserCache::new(),
             current_user_id: None,
             pending_chat_state: None,
+            pending_read_states: None,
+            gateway_ready: false,
         }
     }
 
@@ -170,9 +175,6 @@ impl App {
                         if splash.state.animation_complete && self.pending_chat_state.is_some() {
                              self.state = AppState::Chat;
                              self.screen = CurrentScreen::Chat(self.pending_chat_state.take().unwrap());
-                             if let Some(ref token) = self.current_token.clone() {
-                                 self.connect_gateway(token);
-                             }
                         }
                         terminal.draw(|frame| self.render(frame))?;
                     } else if let CurrentScreen::Chat(state) = &mut self.screen {
@@ -226,7 +228,7 @@ impl App {
                 if let Some(auth_token) = AuthToken::new(&token) {
                     self.current_token = Some(auth_token);
                 }
-                self.start_app_loading(response.user).await;
+                self.start_app_loading(response.user);
             }
             Err(e) => {
                 error!(error = %e, "Auto-login failed");
@@ -375,7 +377,7 @@ impl App {
                 if let Some(auth_token) = AuthToken::new(&token) {
                     self.current_token = Some(auth_token);
                 }
-                self.start_app_loading(response.user).await;
+                self.start_app_loading(response.user);
             }
             Err(e) => {
                 error!(error = %e, "Login failed");
@@ -384,22 +386,28 @@ impl App {
         }
     }
 
-    async fn start_app_loading(&mut self, user: crate::domain::entities::User) {
+    fn start_app_loading(&mut self, user: crate::domain::entities::User) {
         self.state = AppState::Initializing;
         self.screen = CurrentScreen::Splash(SplashScreen::new());
+        self.gateway_ready = false;
 
         let Some(ref token) = self.current_token else {
             return;
         };
         let token = token.clone();
+
+        self.connect_gateway(&token);
+
         let discord = self.discord_data.clone();
         let tx = self.action_tx.clone();
 
         tokio::spawn(async move {
             let guilds_future = discord.fetch_guilds(&token);
             let dms_future = discord.fetch_dm_channels(&token);
+            let read_states_future = discord.fetch_read_states(&token);
 
-            let (guilds_result, dms_result) = tokio::join!(guilds_future, dms_future);
+            let (guilds_result, dms_result, read_states_result) =
+                tokio::join!(guilds_future, dms_future, read_states_future);
 
             let guilds = match guilds_result {
                 Ok(g) => g,
@@ -417,7 +425,20 @@ impl App {
                 }
             };
 
-            let _ = tx.send(Action::DataLoaded { user, guilds, dms });
+            let read_states = match read_states_result {
+                Ok(rs) => rs.into_iter().map(|s| (s.channel_id, s)).collect(),
+                Err(e) => {
+                    error!(error = %e, "Failed to load read states");
+                    std::collections::HashMap::new()
+                }
+            };
+
+            let _ = tx.send(Action::DataLoaded {
+                user,
+                guilds,
+                dms,
+                read_states,
+            });
         });
     }
 
@@ -502,6 +523,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_dispatch_event(&mut self, event: DispatchEvent) {
         match event {
             DispatchEvent::MessageCreate { message } => {
@@ -562,9 +584,13 @@ impl App {
                 guild_id,
                 name,
                 unavailable,
+                channels,
             } => {
                 if !unavailable {
-                    info!(guild_id = %guild_id, name = %name, "Guild available");
+                    info!(guild_id = %guild_id, name = %name, channel_count = channels.len(), "Guild available");
+                    if let CurrentScreen::Chat(ref mut state) = self.screen {
+                        state.set_channels(guild_id, channels);
+                    }
                 }
             }
             DispatchEvent::GuildUpdate { guild_id, name } => {
@@ -587,9 +613,34 @@ impl App {
                 self.user_cache.update_username(&user_id, &username);
             }
             DispatchEvent::Ready {
-                user_id, guilds, ..
+                user_id,
+                guilds,
+                read_states,
+                ..
             } => {
                 info!(user_id = %user_id, guild_count = guilds.len(), "Gateway ready");
+                self.gateway_ready = true;
+
+                let read_states_map: std::collections::HashMap<_, _> = read_states
+                    .iter()
+                    .map(|rs| (rs.channel_id, rs.clone()))
+                    .collect();
+
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_read_states(read_states_map);
+                } else {
+                    if let Some(ref mut state) = self.pending_chat_state {
+                        state.set_read_states(read_states_map);
+                    }
+
+                    self.pending_read_states = Some(read_states);
+
+                    if self.pending_chat_state.is_some()
+                        && let CurrentScreen::Splash(splash) = &mut self.screen
+                    {
+                        splash.set_data_ready();
+                    }
+                }
             }
             _ => {}
         }
@@ -603,6 +654,7 @@ impl App {
         self.cache_users_from_message(&message);
 
         if let CurrentScreen::Chat(ref mut state) = self.screen {
+            state.on_message_received(&message);
             state.add_message(message);
         }
 
@@ -761,6 +813,23 @@ impl App {
         if let (Some(messages), CurrentScreen::Chat(state)) = (messages, &mut self.screen) {
             state.set_messages(messages);
             state.set_typing_indicator(None);
+
+            if let Some(last_msg) = state.message_pane_data().messages().back() {
+                let message_id = last_msg.id();
+                let token = self.current_token.clone();
+                if let Some(token) = token {
+                    let discord = self.discord_data.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = discord
+                            .acknowledge_message(&token, channel_id, message_id)
+                            .await
+                        {
+                            warn!(error = %e, "Failed to ack message");
+                        }
+                    });
+                }
+                state.mark_channel_read(channel_id, message_id);
+            }
         }
     }
 
@@ -818,7 +887,12 @@ impl App {
             Action::LoadError(e) => {
                 warn!(error = %e, "Failed to load history");
             }
-            Action::DataLoaded { user, guilds, dms } => {
+            Action::DataLoaded {
+                user,
+                guilds,
+                dms,
+                read_states,
+            } => {
                 info!("Data loaded, preparing chat state");
                 self.current_user_id = Some(user.id().to_string());
                 let mut chat_state = ChatScreenState::new(
@@ -839,9 +913,20 @@ impl App {
                 chat_state.set_dm_users(dm_users);
                 chat_state.set_guilds(guilds);
 
+                let mut final_read_states = read_states;
+                if let Some(pending) = self.pending_read_states.take() {
+                    info!(count = pending.len(), "Applying pending read states");
+                    for state in pending {
+                        final_read_states.insert(state.channel_id, state);
+                    }
+                }
+                chat_state.set_read_states(final_read_states);
+
                 self.pending_chat_state = Some(Box::new(chat_state));
 
-                if let CurrentScreen::Splash(splash) = &mut self.screen {
+                if self.gateway_ready
+                    && let CurrentScreen::Splash(splash) = &mut self.screen
+                {
                     splash.set_data_ready();
                 }
             }
@@ -1153,6 +1238,13 @@ mod tests {
             Ok(vec![])
         }
 
+        async fn fetch_read_states(
+            &self,
+            _token: &AuthToken,
+        ) -> Result<Vec<crate::domain::entities::ReadState>, AuthError> {
+            Ok(vec![])
+        }
+
         async fn fetch_messages(
             &self,
             _token: &AuthToken,
@@ -1192,6 +1284,15 @@ mod tests {
             &self,
             _token: &AuthToken,
             _channel_id: ChannelId,
+        ) -> Result<(), AuthError> {
+            Ok(())
+        }
+
+        async fn acknowledge_message(
+            &self,
+            _token: &AuthToken,
+            _channel_id: ChannelId,
+            _message_id: MessageId,
         ) -> Result<(), AuthError> {
             Ok(())
         }

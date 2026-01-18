@@ -192,11 +192,29 @@ impl EventParser {
             })
             .collect();
 
+        let read_states = ready
+            .read_state
+            .into_iter()
+            .filter_map(|rs| {
+                let channel_id = rs.id.parse::<u64>().ok()?;
+                let last_message_id = rs
+                    .last_message_id
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .map(Into::into);
+
+                Some(
+                    crate::domain::entities::ReadState::new(ChannelId(channel_id), last_message_id)
+                        .with_mention_count(rs.mention_count),
+                )
+            })
+            .collect();
+
         Ok(DispatchEvent::Ready {
             session_id: ready.session_id,
             resume_gateway_url: ready.resume_gateway_url,
             user_id: ready.user.id,
             guilds,
+            read_states,
         })
     }
 
@@ -498,10 +516,44 @@ impl EventParser {
             .parse::<u64>()
             .map_err(|_| GatewayError::protocol("Invalid guild ID"))?;
 
+        let mut channels = Vec::new();
+        for channel_payload in payload.channels {
+            let id = channel_payload
+                .id
+                .parse::<u64>()
+                .map_err(|_| GatewayError::protocol("Invalid channel ID"))?;
+
+            let kind = crate::domain::entities::ChannelKind::from(channel_payload.kind);
+            let name = channel_payload.name.unwrap_or_default();
+
+            let mut channel = crate::domain::entities::Channel::new(id, name, kind)
+                .with_guild(guild_id)
+                .with_position(channel_payload.position);
+
+            if let Some(parent_id) = channel_payload.parent_id
+                && let Ok(pid) = parent_id.parse::<u64>()
+            {
+                channel = channel.with_parent(pid);
+            }
+
+            if let Some(topic) = channel_payload.topic {
+                channel = channel.with_topic(topic);
+            }
+
+            if let Some(last_message_id) = channel_payload.last_message_id
+                && let Ok(lmid) = last_message_id.parse::<u64>()
+            {
+                channel = channel.with_last_message_id(Some(lmid.into()));
+            }
+
+            channels.push(channel);
+        }
+
         Ok(DispatchEvent::GuildCreate {
             guild_id: GuildId(guild_id),
             name: payload.name,
             unavailable: payload.unavailable,
+            channels,
         })
     }
 
@@ -701,7 +753,6 @@ mod tests {
 
     #[test]
     fn test_parse_typing_start_dm() {
-        // DM typing events don't have member field
         let data = serde_json::json!({
             "channel_id": "123456789",
             "user_id": "111222333",

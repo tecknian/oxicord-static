@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 
-use crate::domain::entities::{ChannelId, GuildId, Message, MessageId};
+use crate::domain::entities::{Channel, ChannelId, GuildId, Message, MessageId, ReadState};
 
 /// Commands that can be sent to the gateway.
 #[derive(Debug, Clone)]
@@ -70,6 +70,7 @@ pub enum DispatchEvent {
         resume_gateway_url: Option<String>,
         user_id: String,
         guilds: Vec<UnavailableGuild>,
+        read_states: Vec<ReadState>,
     },
 
     MessageCreate {
@@ -145,6 +146,7 @@ pub enum DispatchEvent {
         guild_id: GuildId,
         name: String,
         unavailable: bool,
+        channels: Vec<Channel>,
     },
     GuildUpdate {
         guild_id: GuildId,

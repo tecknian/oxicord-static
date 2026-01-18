@@ -72,9 +72,6 @@ impl GatewayPayload {
     pub fn lazy_request(guild_id: &str, channel_id: &str) -> Self {
         use serde_json::json;
 
-        // Discord expects channels as: { "channel_id": [[0, 99]] }
-        // The [[0, 99]] is a member list range - we request the first 100 members
-        // This also subscribes us to typing events for this channel
         let data = json!({
             "guild_id": guild_id,
             "typing": true,
@@ -140,6 +137,16 @@ pub struct ReadyPayload {
     pub user: ReadyUser,
     #[serde(default)]
     pub guilds: Vec<ReadyGuild>,
+    #[serde(default)]
+    pub read_state: Vec<ReadStatePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadStatePayload {
+    pub id: String,
+    pub last_message_id: Option<String>,
+    #[serde(default)]
+    pub mention_count: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +310,11 @@ pub struct ChannelPayload {
     pub name: Option<String>,
     #[serde(rename = "type", default)]
     pub kind: u8,
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub position: i32,
+    pub topic: Option<String>,
+    pub last_message_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,6 +323,8 @@ pub struct GuildCreatePayload {
     pub name: String,
     #[serde(default)]
     pub unavailable: bool,
+    #[serde(default)]
+    pub channels: Vec<ChannelPayload>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,11 +6,11 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, StatefulWidget},
+    widgets::{Block, Borders, StatefulWidget, Widget},
 };
 use tui_tree_widget::{Tree, TreeItem, TreeState};
 
-use crate::domain::entities::{Channel, ChannelId, Guild, GuildId};
+use crate::domain::entities::{Channel, ChannelId, Guild, GuildId, ReadState};
 use crate::domain::keybinding::Action;
 use crate::presentation::commands::CommandRegistry;
 
@@ -403,6 +403,42 @@ impl GuildsTreeData {
         }
         None
     }
+
+    /// Returns a mutable reference to a channel by its ID.
+    pub fn get_channel_mut(&mut self, channel_id: ChannelId) -> Option<&mut Channel> {
+        for channels in self.channels_by_guild.values_mut() {
+            if let Some(channel) = channels.iter_mut().find(|c| c.id() == channel_id) {
+                return Some(channel);
+            }
+        }
+        None
+    }
+
+    /// Updates the unread status of all channels based on the provided read states.
+    pub fn update_unread_status(
+        &mut self,
+        read_states: &std::collections::HashMap<ChannelId, ReadState>,
+    ) {
+        for channels in self.channels_by_guild.values_mut() {
+            for channel in channels {
+                if let Some(read_state) = read_states.get(&channel.id()) {
+                    if let Some(last_msg_id) = channel.last_message_id() {
+                        let is_unread = if let Some(last_read_id) = read_state.last_read_message_id
+                        {
+                            last_msg_id.as_u64() > last_read_id.as_u64()
+                        } else {
+                            true
+                        };
+                        channel.set_unread(is_unread);
+                    } else {
+                        channel.set_unread(false);
+                    }
+                } else {
+                    channel.set_unread(false);
+                }
+            }
+        }
+    }
 }
 
 impl Default for GuildsTreeData {
@@ -443,13 +479,13 @@ impl<'a> GuildsTree<'a> {
         self
     }
 
-    fn build_tree_items(&self) -> Vec<TreeItem<'static, TreeNodeId>> {
+    fn build_tree_items(&self, width: u16) -> Vec<TreeItem<'static, TreeNodeId>> {
         let mut items = Vec::with_capacity(self.data.guilds.len() + 1);
 
         items.push(self.build_dm_node());
 
         for guild in &self.data.guilds {
-            items.push(self.build_guild_node(guild));
+            items.push(self.build_guild_node(guild, width));
         }
 
         items
@@ -481,7 +517,7 @@ impl<'a> GuildsTree<'a> {
             .expect("DM node should have unique children")
     }
 
-    fn build_guild_node(&self, guild: &Guild) -> TreeItem<'static, TreeNodeId> {
+    fn build_guild_node(&self, guild: &Guild, width: u16) -> TreeItem<'static, TreeNodeId> {
         let is_active = self.data.active_guild_id() == Some(guild.id());
         let guild_style = if is_active {
             self.style.active_guild_style
@@ -495,7 +531,7 @@ impl<'a> GuildsTree<'a> {
 
         let channel_items = self.data.channels(guild.id()).map_or_else(
             || vec![self.build_placeholder_node(guild.id())],
-            |channels| self.build_channel_nodes(channels),
+            |channels| self.build_channel_nodes(channels, width),
         );
 
         TreeItem::new(TreeNodeId::Guild(guild.id()), guild_text, channel_items)
@@ -507,7 +543,11 @@ impl<'a> GuildsTree<'a> {
         TreeItem::new_leaf(TreeNodeId::Placeholder(guild_id), text)
     }
 
-    fn build_channel_nodes(&self, channels: &[Channel]) -> Vec<TreeItem<'static, TreeNodeId>> {
+    fn build_channel_nodes(
+        &self,
+        channels: &[Channel],
+        width: u16,
+    ) -> Vec<TreeItem<'static, TreeNodeId>> {
         let mut result = Vec::new();
         let mut categories: std::collections::HashMap<ChannelId, Vec<&Channel>> =
             std::collections::HashMap::new();
@@ -526,7 +566,7 @@ impl<'a> GuildsTree<'a> {
 
         orphan_channels.sort_by_key(|c| c.position());
         for channel in orphan_channels {
-            if let Some(item) = self.build_channel_leaf(channel) {
+            if let Some(item) = self.build_channel_leaf(channel, width, 1) {
                 result.push(item);
             }
         }
@@ -534,7 +574,7 @@ impl<'a> GuildsTree<'a> {
         category_channels.sort_by_key(|c| c.position());
         for category in category_channels {
             let children_channels = categories.get(&category.id()).cloned().unwrap_or_default();
-            result.push(self.build_category_node(category, &children_channels));
+            result.push(self.build_category_node(category, &children_channels, width));
         }
 
         result
@@ -544,6 +584,7 @@ impl<'a> GuildsTree<'a> {
         &self,
         category: &Channel,
         children: &[&Channel],
+        width: u16,
     ) -> TreeItem<'static, TreeNodeId> {
         let text = Line::from(Span::styled(
             category.name().to_uppercase(),
@@ -555,14 +596,19 @@ impl<'a> GuildsTree<'a> {
 
         let child_items: Vec<TreeItem<'static, TreeNodeId>> = sorted_children
             .iter()
-            .filter_map(|ch| self.build_channel_leaf(ch))
+            .filter_map(|ch| self.build_channel_leaf(ch, width, 2))
             .collect();
 
         TreeItem::new(TreeNodeId::Category(category.id()), text, child_items)
             .expect("Category should have unique children")
     }
 
-    fn build_channel_leaf(&self, channel: &Channel) -> Option<TreeItem<'static, TreeNodeId>> {
+    fn build_channel_leaf(
+        &self,
+        channel: &Channel,
+        width: u16,
+        depth: u16,
+    ) -> Option<TreeItem<'static, TreeNodeId>> {
         if !channel.kind().is_text_based() && !channel.kind().is_voice() {
             return None;
         }
@@ -576,7 +622,54 @@ impl<'a> GuildsTree<'a> {
             self.style.channel_style
         };
 
-        let text = Line::from(Span::styled(channel.display_name(), style));
+        let name = channel.display_name();
+        let indent = 2 * depth;
+        let available_width = width.saturating_sub(indent).saturating_sub(3);
+
+        let mut display_name = name.clone();
+
+        let available_name_width = if channel.has_unread() {
+            available_width.saturating_sub(2)
+        } else {
+            available_width
+        };
+
+        let current_width = u16::try_from(Span::styled(&display_name, style).width()).unwrap_or(0);
+        if current_width > available_name_width {
+            let mut truncated = display_name.clone();
+            while !truncated.is_empty()
+                && u16::try_from(Span::styled(&truncated, style).width()).unwrap_or(0)
+                    > available_name_width
+            {
+                truncated.pop();
+            }
+            display_name = truncated;
+        } else {
+            let padding = available_name_width.saturating_sub(current_width);
+            if padding > 0 {
+                display_name.push_str(&" ".repeat(padding as usize));
+            }
+        }
+
+        let name_span = Span::styled(display_name, style);
+        let name_width = u16::try_from(name_span.width()).unwrap_or(0);
+
+        let mut spans = vec![name_span];
+
+        if channel.has_unread() {
+            let dot = "●";
+            let dot_width = 1;
+            let padding = available_width
+                .saturating_sub(name_width)
+                .saturating_sub(dot_width);
+
+            if padding > 0 {
+                spans.push(Span::raw(" ".repeat(padding as usize)));
+                spans.push(Span::styled(dot, style));
+            }
+        }
+
+        let text = Line::from(spans);
 
         Some(TreeItem::new_leaf(TreeNodeId::Channel(channel.id()), text))
     }
@@ -592,6 +685,8 @@ impl StatefulWidget for GuildsTree<'_> {
             self.style.border_style
         };
 
+        Widget::render(ratatui::widgets::Clear, area, buf);
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
@@ -600,7 +695,8 @@ impl StatefulWidget for GuildsTree<'_> {
                 self.style.title_style,
             ));
 
-        let items = self.build_tree_items();
+        let inner_area = block.inner(area);
+        let items = self.build_tree_items(inner_area.width);
 
         let tree = Tree::new(&items)
             .expect("Tree items should be valid")
@@ -673,7 +769,7 @@ mod tests {
         data.set_guilds(guilds.clone());
 
         let tree = GuildsTree::new(&data);
-        let items = tree.build_tree_items();
+        let items = tree.build_tree_items(100);
 
         assert_eq!(
             items.len(),
@@ -704,7 +800,7 @@ mod tests {
         data.set_guilds(guilds);
 
         let tree = GuildsTree::new(&data);
-        let items = tree.build_tree_items();
+        let items = tree.build_tree_items(100);
 
         assert_eq!(items.len(), 101, "Should have DM node + 100 guilds");
     }

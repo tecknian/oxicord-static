@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::GuildId;
+use super::{GuildId, MessageId};
 
 /// Unique identifier for a Discord channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -138,6 +138,7 @@ pub struct Channel {
     parent_id: Option<ChannelId>,
     position: i32,
     topic: Option<String>,
+    last_message_id: Option<MessageId>,
     has_unread: bool,
 }
 
@@ -153,6 +154,7 @@ impl Channel {
             parent_id: None,
             position: 0,
             topic: None,
+            last_message_id: None,
             has_unread: false,
         }
     }
@@ -182,6 +184,13 @@ impl Channel {
     #[must_use]
     pub fn with_topic(mut self, topic: impl Into<String>) -> Self {
         self.topic = Some(topic.into());
+        self
+    }
+
+    /// Sets the last message ID for this channel.
+    #[must_use]
+    pub fn with_last_message_id(mut self, last_message_id: Option<MessageId>) -> Self {
+        self.last_message_id = last_message_id;
         self
     }
 
@@ -232,6 +241,17 @@ impl Channel {
     #[must_use]
     pub fn topic(&self) -> Option<&str> {
         self.topic.as_deref()
+    }
+
+    /// Returns the last message ID, if any.
+    #[must_use]
+    pub const fn last_message_id(&self) -> Option<MessageId> {
+        self.last_message_id
+    }
+
+    /// Sets the last message ID.
+    pub fn set_last_message_id(&mut self, last_message_id: Option<MessageId>) {
+        self.last_message_id = last_message_id;
     }
 
     /// Returns whether this channel has unread messages.

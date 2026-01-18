@@ -101,6 +101,7 @@ impl DmChannelInfo {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct ChatScreenState {
     user: User,
     focus: ChatFocus,
@@ -115,6 +116,7 @@ pub struct ChatScreenState {
     selected_guild: Option<GuildId>,
     selected_channel: Option<Channel>,
     dm_channels: std::collections::HashMap<String, DmChannelInfo>,
+    read_states: std::collections::HashMap<ChannelId, crate::domain::entities::ReadState>,
     connection_status: ConnectionStatus,
     markdown_service: Arc<MarkdownService>,
     file_explorer: Option<FileExplorerComponent>,
@@ -146,13 +148,14 @@ impl ChatScreenState {
             selected_guild: None,
             selected_channel: None,
             dm_channels: std::collections::HashMap::new(),
+            read_states: std::collections::HashMap::new(),
             connection_status: ConnectionStatus::Disconnected,
             markdown_service,
             file_explorer: None,
             show_file_explorer: false,
             show_help: false,
             registry: CommandRegistry::default(),
-            entrance_effect: fx::coalesce((2000, Interpolation::SineOut)),
+            entrance_effect: fx::coalesce((800, Interpolation::SineOut)),
             pending_duration: Duration::ZERO,
             has_entered: false,
         }
@@ -204,6 +207,7 @@ impl ChatScreenState {
 
     pub fn set_channels(&mut self, guild_id: GuildId, channels: Vec<Channel>) {
         self.guilds_tree_data.set_channels(guild_id, channels);
+        self.recalculate_all_unread();
     }
 
     pub fn set_dm_users(&mut self, users: Vec<(String, String)>) {
@@ -215,6 +219,50 @@ impl ChatScreenState {
             }
         }
         self.guilds_tree_data.set_dm_users(users);
+    }
+
+    pub fn set_read_states(
+        &mut self,
+        read_states: std::collections::HashMap<ChannelId, crate::domain::entities::ReadState>,
+    ) {
+        self.read_states = read_states;
+        self.recalculate_all_unread();
+    }
+
+    fn recalculate_all_unread(&mut self) {
+        self.guilds_tree_data
+            .update_unread_status(&self.read_states);
+    }
+
+    pub fn mark_channel_read(&mut self, channel_id: ChannelId, message_id: MessageId) {
+        if let Some(read_state) = self.read_states.get_mut(&channel_id) {
+            read_state.last_read_message_id = Some(message_id);
+        } else {
+            self.read_states.insert(
+                channel_id,
+                crate::domain::entities::ReadState::new(channel_id, Some(message_id)),
+            );
+        }
+        self.recalculate_all_unread();
+    }
+
+    pub fn on_message_received(&mut self, message: &Message) {
+        if let Some(channel) = self.guilds_tree_data.get_channel_mut(message.channel_id()) {
+            channel.set_last_message_id(Some(message.id()));
+
+            let is_own_message = message.author().id() == self.user.id();
+            let is_active_channel = self
+                .selected_channel
+                .as_ref()
+                .map(crate::domain::entities::Channel::id)
+                == Some(message.channel_id());
+
+            if is_own_message || is_active_channel {
+                self.mark_channel_read(message.channel_id(), message.id());
+            } else {
+                self.recalculate_all_unread();
+            }
+        }
     }
 
     pub fn toggle_guilds_tree(&mut self) {
@@ -553,9 +601,7 @@ impl ChatScreenState {
             let channel_in_guild = self
                 .guilds_tree_data
                 .channels(id)
-                .map_or(false, |channels| {
-                    channels.iter().any(|c| c.id() == channel_id)
-                });
+                .is_some_and(|channels| channels.iter().any(|c| c.id() == channel_id));
             if !channel_in_guild {
                 guild_id = None;
             }
@@ -826,9 +872,6 @@ impl HasCommands for ChatScreenState {
                     add(Action::DeleteMessage, "Del");
                 }
                 ChatFocus::MessageInput => {
-                    if self.autocomplete_service.state().active {
-                        // We could add mention specific hints here if we wanted
-                    }
                     add(Action::SendMessage, "Send");
                     add(Action::OpenEditor, "Editor");
                     add(Action::Cancel, "Cancel");
@@ -1011,9 +1054,6 @@ fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) 
                 if k.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
                     s.push_str("Alt+");
                 }
-                if k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-                    // Shift is often implied by the char, but consistent formatting helps
-                }
 
                 match k.code {
                     KeyCode::Char(c) => s.push(c),
@@ -1100,12 +1140,10 @@ fn render_explorer_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buff
             content_area
         };
 
-        // Match input box width exactly
         let width = base_area.width;
         let height = base_area.height * 40 / 100;
 
         let x = base_area.x;
-        // Anchor to bottom: Area height - Footer(1) - Input(3) - PopupHeight
         let bottom_anchor = area.height.saturating_sub(4);
         let y = bottom_anchor.saturating_sub(height);
 

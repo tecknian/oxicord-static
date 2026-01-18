@@ -17,18 +17,11 @@ const LOGO_TEXT: &str = "
  ░██   ░██   ░██  ░██  ░██░██    ░██ ░██    ░██ ░██      ░██   ░███
   ░██████   ░██    ░██ ░██ ░███████   ░███████  ░██       ░█████░██";
 
+#[derive(Default)]
 pub struct LoadingState {
     pub data_ready: bool,
     pub animation_complete: bool,
-}
-
-impl Default for LoadingState {
-    fn default() -> Self {
-        Self {
-            data_ready: false,
-            animation_complete: false,
-        }
-    }
+    pub intro_finished: bool,
 }
 
 pub struct SplashScreen {
@@ -38,7 +31,14 @@ pub struct SplashScreen {
     pending_duration: Duration,
 }
 
+impl Default for SplashScreen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SplashScreen {
+    #[must_use]
     pub fn new() -> Self {
         let intro_effect = fx::coalesce((800, Interpolation::CircOut));
         let outro_effect = fx::dissolve((600, Interpolation::CircIn));
@@ -65,8 +65,15 @@ impl Widget for &mut SplashScreen {
         let text_content = LOGO_TEXT.trim_matches('\n');
         let text = Text::from(text_content).centered();
 
-        let text_width = text.lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
-        let text_height = text.lines.len() as u16;
+        let text_width = u16::try_from(
+            text.lines
+                .iter()
+                .map(ratatui::prelude::Line::width)
+                .max()
+                .unwrap_or(0),
+        )
+        .unwrap_or(0);
+        let text_height = u16::try_from(text.lines.len()).unwrap_or(0);
 
         let x = area.x + (area.width.saturating_sub(text_width)) / 2;
         let y = area.y + (area.height.saturating_sub(text_height)) / 2;
@@ -82,9 +89,12 @@ impl Widget for &mut SplashScreen {
         let duration = self.pending_duration;
         self.pending_duration = Duration::ZERO;
 
-        if !self.state.data_ready {
-            self.intro_effect.process(duration.into(), buf, center_area);
-        } else {
+        if !self.state.intro_finished {
+            let overflow = self.intro_effect.process(duration.into(), buf, center_area);
+            if overflow.is_some() {
+                self.state.intro_finished = true;
+            }
+        } else if self.state.data_ready {
             let overflow = self.outro_effect.process(duration.into(), buf, center_area);
             if overflow.is_some() {
                 self.state.animation_complete = true;

@@ -11,7 +11,7 @@ use super::dto::{
 };
 use crate::domain::entities::{
     Attachment, AuthToken, Channel, ChannelId, ChannelKind, Guild, Message, MessageAuthor,
-    MessageKind, MessageReference, User,
+    MessageKind, MessageReference, ReadState, User,
 };
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
@@ -91,6 +91,12 @@ impl DiscordClient {
                 let mut channel = Channel::new(id, name, kind)
                     .with_guild(guild_id)
                     .with_position(c.position);
+
+                if let Some(last_message_id) = c.last_message_id
+                    && let Ok(lmid) = last_message_id.parse::<u64>()
+                {
+                    channel = channel.with_last_message_id(Some(lmid.into()));
+                }
 
                 if let Some(parent_id) = c.parent_id
                     && let Ok(pid) = parent_id.parse::<u64>()
@@ -415,6 +421,10 @@ impl DiscordDataPort for DiscordClient {
         Ok(dm_channels)
     }
 
+    async fn fetch_read_states(&self, _token: &AuthToken) -> Result<Vec<ReadState>, AuthError> {
+        Ok(Vec::new())
+    }
+
     async fn fetch_messages(
         &self,
         token: &AuthToken,
@@ -669,6 +679,49 @@ impl DiscordDataPort for DiscordClient {
 
         if !status.is_success() && status != StatusCode::NO_CONTENT {
             return Err(self.handle_error_response(status, response).await);
+        }
+
+        Ok(())
+    }
+
+    async fn acknowledge_message(
+        &self,
+        token: &AuthToken,
+        channel_id: ChannelId,
+        message_id: crate::domain::entities::MessageId,
+    ) -> Result<(), AuthError> {
+        let url = format!(
+            "{}/channels/{}/messages/{}/ack",
+            self.base_url,
+            channel_id.as_u64(),
+            message_id.as_u64()
+        );
+
+        debug!(
+            channel_id = %channel_id,
+            message_id = %message_id,
+            "Acknowledging message"
+        );
+
+        let payload = serde_json::json!({ "token": null });
+
+        let response = self
+            .client
+            .post(&url)
+            .header(header::AUTHORIZATION, token.as_str())
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to acknowledge message");
+                AuthError::network(e.to_string())
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() && status != StatusCode::NO_CONTENT {
+            warn!(status = %status, "Failed to ACK message in API");
         }
 
         Ok(())

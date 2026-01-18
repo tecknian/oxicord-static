@@ -69,6 +69,8 @@ pub struct ChannelResponse {
     pub position: i32,
     /// Channel topic.
     pub topic: Option<String>,
+    /// Last message ID.
+    pub last_message_id: Option<String>,
 }
 
 /// Discord API DM recipient structure.

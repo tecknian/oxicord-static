@@ -2,7 +2,9 @@
 
 use async_trait::async_trait;
 
-use crate::domain::entities::{AuthToken, Channel, ChannelId, Guild, Message, MessageId};
+use crate::domain::entities::{
+    AuthToken, Channel, ChannelId, Guild, Message, MessageId, ReadState,
+};
 use crate::domain::errors::AuthError;
 
 /// Represents a direct message channel with a recipient.
@@ -114,6 +116,9 @@ pub trait DiscordDataPort: Send + Sync {
         token: &AuthToken,
     ) -> Result<Vec<DirectMessageChannel>, AuthError>;
 
+    /// Fetches read states for all channels.
+    async fn fetch_read_states(&self, token: &AuthToken) -> Result<Vec<ReadState>, AuthError>;
+
     /// Fetches messages from a channel.
     async fn fetch_messages(
         &self,
@@ -150,5 +155,13 @@ pub trait DiscordDataPort: Send + Sync {
         &self,
         token: &AuthToken,
         channel_id: ChannelId,
+    ) -> Result<(), AuthError>;
+
+    /// Acknowledges a message (marks as read).
+    async fn acknowledge_message(
+        &self,
+        token: &AuthToken,
+        channel_id: ChannelId,
+        message_id: MessageId,
     ) -> Result<(), AuthError>;
 }
