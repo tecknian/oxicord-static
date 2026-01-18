@@ -17,8 +17,7 @@ use crate::domain::ConnectionStatus;
 use crate::domain::entities::{AuthToken, ChannelId, GuildId, MessageId, UserCache};
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
-    AuthPort, DiscordDataPort, EditMessageRequest, FetchMessagesOptions, SendMessageRequest,
-    TokenStoragePort,
+    AuthPort, DiscordDataPort, EditMessageRequest, SendMessageRequest, TokenStoragePort,
 };
 use crate::infrastructure::discord::{
     DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
@@ -27,23 +26,12 @@ use crate::infrastructure::discord::{
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{
     ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen, SplashScreen,
+    backend::{Action, Backend, BackendCommand},
 };
 
 const TYPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(2);
 const TYPING_THROTTLE_DURATION: Duration = Duration::from_secs(8);
 const ANIMATION_TICK_RATE: Duration = Duration::from_millis(33);
-
-#[derive(Debug)]
-enum Action {
-    HistoryLoaded(Vec<crate::domain::entities::Message>),
-    LoadError(String),
-    DataLoaded {
-        user: crate::domain::entities::User,
-        guilds: Vec<crate::domain::entities::Guild>,
-        dms: Vec<crate::domain::ports::DirectMessageChannel>,
-        read_states: std::collections::HashMap<ChannelId, crate::domain::entities::ReadState>,
-    },
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppState {
@@ -64,7 +52,7 @@ pub struct App {
     screen: CurrentScreen,
     login_use_case: LoginUseCase,
     resolve_token_use_case: ResolveTokenUseCase,
-    discord_data: Arc<dyn DiscordDataPort>,
+    command_tx: mpsc::UnboundedSender<BackendCommand>,
     pending_token: Option<(String, TokenSource)>,
     current_token: Option<AuthToken>,
     gateway_client: Option<GatewayClient>,
@@ -81,6 +69,7 @@ pub struct App {
     pending_read_states: Option<Vec<crate::domain::entities::ReadState>>,
     gateway_ready: bool,
     connection_status: ConnectionStatus,
+    should_render: bool,
 }
 
 impl App {
@@ -93,14 +82,18 @@ impl App {
         let login_use_case = LoginUseCase::new(auth_port, storage_port.clone());
         let resolve_token_use_case = ResolveTokenUseCase::new(storage_port);
         let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
         let markdown_service = Arc::new(MarkdownService::new());
+
+        let backend = Backend::new(discord_data, command_rx, action_tx.clone());
+        tokio::spawn(backend.run());
 
         Self {
             state: AppState::Login,
             screen: CurrentScreen::Login(LoginScreen::new()),
             login_use_case,
             resolve_token_use_case,
-            discord_data,
+            command_tx,
             pending_token: None,
             current_token: None,
             gateway_client: None,
@@ -117,6 +110,7 @@ impl App {
             pending_read_states: None,
             gateway_ready: false,
             connection_status: ConnectionStatus::Disconnected,
+            should_render: true,
         }
     }
 
@@ -151,6 +145,8 @@ impl App {
         terminal.draw(|frame| self.render(frame))?;
 
         while self.state != AppState::Exiting {
+            self.should_render = false;
+
             let gateway_future = match &mut self.gateway_rx {
                 Some(rx) => futures_util::future::Either::Left(rx.recv()),
                 None => futures_util::future::Either::Right(std::future::pending()),
@@ -162,12 +158,12 @@ impl App {
 
                 Some(event) = gateway_future => {
                     self.handle_gateway_event(event);
-                    terminal.draw(|frame| self.render(frame))?;
+                    self.should_render = true;
                 }
 
                 Some(action) = self.action_rx.recv() => {
                     self.handle_action(action);
-                    terminal.draw(|frame| self.render(frame))?;
+                    self.should_render = true;
                 }
 
                 _ = animation_interval.tick() => {
@@ -177,16 +173,20 @@ impl App {
                         if splash.state.animation_complete && self.pending_chat_state.is_some() {
                              self.state = AppState::Chat;
                              self.screen = CurrentScreen::Chat(self.pending_chat_state.take().unwrap());
+                             self.should_render = true;
+                        } else if !splash.state.intro_finished || (splash.state.data_ready && !splash.state.animation_complete) {
+                             self.should_render = true;
                         }
-                        terminal.draw(|frame| self.render(frame))?;
                     } else if let CurrentScreen::Chat(state) = &mut self.screen {
                         state.tick(ANIMATION_TICK_RATE);
-                        terminal.draw(|frame| self.render(frame))?;
+                        if !state.has_entered() {
+                            self.should_render = true;
+                        }
                     }
                 }
 
                 Some(Ok(event)) = terminal_event => {
-                    let result = self.handle_terminal_event(event).await;
+                    let result = self.handle_terminal_event(&event);
                     match result {
                         EventResult::Exit => {
                             self.state = AppState::Exiting;
@@ -195,27 +195,32 @@ impl App {
                             initial_content,
                             message_id,
                         } => {
-                            self.handle_open_editor(terminal, initial_content, message_id)
-                                .await?;
+                            self.handle_open_editor(terminal, &initial_content, message_id)?;
+                            self.should_render = true;
                         }
-                        _ => {}
+                        _ => {
+                            self.should_render = true;
+                        }
                     }
-                    terminal.draw(|frame| self.render(frame))?;
                 }
 
                 _ = typing_cleanup_interval.tick() => {
                     self.cleanup_typing_indicators();
-                    terminal.draw(|frame| self.render(frame))?;
+                    self.should_render = true;
                 }
+            }
+
+            if self.should_render {
+                terminal.draw(|frame| self.render(frame))?;
             }
         }
 
         Ok(())
     }
 
-    async fn handle_terminal_event(&mut self, event: Event) -> EventResult {
+    fn handle_terminal_event(&mut self, event: &Event) -> EventResult {
         match event {
-            Event::Key(key) => self.handle_key(key).await,
+            Event::Key(key) => self.handle_key(*key),
             _ => EventResult::Continue,
         }
     }
@@ -259,7 +264,7 @@ impl App {
         }
     }
 
-    async fn handle_key(&mut self, key: KeyEvent) -> EventResult {
+    fn handle_key(&mut self, key: KeyEvent) -> EventResult {
         if EventHandler::is_quit_event(&key) && self.state == AppState::Login {
             return EventResult::Exit;
         }
@@ -267,7 +272,7 @@ impl App {
         let result = match &mut self.screen {
             CurrentScreen::Login(screen) => {
                 if screen.handle_key(key) {
-                    self.handle_login_submit().await;
+                    self.handle_login_submit();
                 }
                 return EventResult::Continue;
             }
@@ -284,7 +289,7 @@ impl App {
                 debug!(text = %text, "Copy to clipboard requested");
             }
             ChatKeyResult::LoadGuildChannels(guild_id) => {
-                self.load_guild_channels(guild_id).await;
+                self.load_guild_channels(guild_id);
             }
             ChatKeyResult::LoadChannelMessages {
                 channel_id,
@@ -293,14 +298,14 @@ impl App {
                 if let Some(guild_id) = guild_id {
                     self.subscribe_to_channel(guild_id, channel_id);
                 }
-                self.load_channel_messages(channel_id).await;
+                self.load_channel_messages(channel_id);
             }
             ChatKeyResult::LoadDmMessages {
                 channel_id,
                 recipient_name,
             } => {
                 debug!(channel_id = %channel_id, recipient = %recipient_name, "Loading DM messages");
-                self.load_channel_messages(channel_id).await;
+                self.load_channel_messages(channel_id);
             }
             ChatKeyResult::LoadHistory {
                 channel_id,
@@ -320,7 +325,7 @@ impl App {
                 message_id,
                 content,
             } => {
-                self.handle_edit_message(message_id, content).await;
+                self.handle_edit_message(message_id, content);
             }
             ChatKeyResult::EditMessage(message_id) => {
                 debug!(message_id = %message_id, "Edit message requested");
@@ -339,11 +344,10 @@ impl App {
                 reply_to,
                 attachments,
             } => {
-                self.handle_send_message(content, reply_to, attachments)
-                    .await;
+                self.handle_send_message(content, reply_to, attachments);
             }
             ChatKeyResult::StartTyping => {
-                self.handle_start_typing().await;
+                self.handle_start_typing();
             }
             ChatKeyResult::OpenEditor {
                 initial_content,
@@ -360,7 +364,7 @@ impl App {
         EventResult::Continue
     }
 
-    async fn handle_login_submit(&mut self) {
+    fn handle_login_submit(&mut self) {
         let (token, persist) = if let CurrentScreen::Login(ref screen) = self.screen {
             match screen.token() {
                 Some(t) => (t.to_string(), screen.should_persist()),
@@ -379,23 +383,23 @@ impl App {
             request = request.without_persistence();
         }
 
-        match self.login_use_case.execute(request).await {
-            Ok(response) => {
-                info!(
-                    user = %response.user.display_name(),
-                    persisted = response.token_persisted,
-                    "Login successful"
-                );
-                if let Some(auth_token) = AuthToken::new(&token) {
-                    self.current_token = Some(auth_token);
+        let use_case = self.login_use_case.clone();
+        let tx = self.action_tx.clone();
+
+        tokio::spawn(async move {
+            match use_case.execute(request).await {
+                Ok(response) => {
+                    let _ = tx.send(Action::LoginSuccess {
+                        user: response.user,
+                        token,
+                        source: TokenSource::UserInput,
+                    });
                 }
-                self.start_app_loading(response.user);
+                Err(e) => {
+                    let _ = tx.send(Action::LoginFailure(e));
+                }
             }
-            Err(e) => {
-                error!(error = %e, "Login failed");
-                self.handle_login_error(&e);
-            }
-        }
+        });
     }
 
     fn start_app_loading(&mut self, user: crate::domain::entities::User) {
@@ -410,48 +414,9 @@ impl App {
 
         self.connect_gateway(&token);
 
-        let discord = self.discord_data.clone();
-        let tx = self.action_tx.clone();
-
-        tokio::spawn(async move {
-            let guilds_future = discord.fetch_guilds(&token);
-            let dms_future = discord.fetch_dm_channels(&token);
-            let read_states_future = discord.fetch_read_states(&token);
-
-            let (guilds_result, dms_result, read_states_result) =
-                tokio::join!(guilds_future, dms_future, read_states_future);
-
-            let guilds = match guilds_result {
-                Ok(g) => g,
-                Err(e) => {
-                    error!(error = %e, "Failed to load initial guilds");
-                    Vec::new()
-                }
-            };
-
-            let dms = match dms_result {
-                Ok(d) => d,
-                Err(e) => {
-                    error!(error = %e, "Failed to load initial DMs");
-                    Vec::new()
-                }
-            };
-
-            let read_states = match read_states_result {
-                Ok(rs) => rs.into_iter().map(|s| (s.channel_id, s)).collect(),
-                Err(e) => {
-                    error!(error = %e, "Failed to load read states");
-                    std::collections::HashMap::new()
-                }
-            };
-
-            let _ = tx.send(Action::DataLoaded {
-                user,
-                guilds,
-                dms,
-                read_states,
-            });
-        });
+        let _ = self
+            .command_tx
+            .send(BackendCommand::LoadInitialData { token, user });
     }
 
     fn set_connection_status(&mut self, status: ConnectionStatus) {
@@ -764,84 +729,23 @@ impl App {
         }
     }
 
-    async fn load_guild_channels(&mut self, guild_id: GuildId) {
-        let channels = if let Some(ref token) = self.current_token {
-            match self
-                .discord_data
-                .fetch_channels(token, guild_id.as_u64())
-                .await
-            {
-                Ok(channels) => {
-                    debug!(guild_id = %guild_id, count = channels.len(), "Loaded channels for guild");
-                    Some(channels)
-                }
-                Err(e) => {
-                    warn!(guild_id = %guild_id, error = %e, "Failed to load channels for guild");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        if let (Some(channels), CurrentScreen::Chat(state)) = (channels, &mut self.screen) {
-            state.set_channels(guild_id, channels);
+    fn load_guild_channels(&mut self, guild_id: GuildId) {
+        if let Some(ref token) = self.current_token {
+            let _ = self.command_tx.send(BackendCommand::LoadGuildChannels {
+                guild_id,
+                token: token.clone(),
+            });
         }
     }
 
-    async fn load_channel_messages(&mut self, channel_id: ChannelId) {
+    fn load_channel_messages(&mut self, channel_id: ChannelId) {
         self.typing_manager.clear_channel(channel_id);
 
-        let messages = if let Some(ref token) = self.current_token {
-            let options = FetchMessagesOptions::default().with_limit(50);
-            match self
-                .discord_data
-                .fetch_messages(token, channel_id.as_u64(), options)
-                .await
-            {
-                Ok(messages) => {
-                    debug!(channel_id = %channel_id, count = messages.len(), "Loaded messages for channel");
-                    Some(messages)
-                }
-                Err(e) => {
-                    warn!(channel_id = %channel_id, error = %e, "Failed to load messages for channel");
-                    if let CurrentScreen::Chat(state) = &mut self.screen {
-                        state.set_message_error(e.to_string());
-                        state.focus_guilds_tree();
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        if let Some(ref messages_list) = messages {
-            for message in messages_list {
-                self.cache_users_from_message(message);
-            }
-        }
-
-        if let (Some(messages), CurrentScreen::Chat(state)) = (messages, &mut self.screen) {
-            state.set_messages(messages);
-            state.set_typing_indicator(None);
-
-            if let Some(last_msg) = state.message_pane_data().messages().back() {
-                let message_id = last_msg.id();
-                let token = self.current_token.clone();
-                if let Some(token) = token {
-                    let discord = self.discord_data.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = discord
-                            .acknowledge_message(&token, channel_id, message_id)
-                            .await
-                        {
-                            warn!(error = %e, "Failed to ack message");
-                        }
-                    });
-                }
-                state.mark_channel_read(channel_id, message_id);
-            }
+        if let Some(ref token) = self.current_token {
+            let _ = self.command_tx.send(BackendCommand::LoadChannelMessages {
+                channel_id,
+                token: token.clone(),
+            });
         }
     }
 
@@ -866,26 +770,14 @@ impl App {
             return;
         };
 
-        let token = token.clone();
-        let discord = self.discord_data.clone();
-        let tx = self.action_tx.clone();
-
-        tokio::spawn(async move {
-            match discord
-                .load_more_before_id(&token, channel_id.as_u64(), before_message_id.as_u64(), 50)
-                .await
-            {
-                Ok(messages) => {
-                    debug!(count = messages.len(), "Loaded historical messages");
-                    let _ = tx.send(Action::HistoryLoaded(messages));
-                }
-                Err(e) => {
-                    let _ = tx.send(Action::LoadError(e.to_string()));
-                }
-            }
+        let _ = self.command_tx.send(BackendCommand::LoadHistory {
+            channel_id,
+            before_message_id,
+            token: token.clone(),
         });
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_action(&mut self, action: Action) {
         match action {
             Action::HistoryLoaded(messages) => {
@@ -944,6 +836,92 @@ impl App {
                     splash.set_data_ready();
                 }
             }
+            Action::LoginSuccess {
+                user,
+                token,
+                source,
+            } => {
+                info!(
+                    user = %user.display_name(),
+                    source = %source,
+                    "Login successful"
+                );
+                if let Some(auth_token) = AuthToken::new(&token) {
+                    self.current_token = Some(auth_token);
+                }
+                self.start_app_loading(user);
+            }
+            Action::LoginFailure(error) => {
+                error!(error = %error, "Login failed");
+                self.handle_login_error(&error);
+            }
+            Action::GuildChannelsLoaded { guild_id, channels } => {
+                debug!(guild_id = %guild_id, count = channels.len(), "Loaded channels for guild");
+                if let CurrentScreen::Chat(state) = &mut self.screen {
+                    state.set_channels(guild_id, channels);
+                }
+            }
+            Action::GuildChannelsLoadError { guild_id, error } => {
+                warn!(guild_id = %guild_id, error = %error, "Failed to load channels for guild");
+            }
+            Action::ChannelMessagesLoaded {
+                channel_id,
+                messages,
+            } => {
+                debug!(channel_id = %channel_id, count = messages.len(), "Loaded messages for channel");
+                for message in &messages {
+                    self.cache_users_from_message(message);
+                }
+
+                if let CurrentScreen::Chat(state) = &mut self.screen {
+                    state.set_messages(messages);
+                    state.set_typing_indicator(None);
+
+                    if let Some(last_msg) = state.message_pane_data().messages().back() {
+                        let message_id = last_msg.id();
+                        if let Some(ref token) = self.current_token {
+                            let _ = self.command_tx.send(BackendCommand::AcknowledgeMessage {
+                                channel_id,
+                                message_id,
+                                token: token.clone(),
+                            });
+                        }
+                        state.mark_channel_read(channel_id, message_id);
+                    }
+                }
+            }
+            Action::ChannelMessagesLoadError { channel_id, error } => {
+                warn!(channel_id = %channel_id, error = %error, "Failed to load messages for channel");
+                if let CurrentScreen::Chat(state) = &mut self.screen {
+                    state.set_message_error(error);
+                    state.focus_guilds_tree();
+                }
+            }
+            Action::MessageSent(message) => {
+                info!(message_id = %message.id(), "Message sent successfully");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.add_message(message);
+                }
+            }
+            Action::MessageSendError(error) => {
+                error!(error = %error, "Failed to send message");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_message_error(format!("Failed to send: {error}"));
+                }
+            }
+            Action::MessageEdited(message) => {
+                info!(message_id = %message.id(), "Message edited successfully");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.update_message(message);
+                }
+            }
+            Action::MessageEditError(error) => {
+                error!(error = %error, "Failed to edit message");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_message_error(format!("Failed to edit: {error}"));
+                }
+            }
+            Action::TypingIndicatorSent(_) => {}
         }
     }
 
@@ -987,7 +965,7 @@ impl App {
         }
     }
 
-    async fn handle_send_message(
+    fn handle_send_message(
         &mut self,
         content: String,
         reply_to: Option<crate::domain::entities::MessageId>,
@@ -1020,25 +998,15 @@ impl App {
 
         debug!(channel_id = %channel_id, has_reply = reply_to.is_some(), "Sending message");
 
-        match self.discord_data.send_message(token, request).await {
-            Ok(message) => {
-                info!(message_id = %message.id(), "Message sent successfully");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.add_message(message);
-                }
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to send message");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_message_error(format!("Failed to send: {e}"));
-                }
-            }
-        }
+        let _ = self.command_tx.send(BackendCommand::SendMessage {
+            token: token.clone(),
+            request,
+        });
 
         self.last_typing_sent = None;
     }
 
-    async fn handle_edit_message(
+    fn handle_edit_message(
         &mut self,
         message_id: crate::domain::entities::MessageId,
         content: String,
@@ -1065,23 +1033,13 @@ impl App {
 
         debug!(channel_id = %channel_id, message_id = %message_id, "Editing message");
 
-        match self.discord_data.edit_message(token, request).await {
-            Ok(message) => {
-                info!(message_id = %message.id(), "Message edited successfully");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.update_message(message);
-                }
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to edit message");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_message_error(format!("Failed to edit: {e}"));
-                }
-            }
-        }
+        let _ = self.command_tx.send(BackendCommand::EditMessage {
+            token: token.clone(),
+            request,
+        });
     }
 
-    async fn handle_start_typing(&mut self) {
+    fn handle_start_typing(&mut self) {
         let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
             state
                 .selected_channel()
@@ -1109,28 +1067,25 @@ impl App {
             return;
         };
 
-        if let Err(e) = self
-            .discord_data
-            .send_typing_indicator(token, channel_id)
-            .await
-        {
-            debug!(error = %e, "Failed to send typing indicator");
-        } else {
-            self.last_typing_sent = Some((channel_id, Instant::now()));
-        }
+        let _ = self.command_tx.send(BackendCommand::SendTypingIndicator {
+            channel_id,
+            token: token.clone(),
+        });
+
+        self.last_typing_sent = Some((channel_id, Instant::now()));
     }
 
-    async fn handle_open_editor(
+    fn handle_open_editor(
         &mut self,
         terminal: &mut DefaultTerminal,
-        initial_content: String,
+        initial_content: &str,
         target_message_id: Option<MessageId>,
     ) -> color_eyre::Result<()> {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
         let mut temp_file = NamedTempFile::new()?;
-        write!(temp_file, "{}", initial_content)?;
+        write!(temp_file, "{initial_content}")?;
         let temp_path = temp_file.path().to_owned();
 
         let editor = std::env::var("EDITOR")
@@ -1314,8 +1269,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_app_creation() {
+    #[tokio::test]
+    async fn test_app_creation() {
         let auth = Arc::new(MockAuthPort::new(true));
         let data = Arc::new(MockDiscordData);
         let storage = Arc::new(MockTokenStorage::new());

@@ -69,8 +69,7 @@ impl FileExplorerComponent {
                     !entry
                         .path()
                         .file_name()
-                        .map(|s| s.to_string_lossy().starts_with('.'))
-                        .unwrap_or(false)
+                        .is_some_and(|s| s.to_string_lossy().starts_with('.'))
                 })
                 .map(|entry| {
                     let path = entry.path();

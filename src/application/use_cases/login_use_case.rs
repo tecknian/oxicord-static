@@ -10,6 +10,7 @@ use crate::domain::errors::AuthError;
 use crate::domain::ports::{AuthPort, TokenStoragePort};
 
 /// Handles user authentication workflow.
+#[derive(Clone)]
 pub struct LoginUseCase {
     auth_port: Arc<dyn AuthPort>,
     storage_port: Arc<dyn TokenStoragePort>,

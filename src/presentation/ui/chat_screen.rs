@@ -169,6 +169,11 @@ impl ChatScreenState {
     }
 
     #[must_use]
+    pub const fn has_entered(&self) -> bool {
+        self.has_entered
+    }
+
+    #[must_use]
     pub const fn user(&self) -> &User {
         &self.user
     }
@@ -328,40 +333,35 @@ impl ChatScreenState {
             return self.handle_file_explorer_key(key);
         }
 
-        if let Some(action) = self.registry.find_action(key) {
-            if matches!(action, Action::Quit | Action::Logout | Action::ToggleHelp) {
-                if let Some(result) = self.handle_global_key(key) {
-                    return result;
-                }
-            }
+        if let Some(action) = self.registry.find_action(key)
+            && matches!(action, Action::Quit | Action::Logout | Action::ToggleHelp)
+            && let Some(result) = self.handle_global_key(key)
+        {
+            return result;
         }
 
-        match self.focus {
-            ChatFocus::MessageInput => {
-                if let KeyCode::Char(_) = key.code {
-                    if key.modifiers.is_empty()
-                        || key.modifiers == crossterm::event::KeyModifiers::SHIFT
-                    {
-                        return self.handle_message_input_key(key);
-                    }
-                }
-
-                if let Some(result) = self.handle_global_key(key) {
-                    return result;
-                }
-
-                self.handle_message_input_key(key)
+        if self.focus == ChatFocus::MessageInput {
+            if let KeyCode::Char(_) = key.code
+                && (key.modifiers.is_empty()
+                    || key.modifiers == crossterm::event::KeyModifiers::SHIFT)
+            {
+                return self.handle_message_input_key(key);
             }
-            _ => {
-                if let Some(result) = self.handle_global_key(key) {
-                    return result;
-                }
 
-                match self.focus {
-                    ChatFocus::GuildsTree => self.handle_guilds_tree_key(key),
-                    ChatFocus::MessagesList => self.handle_messages_list_key(key),
-                    ChatFocus::MessageInput => unreachable!(),
-                }
+            if let Some(result) = self.handle_global_key(key) {
+                return result;
+            }
+
+            self.handle_message_input_key(key)
+        } else {
+            if let Some(result) = self.handle_global_key(key) {
+                return result;
+            }
+
+            match self.focus {
+                ChatFocus::GuildsTree => self.handle_guilds_tree_key(key),
+                ChatFocus::MessagesList => self.handle_messages_list_key(key),
+                ChatFocus::MessageInput => unreachable!(),
             }
         }
     }
@@ -432,11 +432,11 @@ impl ChatScreenState {
     }
 
     fn handle_messages_list_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(Action::Cancel) = self.registry.find_action(key) {
-            if self.message_pane_state.selected_index().is_none() {
-                self.focus_guilds_tree();
-                return ChatKeyResult::Consumed;
-            }
+        if let Some(Action::Cancel) = self.registry.find_action(key)
+            && self.message_pane_state.selected_index().is_none()
+        {
+            self.focus_guilds_tree();
+            return ChatKeyResult::Consumed;
         }
 
         if let Some(action) =
@@ -876,11 +876,11 @@ impl ChatScreenState {
     }
 
     fn handle_file_explorer_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if self.registry.find_action(key) == Some(Action::ToggleHiddenFiles) {
-            if let Some(explorer) = &mut self.file_explorer {
-                explorer.toggle_hidden();
-                return ChatKeyResult::Consumed;
-            }
+        if self.registry.find_action(key) == Some(Action::ToggleHiddenFiles)
+            && let Some(explorer) = &mut self.file_explorer
+        {
+            explorer.toggle_hidden();
+            return ChatKeyResult::Consumed;
         }
 
         if let Some(explorer) = &mut self.file_explorer {
