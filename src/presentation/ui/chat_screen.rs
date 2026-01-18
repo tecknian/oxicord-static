@@ -10,6 +10,7 @@ use tachyonfx::{Effect, Interpolation, fx};
 
 use crate::application::services::autocomplete_service::AutocompleteService;
 use crate::application::services::markdown_service::MarkdownService;
+use crate::domain::ConnectionStatus;
 use crate::domain::entities::{
     CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildId, Message, MessageId, User,
     UserCache,
@@ -17,10 +18,10 @@ use crate::domain::entities::{
 use crate::domain::keybinding::{Action, Keybind};
 use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::widgets::{
-    ConnectionStatus, FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar,
-    GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar, MentionPopup,
-    MessageInput, MessageInputAction, MessageInputMode, MessageInputState, MessagePane,
-    MessagePaneAction, MessagePaneData, MessagePaneState,
+    FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar, GuildsTree,
+    GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar, MentionPopup, MessageInput,
+    MessageInputAction, MessageInputMode, MessageInputState, MessagePane, MessagePaneAction,
+    MessagePaneData, MessagePaneState,
 };
 use crate::{NAME, VERSION};
 

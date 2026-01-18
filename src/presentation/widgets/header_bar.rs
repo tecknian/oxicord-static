@@ -1,3 +1,4 @@
+use crate::domain::ConnectionStatus;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -6,19 +7,13 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ConnectionStatus {
-    #[default]
-    Disconnected,
-    Connecting,
-    Connected,
-    Reconnecting,
-    Error,
+trait ConnectionStatusExt {
+    fn display_text(self) -> &'static str;
+    fn indicator(self) -> &'static str;
 }
 
-impl ConnectionStatus {
-    #[must_use]
-    pub const fn display_text(self) -> &'static str {
+impl ConnectionStatusExt for ConnectionStatus {
+    fn display_text(self) -> &'static str {
         match self {
             Self::Disconnected => "DISCONNECTED",
             Self::Connecting => "CONNECTING",
@@ -28,22 +23,11 @@ impl ConnectionStatus {
         }
     }
 
-    #[must_use]
-    pub const fn indicator(self) -> &'static str {
+    fn indicator(self) -> &'static str {
         match self {
             Self::Connected => "●",
             Self::Connecting | Self::Reconnecting => "◐",
             Self::Disconnected | Self::Error => "○",
-        }
-    }
-
-    #[must_use]
-    pub const fn color(self) -> Color {
-        match self {
-            Self::Connected => Color::Green,
-            Self::Connecting | Self::Reconnecting => Color::Yellow,
-            Self::Disconnected => Color::DarkGray,
-            Self::Error => Color::Red,
         }
     }
 }
@@ -69,7 +53,7 @@ impl Default for HeaderBarStyle {
             status_connected: Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
-            status_disconnected: Style::default().fg(Color::DarkGray),
+            status_disconnected: Style::default().fg(Color::Red),
             status_connecting: Style::default().fg(Color::Yellow),
             status_error: Style::default().fg(Color::Red),
         }

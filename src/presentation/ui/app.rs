@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::application::dto::{LoginRequest, TokenSource};
 use crate::application::services::markdown_service::MarkdownService;
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
+use crate::domain::ConnectionStatus;
 use crate::domain::entities::{AuthToken, ChannelId, GuildId, MessageId, UserCache};
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
@@ -27,7 +28,6 @@ use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{
     ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen, SplashScreen,
 };
-use crate::presentation::widgets::ConnectionStatus;
 
 const TYPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(2);
 const TYPING_THROTTLE_DURATION: Duration = Duration::from_secs(8);
@@ -80,6 +80,7 @@ pub struct App {
     pending_chat_state: Option<Box<ChatScreenState>>,
     pending_read_states: Option<Vec<crate::domain::entities::ReadState>>,
     gateway_ready: bool,
+    connection_status: ConnectionStatus,
 }
 
 impl App {
@@ -115,6 +116,7 @@ impl App {
             pending_chat_state: None,
             pending_read_states: None,
             gateway_ready: false,
+            connection_status: ConnectionStatus::Disconnected,
         }
     }
 
@@ -452,6 +454,16 @@ impl App {
         });
     }
 
+    fn set_connection_status(&mut self, status: ConnectionStatus) {
+        self.connection_status = status;
+        if let CurrentScreen::Chat(ref mut state) = self.screen {
+            state.set_connection_status(status);
+        }
+        if let Some(ref mut state) = self.pending_chat_state {
+            state.set_connection_status(status);
+        }
+    }
+
     fn connect_gateway(&mut self, token: &AuthToken) {
         let config = GatewayClientConfig::new()
             .with_intents(
@@ -469,10 +481,7 @@ impl App {
                 info!("Gateway connection initiated");
                 self.gateway_rx = Some(rx);
                 self.gateway_client = Some(client);
-
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_connection_status(ConnectionStatus::Connecting);
-                }
+                self.set_connection_status(ConnectionStatus::Connecting);
             }
             Err(e) => {
                 error!(error = %e, "Failed to initiate gateway connection");
@@ -492,27 +501,19 @@ impl App {
         match event {
             GatewayEventKind::Connected { session_id, .. } => {
                 info!(session_id = %session_id, "Gateway connected");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_connection_status(ConnectionStatus::Connected);
-                }
+                self.set_connection_status(ConnectionStatus::Connected);
             }
             GatewayEventKind::Disconnected { reason, can_resume } => {
                 warn!(reason = %reason, can_resume = can_resume, "Gateway disconnected");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_connection_status(ConnectionStatus::Disconnected);
-                }
+                self.set_connection_status(ConnectionStatus::Disconnected);
             }
             GatewayEventKind::Reconnecting { attempt } => {
                 info!(attempt = attempt, "Gateway reconnecting");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_connection_status(ConnectionStatus::Connecting);
-                }
+                self.set_connection_status(ConnectionStatus::Reconnecting);
             }
             GatewayEventKind::Resumed => {
                 info!("Gateway session resumed");
-                if let CurrentScreen::Chat(ref mut state) = self.screen {
-                    state.set_connection_status(ConnectionStatus::Connected);
-                }
+                self.set_connection_status(ConnectionStatus::Connected);
             }
             GatewayEventKind::HeartbeatAck { latency_ms } => {
                 debug!(latency_ms = latency_ms, "Heartbeat acknowledged");
@@ -911,6 +912,8 @@ impl App {
                     self.markdown_service.clone(),
                     self.user_cache.clone(),
                 );
+
+                chat_state.set_connection_status(self.connection_status);
 
                 for dm in &dms {
                     self.user_cache

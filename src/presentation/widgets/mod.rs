@@ -15,7 +15,7 @@ pub use footer_bar::{FocusContext, FooterBar, FooterBarStyle};
 pub use guilds_tree::{
     GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, GuildsTreeStyle, TreeNodeId,
 };
-pub use header_bar::{ConnectionStatus, HeaderBar, HeaderBarStyle};
+pub use header_bar::{HeaderBar, HeaderBarStyle};
 pub use input::TextInput;
 pub use mention_popup::MentionPopup;
 pub use message_input::{
