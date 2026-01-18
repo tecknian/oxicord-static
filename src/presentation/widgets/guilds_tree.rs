@@ -614,6 +614,7 @@ impl StatefulWidget for GuildsTree<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     #[test]
     fn test_guilds_tree_state_creation() {

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -53,6 +53,7 @@ pub struct MessageInputState<'a> {
     mode: MessageInputMode,
     has_channel: bool,
     attachments: Vec<PathBuf>,
+    scroll_offset: usize,
 }
 
 impl MessageInputState<'_> {
@@ -66,6 +67,7 @@ impl MessageInputState<'_> {
             mode: MessageInputMode::Normal,
             has_channel: false,
             attachments: Vec::new(),
+            scroll_offset: 0,
         }
     }
 
@@ -216,7 +218,11 @@ impl MessageInputState<'_> {
             return None;
         }
 
-        match registry.find_action(key) {
+        match if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
+            Some(Action::SendMessage)
+        } else {
+            registry.find_action(key)
+        } {
             Some(Action::Cancel) => {
                 if self.is_replying() || self.is_editing() {
                     self.reset_mode();
@@ -273,9 +279,7 @@ impl MessageInputState<'_> {
         }
     }
 
-    /// Render using manual rendering instead of tui-textarea's widget
-    /// to avoid ratatui version incompatibility (project: 0.30, tui-textarea: 0.29)
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
+    fn setup_block(&self) -> Block<'static> {
         let border_color = if self.focused {
             Color::Cyan
         } else {
@@ -288,20 +292,24 @@ impl MessageInputState<'_> {
             .borders(Borders::ALL)
             .border_style(border_style);
 
-        if let MessageInputMode::Reply { author, .. } = &self.mode {
-            let reply_title = format!(" Replying to @{author} ");
-            block = block.title(reply_title).title_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::ITALIC),
-            );
-        } else if let MessageInputMode::Editing { .. } = &self.mode {
-            let edit_title = " Editing Message ";
-            block = block.title(edit_title).title_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            );
+        match &self.mode {
+            MessageInputMode::Reply { author, .. } => {
+                let reply_title = format!(" Replying to @{author} ");
+                block = block.title(reply_title).title_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::ITALIC),
+                );
+            }
+            MessageInputMode::Editing { .. } => {
+                let edit_title = " Editing Message ";
+                block = block.title(edit_title).title_style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            MessageInputMode::Normal => {}
         }
 
         if !self.attachments.is_empty() {
@@ -313,9 +321,28 @@ impl MessageInputState<'_> {
             );
         }
 
-        let inner = block.inner(area);
+        block
+    }
 
+    /// Render using manual rendering instead of tui-textarea's widget
+    /// to avoid ratatui version incompatibility (project: 0.30, tui-textarea: 0.29)
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+        let block = self.setup_block();
+        let inner = block.inner(area);
         block.render(area, buf);
+
+        let width = inner.width as usize;
+        if width == 0 {
+            return;
+        }
+
+        let (_, cursor_col) = self.textarea.cursor();
+
+        if cursor_col >= self.scroll_offset + width {
+            self.scroll_offset = cursor_col - width + 1;
+        } else if cursor_col < self.scroll_offset {
+            self.scroll_offset = cursor_col;
+        }
 
         let content = self.value();
         let display_content = if content.is_empty() {
@@ -334,7 +361,7 @@ impl MessageInputState<'_> {
             Style::default().fg(Color::White)
         };
 
-        let (cursor_row, cursor_col) = self.textarea.cursor();
+        let (cursor_row, _) = self.textarea.cursor();
 
         let lines: Vec<&str> = display_content.lines().collect();
         for (i, line) in lines.iter().enumerate() {
@@ -343,11 +370,14 @@ impl MessageInputState<'_> {
             }
             let y = inner.y + u16::try_from(i).unwrap_or(0);
 
-            for (j, ch) in line.chars().enumerate() {
-                if j >= inner.width as usize {
-                    break;
-                }
-                let x = inner.x + u16::try_from(j).unwrap_or(0);
+            for (j, ch) in line
+                .chars()
+                .enumerate()
+                .skip(self.scroll_offset)
+                .take(width)
+            {
+                let visual_x = j - self.scroll_offset;
+                let x = inner.x + u16::try_from(visual_x).unwrap_or(0);
 
                 let style = if self.focused
                     && !self.value().is_empty()
@@ -369,25 +399,31 @@ impl MessageInputState<'_> {
                 && !self.value().is_empty()
                 && i == cursor_row
                 && cursor_col >= line.len()
+                && cursor_col >= self.scroll_offset
+                && cursor_col < self.scroll_offset + width
             {
-                let x = inner.x + u16::try_from(line.len()).unwrap_or(0);
-                if x < inner.x + inner.width
-                    && let Some(cell) = buf.cell_mut((x, y))
-                {
+                let visual_x = cursor_col - self.scroll_offset;
+                let x = inner.x + u16::try_from(visual_x).unwrap_or(0);
+
+                if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_symbol(" ");
                     cell.set_style(Style::default().bg(Color::White).fg(Color::Black));
                 }
             }
         }
 
-        if self.focused && self.value().is_empty() {
-        } else if self.focused && !self.value().is_empty() && cursor_row >= lines.len() {
+        if self.focused && !self.value().is_empty() && cursor_row >= lines.len() {
             let y = inner.y + u16::try_from(cursor_row).unwrap_or(0);
             if y < inner.y + inner.height
-                && let Some(cell) = buf.cell_mut((inner.x, y))
+                && cursor_col >= self.scroll_offset
+                && cursor_col < self.scroll_offset + width
             {
-                cell.set_symbol(" ");
-                cell.set_style(Style::default().bg(Color::White).fg(Color::Black));
+                let visual_x = cursor_col - self.scroll_offset;
+                let x = inner.x + u16::try_from(visual_x).unwrap_or(0);
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_symbol(" ");
+                    cell.set_style(Style::default().bg(Color::White).fg(Color::Black));
+                }
             }
         }
     }
@@ -431,7 +467,7 @@ impl MessageInput {
         Self
     }
 
-    pub fn render(state: &MessageInputState<'_>, area: Rect, buf: &mut Buffer) {
+    pub fn render(state: &mut MessageInputState<'_>, area: Rect, buf: &mut Buffer) {
         state.render(area, buf);
     }
 }
@@ -559,15 +595,24 @@ mod tests {
     }
 
     #[test]
-    fn test_open_editor_action() {
+    fn test_enter_and_shift_enter() {
         let mut state = MessageInputState::new();
         let registry = CommandRegistry::default();
         state.set_has_channel(true);
+        state.set_content("hello");
 
         let action = state.handle_key(
-            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
             &registry,
         );
-        assert!(matches!(action, Some(MessageInputAction::OpenEditor)));
+        assert!(matches!(action, Some(MessageInputAction::StartTyping)));
+        assert_eq!(state.value(), "hello\n");
+
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &registry);
+        assert!(matches!(
+            action,
+            Some(MessageInputAction::SendMessage { .. })
+        ));
+        assert!(state.is_empty());
     }
 }

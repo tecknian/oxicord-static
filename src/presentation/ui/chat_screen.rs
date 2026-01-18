@@ -1134,8 +1134,8 @@ fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer
     StatefulWidget::render(pane, area, buf, pane_state);
 }
 
-fn render_message_input(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
-    MessageInput::render(state.message_input_state(), area, buf);
+fn render_message_input(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    MessageInput::render(state.message_input_parts_mut(), area, buf);
 }
 
 fn render_messages_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
