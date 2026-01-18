@@ -806,6 +806,7 @@ impl App {
                     warn!(channel_id = %channel_id, error = %e, "Failed to load messages for channel");
                     if let CurrentScreen::Chat(state) = &mut self.screen {
                         state.set_message_error(e.to_string());
+                        state.focus_guilds_tree();
                     }
                     None
                 }

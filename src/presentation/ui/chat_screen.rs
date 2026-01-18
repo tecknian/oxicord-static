@@ -337,7 +337,6 @@ impl ChatScreenState {
 
         match self.focus {
             ChatFocus::MessageInput => {
-                // Prioritize input for typing characters to prevent shadowing by single-key globals (like 'i')
                 if let KeyCode::Char(_) = key.code {
                     if key.modifiers.is_empty()
                         || key.modifiers == crossterm::event::KeyModifiers::SHIFT
@@ -432,6 +431,13 @@ impl ChatScreenState {
     }
 
     fn handle_messages_list_key(&mut self, key: KeyEvent) -> ChatKeyResult {
+        if let Some(Action::Cancel) = self.registry.find_action(key) {
+            if self.message_pane_state.selected_index().is_none() {
+                self.focus_guilds_tree();
+                return ChatKeyResult::Consumed;
+            }
+        }
+
         if let Some(action) =
             self.message_pane_state
                 .handle_key(key, &self.message_pane_data, &self.registry)
@@ -682,6 +688,7 @@ impl ChatScreenState {
             if let Some(topic) = topic {
                 self.message_pane_data.set_channel_topic(Some(topic));
             }
+            self.focus_messages_list();
             return Some(ChatKeyResult::LoadChannelMessages {
                 channel_id,
                 guild_id: Some(guild_id),
@@ -724,6 +731,8 @@ impl ChatScreenState {
             self.message_pane_data.set_channel(channel_id, display_name);
             self.message_input_state.set_has_channel(true);
             self.message_input_state.clear();
+
+            self.focus_messages_list();
 
             return Some(ChatKeyResult::LoadDmMessages {
                 channel_id,
@@ -1503,6 +1512,31 @@ mod tests {
     }
 
     #[test]
+    fn test_focus_switch_on_channel_selection() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownService::new()),
+            UserCache::new(),
+        );
+
+        let guild_a = Guild::new(1_u64, "Guild A");
+        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+
+        state.set_guilds(vec![guild_a.clone()]);
+        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
+
+        state.on_guild_selected(guild_a.id());
+        assert_eq!(state.focus(), ChatFocus::GuildsTree);
+
+        state.on_channel_selected(channel_a1.id());
+        assert_eq!(
+            state.focus(),
+            ChatFocus::MessagesList,
+            "Focus should switch to MessagesList on channel selection"
+        );
+    }
+
+    #[test]
     fn test_focus_to_context_conversion() {
         assert_eq!(
             ChatFocus::GuildsTree.to_focus_context(),
@@ -1515,6 +1549,33 @@ mod tests {
         assert_eq!(
             ChatFocus::MessageInput.to_focus_context(),
             FocusContext::MessageInput
+        );
+    }
+
+    #[test]
+    fn test_escape_from_empty_message_list_focuses_tree() {
+        use crossterm::event::KeyModifiers;
+
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownService::new()),
+            UserCache::new(),
+        );
+
+        state.focus_messages_list();
+        assert_eq!(state.focus(), ChatFocus::MessagesList);
+
+        state.message_pane_state.clear_selection();
+
+        let esc_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+        let result = state.handle_key(esc_event);
+
+        assert_eq!(result, ChatKeyResult::Consumed);
+        assert_eq!(
+            state.focus(),
+            ChatFocus::GuildsTree,
+            "Should return focus to Guilds Tree on Cancel from empty selection"
         );
     }
 }
