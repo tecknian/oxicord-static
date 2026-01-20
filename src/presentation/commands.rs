@@ -67,11 +67,6 @@ impl Default for CommandRegistry {
             false,
         );
         register(
-            Action::FocusInput,
-            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
-            false,
-        );
-        register(
             Action::FocusNext,
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
             true,
@@ -92,9 +87,19 @@ impl Default for CommandRegistry {
             true,
         );
         register(
+            Action::ToggleHiddenFiles,
+            KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE),
+            false,
+        );
+        register(
+            Action::ToggleHiddenFiles,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+            false,
+        );
+        register(
             Action::NextTab,
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
-            false,
+            true,
         );
 
         register(

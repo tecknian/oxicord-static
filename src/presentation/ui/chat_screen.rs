@@ -336,13 +336,6 @@ impl ChatScreenState {
             return self.handle_file_explorer_key(key);
         }
 
-        if let Some(action) = self.registry.find_action(key)
-            && matches!(action, Action::Quit | Action::Logout | Action::ToggleHelp)
-            && let Some(result) = self.handle_global_key(key)
-        {
-            return result;
-        }
-
         if self.focus == ChatFocus::MessageInput {
             if let KeyCode::Char(_) = key.code
                 && (key.modifiers.is_empty()
@@ -382,6 +375,9 @@ impl ChatScreenState {
                 Some(ChatKeyResult::Consumed)
             }
             Some(Action::FocusInput) => {
+                if self.focus == ChatFocus::MessageInput {
+                    return None;
+                }
                 self.focus_message_input();
                 Some(ChatKeyResult::Consumed)
             }
@@ -398,6 +394,11 @@ impl ChatScreenState {
                 Some(ChatKeyResult::Consumed)
             }
             Some(Action::ToggleHelp) => {
+                if self.focus == ChatFocus::MessageInput {
+                    if let KeyCode::Char(_) = key.code {
+                        return None;
+                    }
+                }
                 self.toggle_help();
                 Some(ChatKeyResult::ToggleHelp)
             }
@@ -1198,7 +1199,7 @@ fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) 
     use ratatui::widgets::{Block, Borders, Cell, Clear, Row, Table};
 
     let width = 80;
-    let height = 30;
+    let height = 36;
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
     let popup_area = Rect::new(x, y, width.min(area.width), height.min(area.height));
