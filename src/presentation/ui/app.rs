@@ -23,6 +23,7 @@ use crate::infrastructure::discord::{
     DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
     GatewayIntents, TypingIndicatorManager,
 };
+use crate::infrastructure::image::{ImageLoadedEvent, ImageLoader};
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{
     ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen, SplashScreen,
@@ -32,6 +33,7 @@ use crate::presentation::ui::{
 const TYPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(2);
 const TYPING_THROTTLE_DURATION: Duration = Duration::from_secs(8);
 const ANIMATION_TICK_RATE: Duration = Duration::from_millis(33);
+const IMAGE_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppState {
@@ -70,6 +72,12 @@ pub struct App {
     gateway_ready: bool,
     connection_status: ConnectionStatus,
     should_render: bool,
+    /// Image loader for async image loading.
+    image_loader: Option<Arc<ImageLoader>>,
+    /// Receiver for image load completion events.
+    image_load_rx: Option<mpsc::UnboundedReceiver<ImageLoadedEvent>>,
+    /// Last time we checked for images to load.
+    last_image_check: Instant,
 }
 
 impl App {
@@ -111,6 +119,9 @@ impl App {
             gateway_ready: false,
             connection_status: ConnectionStatus::Disconnected,
             should_render: true,
+            image_loader: None,
+            image_load_rx: None,
+            last_image_check: Instant::now(),
         }
     }
 
@@ -153,6 +164,12 @@ impl App {
             };
             let terminal_event = terminal_events.next();
 
+            // Image load event future
+            let image_load_future = match &mut self.image_load_rx {
+                Some(rx) => futures_util::future::Either::Left(rx.recv()),
+                None => futures_util::future::Either::Right(std::future::pending()),
+            };
+
             tokio::select! {
                 biased;
 
@@ -163,6 +180,11 @@ impl App {
 
                 Some(action) = self.action_rx.recv() => {
                     self.handle_action(action);
+                    self.should_render = true;
+                }
+
+                Some(event) = image_load_future => {
+                    self.handle_image_loaded(event);
                     self.should_render = true;
                 }
 
@@ -182,6 +204,12 @@ impl App {
                         if !state.has_entered() {
                             self.should_render = true;
                         }
+                    }
+
+                    // Debounced image load check
+                    if self.last_image_check.elapsed() > IMAGE_CHECK_INTERVAL {
+                        self.trigger_image_loads();
+                        self.last_image_check = Instant::now();
                     }
                 }
 
@@ -259,6 +287,9 @@ impl App {
                 frame.render_widget(screen, frame.area());
             }
             CurrentScreen::Chat(state) => {
+                // Update image protocols before rendering (only when width changes)
+                let width = frame.area().width;
+                state.update_visible_image_protocols(width);
                 frame.render_stateful_widget(ChatScreen::new(), frame.area(), state);
             }
         }
@@ -406,6 +437,21 @@ impl App {
         self.state = AppState::Initializing;
         self.screen = CurrentScreen::Splash(SplashScreen::new());
         self.gateway_ready = false;
+
+        // Initialize image loader
+        let (img_tx, img_rx) = mpsc::unbounded_channel();
+        let action_tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            match ImageLoader::with_defaults(img_tx).await {
+                Ok(loader) => {
+                    let _ = action_tx.send(Action::ImageLoaderReady(Arc::new(loader)));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to initialize image loader");
+                }
+            }
+        });
+        self.image_load_rx = Some(img_rx);
 
         let Some(ref token) = self.current_token else {
             return;
@@ -927,6 +973,10 @@ impl App {
                 }
             }
             Action::TypingIndicatorSent(_) => {}
+            Action::ImageLoaderReady(loader) => {
+                info!("Image loader initialized");
+                self.image_loader = Some(loader);
+            }
         }
     }
 
@@ -1078,6 +1128,39 @@ impl App {
         });
 
         self.last_typing_sent = Some((channel_id, Instant::now()));
+    }
+
+    /// Handle an image load completion event.
+    fn handle_image_loaded(&mut self, event: ImageLoadedEvent) {
+        if let CurrentScreen::Chat(ref mut state) = self.screen {
+            match event.result {
+                Ok(loaded) => {
+                    debug!(id = %loaded.id, source = ?loaded.source, "Image loaded successfully");
+                    state.on_image_loaded(&loaded.id, &loaded.image);
+                }
+                Err(e) => {
+                    warn!(id = %event.id, error = %e, "Failed to load image");
+                    state.mark_image_failed(&event.id, &e);
+                }
+            }
+        }
+    }
+
+    /// Trigger loading of images in the visible viewport.
+    fn trigger_image_loads(&mut self) {
+        let CurrentScreen::Chat(ref mut state) = self.screen else {
+            return;
+        };
+
+        let Some(ref loader) = self.image_loader else {
+            return;
+        };
+
+        let needed = state.collect_needed_image_loads();
+        for (id, url) in needed {
+            state.mark_image_downloading(&id);
+            loader.load_async(id, url);
+        }
     }
 
     fn handle_open_editor(

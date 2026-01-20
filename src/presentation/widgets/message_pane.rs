@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::application::services::markdown_service::{MarkdownService, MentionResolver};
+use crate::domain::entities::ImageId;
 use crate::domain::keybinding::Action;
 use crate::presentation::commands::CommandRegistry;
 
@@ -18,6 +19,9 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::domain::entities::{ChannelId, Message, MessageId};
+
+use super::image_state::{IMAGE_HEIGHT, ImageAttachment};
+
 const SCROLL_AMOUNT: u16 = 3;
 const SCROLLBAR_MARGIN: u16 = 2;
 const CHANNEL_NAME_PREFIX: &str = "[ ";
@@ -26,19 +30,118 @@ const DM_CHANNEL_PREFIX: &str = "[ ";
 const TIMESTAMP_WIDTH: usize = 6;
 const CONTENT_INDENT: usize = 6;
 
+/// UI wrapper for a message with rendering state.
 pub struct UiMessage {
     pub message: Message,
     pub estimated_height: u16,
     pub rendered_content: Option<Text<'static>>,
+    /// Image attachments for this message.
+    pub image_attachments: Vec<ImageAttachment>,
 }
 
 impl UiMessage {
     fn new(message: Message) -> Self {
+        // Extract image attachments from Discord attachments
+        let mut image_attachments: Vec<ImageAttachment> = message
+            .attachments()
+            .iter()
+            .filter_map(ImageAttachment::from_attachment)
+            .collect();
+
+        // Also extract inline image URLs from message content
+        // Match markdown images: ![alt](url) and direct image URLs
+        let content = message.content();
+        let inline_images = Self::extract_inline_images(content);
+        for url in inline_images {
+            // Avoid duplicates
+            if !image_attachments.iter().any(|img| img.url == url) {
+                let id = crate::domain::entities::ImageId::from_url(&url);
+                image_attachments.push(ImageAttachment::new(id, url));
+            }
+        }
+
         Self {
             message,
             estimated_height: 1,
             rendered_content: None,
+            image_attachments,
         }
+    }
+
+    /// Extracts inline image URLs from message content.
+    /// Matches markdown images `![alt](url)` and direct image URLs.
+    #[allow(clippy::items_after_statements)]
+    fn extract_inline_images(content: &str) -> Vec<String> {
+        if !content.contains("http") {
+            return Vec::new();
+        }
+
+        use regex::Regex;
+        use std::sync::LazyLock;
+
+        static MD_IMAGE_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"!\[[^\]]*\]\((https?://[^)]+)\)").unwrap());
+
+        static DIRECT_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(?:^|\s)(https?://[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)(?:\s|$)")
+                .unwrap()
+        });
+
+        let mut urls: Vec<String> = Vec::new();
+
+        for cap in MD_IMAGE_RE.captures_iter(content) {
+            if let Some(url) = cap.get(1) {
+                let url_str = url.as_str().to_owned();
+                if !urls.contains(&url_str) {
+                    urls.push(url_str);
+                }
+            }
+        }
+
+        for cap in DIRECT_IMAGE_RE.captures_iter(content) {
+            if let Some(url) = cap.get(1) {
+                let url_str = url.as_str().to_owned();
+                if !urls.contains(&url_str) {
+                    urls.push(url_str);
+                }
+            }
+        }
+
+        urls
+    }
+
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn total_image_height(&self) -> u16 {
+        let count = self
+            .image_attachments
+            .len()
+            .min(usize::from(u16::MAX) / usize::from(IMAGE_HEIGHT));
+        (count as u16).saturating_mul(IMAGE_HEIGHT)
+    }
+
+    /// Returns true if this message has any image attachments.
+    #[must_use]
+    pub fn has_images(&self) -> bool {
+        !self.image_attachments.is_empty()
+    }
+
+    /// Returns true if any images need loading.
+    #[must_use]
+    pub fn needs_image_load(&self) -> bool {
+        self.image_attachments
+            .iter()
+            .any(ImageAttachment::needs_load)
+    }
+
+    /// Collects image IDs that need loading.
+    #[must_use]
+    pub fn collect_image_loads(&self) -> Vec<(ImageId, String)> {
+        self.image_attachments
+            .iter()
+            .filter(|img| img.needs_load())
+            .map(|img| (img.id.clone(), img.url.clone()))
+            .collect()
     }
 }
 
@@ -230,6 +333,11 @@ impl MessagePaneData {
         self.typing_indicator = indicator;
     }
 
+    /// Marks the data as dirty, requiring re-layout.
+    pub fn mark_dirty(&mut self) {
+        self.is_dirty = true;
+    }
+
     #[must_use]
     pub fn typing_indicator(&self) -> Option<&str> {
         self.typing_indicator.as_deref()
@@ -317,9 +425,16 @@ impl MessagePaneData {
                 height += 1;
             }
 
-            if message.has_attachments() {
-                height += u16::try_from(message.attachments().len()).unwrap_or(u16::MAX);
-            }
+            // Count non-image attachments (for file attachments display)
+            let non_image_attachments = message
+                .attachments()
+                .iter()
+                .filter(|a| !a.is_image())
+                .count();
+            height += u16::try_from(non_image_attachments).unwrap_or(0);
+
+            // Add height for image attachments that are ready or loading
+            height += ui_msg.total_image_height();
 
             ui_msg.estimated_height = height;
         }
@@ -415,6 +530,11 @@ impl MessagePaneState {
     }
 
     #[must_use]
+    pub const fn viewport_height(&self) -> u16 {
+        self.viewport_height
+    }
+
+    #[must_use]
     pub const fn last_width(&self) -> u16 {
         self.last_width
     }
@@ -483,6 +603,17 @@ impl MessagePaneState {
         if self.is_following {
             self.scroll_to_bottom();
         }
+    }
+
+    /// Resets the state for a new channel - clears selection, enables following, resets scroll.
+    /// This ensures new channels start at the bottom (following mode).
+    pub fn on_channel_change(&mut self) {
+        self.selected_index = None;
+        self.is_following = true;
+        self.vertical_scroll = 0;
+        self.content_height = 0;
+        self.viewport_height = 0;
+        self.scrollbar_state = ScrollbarState::default();
     }
 
     #[allow(clippy::missing_const_for_fn)]
@@ -813,6 +944,7 @@ impl<'a> MessagePane<'a> {
     }
 }
 
+#[allow(clippy::too_many_lines, clippy::items_after_statements)]
 fn render_ui_message(
     ui_msg: &mut UiMessage,
     style: &MessagePaneStyle,
@@ -940,9 +1072,15 @@ fn render_ui_message(
     if message.is_reply() && message.referenced().is_some() {
         content_height -= 1;
     }
-    if message.has_attachments() {
-        content_height -= i32::try_from(message.attachments().len()).unwrap_or(0);
-    }
+    // Subtract non-image attachments
+    let non_image_count = message
+        .attachments()
+        .iter()
+        .filter(|a| !a.is_image())
+        .count();
+    content_height -= i32::try_from(non_image_count).unwrap_or(0);
+    // Subtract image attachment heights
+    content_height -= i32::from(ui_msg.total_image_height());
 
     let content_height = content_height.max(0);
 
@@ -968,24 +1106,116 @@ fn render_ui_message(
     }
     current_msg_y += content_height;
 
-    if message.has_attachments() {
-        for attachment in message.attachments() {
-            if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
+    // Render non-image attachments (file attachments)
+    for attachment in message.attachments() {
+        if attachment.is_image() {
+            continue; // Images are rendered separately below
+        }
+        if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
+            let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
+            let attachment_text = format!("\u{1F4CE} {}", attachment.filename());
+            let attachment_line = Line::from(vec![
+                indent_span.clone(),
+                Span::styled(attachment_text, style.attachment_style),
+            ]);
+            let attachment_para = Paragraph::new(attachment_line).style(base_style);
+            let att_area = Rect::new(
+                area.x,
+                area.y
+                    .saturating_add(u16::try_from(current_msg_y).unwrap_or(0)),
+                area.width,
+                1,
+            );
+            attachment_para.render(att_area, buf);
+        }
+        current_msg_y += 1;
+    }
+
+    // Render image attachments
+    for img_attachment in &mut ui_msg.image_attachments {
+        if !img_attachment.is_ready() {
+            // Show placeholder for loading images
+            if img_attachment.is_loading()
+                && current_msg_y >= 0
+                && current_msg_y < i32::from(area.height)
+            {
                 let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
-                let attachment_text = format!("📎 {}", attachment.filename());
-                let attachment_line = Line::from(vec![
-                    indent_span.clone(),
-                    Span::styled(attachment_text, style.attachment_style),
+                let loading_text = "\u{1F5BC}  Loading image...";
+                let loading_line = Line::from(vec![
+                    indent_span,
+                    Span::styled(
+                        loading_text,
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
                 ]);
-                let attachment_para = Paragraph::new(attachment_line).style(base_style);
-                let att_area = Rect::new(
+                let loading_para = Paragraph::new(loading_line).style(base_style);
+                let loading_area = Rect::new(
                     area.x,
                     area.y
                         .saturating_add(u16::try_from(current_msg_y).unwrap_or(0)),
                     area.width,
                     1,
                 );
-                attachment_para.render(att_area, buf);
+                loading_para.render(loading_area, buf);
+                current_msg_y += 1;
+            }
+            continue;
+        }
+
+        // Render the image using ratatui-image protocol
+        if let Some(ref mut protocol) = img_attachment.protocol {
+            let img_start_y = current_msg_y;
+            let img_height = i32::from(IMAGE_HEIGHT);
+
+            // Only render if visible
+            if img_start_y + img_height > 0 && img_start_y < i32::from(area.height) {
+                let top_clip = if img_start_y < 0 {
+                    u16::try_from(img_start_y.unsigned_abs()).unwrap_or(0)
+                } else {
+                    0
+                };
+
+                let target_y = u16::try_from(img_start_y.max(0)).unwrap_or(0);
+                let available_height = area.height.saturating_sub(target_y);
+                let effective_height = IMAGE_HEIGHT.saturating_sub(top_clip).min(available_height);
+
+                if effective_height > 0 {
+                    let img_area = Rect::new(
+                        area.x + u16::try_from(CONTENT_INDENT).unwrap_or(0),
+                        area.y + target_y,
+                        area.width.saturating_sub(
+                            u16::try_from(CONTENT_INDENT).unwrap_or(0) + SCROLLBAR_MARGIN,
+                        ),
+                        effective_height,
+                    );
+
+                    use ratatui_image::{Resize, StatefulImage};
+                    let image_widget = StatefulImage::default().resize(Resize::Fit(None));
+                    ratatui::widgets::StatefulWidget::render(image_widget, img_area, buf, protocol);
+                }
+            }
+
+            current_msg_y += img_height;
+        } else {
+            // Image ready but no protocol yet - show placeholder
+            if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
+                let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
+                let placeholder_text = "\u{1F5BC}  [Image]";
+                let placeholder_line = Line::from(vec![
+                    indent_span,
+                    Span::styled(placeholder_text, style.attachment_style),
+                ]);
+                let placeholder_para = Paragraph::new(placeholder_line).style(base_style);
+                let placeholder_area = Rect::new(
+                    area.x,
+                    area.y
+                        .saturating_add(u16::try_from(current_msg_y).unwrap_or(0)),
+                    area.width,
+                    1,
+                );
+                placeholder_para.render(placeholder_area, buf);
             }
             current_msg_y += 1;
         }
@@ -1072,9 +1302,9 @@ impl StatefulWidget for MessagePane<'_> {
 
         for (idx, ui_msg) in data.ui_messages_mut().iter_mut().enumerate() {
             let h = ui_msg.estimated_height as usize;
+            let current_y_usize = usize::try_from(current_y).unwrap_or(0);
 
-            if (current_y as usize) + h > offset
-                && (current_y as usize) < offset + inner_area.height as usize
+            if current_y_usize + h > offset && current_y_usize < offset + inner_area.height as usize
             {
                 let render_y = current_y - i32::try_from(offset).unwrap_or(0);
                 render_ui_message(ui_msg, &style, idx, render_y, inner_area, buf, state);
@@ -1124,7 +1354,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
         for (i, word) in paragraph.split(' ').enumerate() {
             let prefix = if i > 0 { " " } else { "" };
-            let prefix_width = if i > 0 { 1 } else { 0 };
+            let prefix_width = usize::from(i > 0);
 
             let word_width = UnicodeWidthStr::width(word);
             let total_word_width = prefix_width + word_width;

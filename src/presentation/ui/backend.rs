@@ -7,6 +7,7 @@ use crate::domain::ports::{
     DirectMessageChannel, DiscordDataPort, EditMessageRequest, FetchMessagesOptions,
     SendMessageRequest,
 };
+use crate::infrastructure::image::ImageLoader;
 
 #[derive(Debug)]
 pub enum Action {
@@ -46,6 +47,8 @@ pub enum Action {
         source: crate::application::dto::TokenSource,
     },
     LoginFailure(crate::domain::errors::AuthError),
+    /// Image loader has been initialized and is ready to use.
+    ImageLoaderReady(Arc<ImageLoader>),
 }
 
 #[derive(Debug)]

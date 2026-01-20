@@ -19,9 +19,9 @@ use crate::domain::keybinding::{Action, Keybind};
 use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::widgets::{
     FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar, GuildsTree,
-    GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar, MentionPopup, MessageInput,
-    MessageInputAction, MessageInputMode, MessageInputState, MessagePane, MessagePaneAction,
-    MessagePaneData, MessagePaneState,
+    GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar, ImageManager, MentionPopup,
+    MessageInput, MessageInputAction, MessageInputMode, MessageInputState, MessagePane,
+    MessagePaneAction, MessagePaneData, MessagePaneState,
 };
 use crate::{NAME, VERSION};
 
@@ -127,6 +127,8 @@ pub struct ChatScreenState {
     entrance_effect: Effect,
     pending_duration: Duration,
     has_entered: bool,
+    /// Image manager for rendering image attachments.
+    image_manager: ImageManager,
 }
 
 impl ChatScreenState {
@@ -159,6 +161,7 @@ impl ChatScreenState {
             entrance_effect: fx::coalesce((800, Interpolation::SineOut)),
             pending_duration: Duration::ZERO,
             has_entered: false,
+            image_manager: ImageManager::new(),
         }
     }
 
@@ -684,6 +687,7 @@ impl ChatScreenState {
 
             let channel_name = channel.display_name();
             self.message_pane_data.set_channel(channel_id, channel_name);
+            self.message_pane_state.on_channel_change();
             self.message_input_state.set_has_channel(true);
             self.message_input_state.clear();
             if let Some(topic) = topic {
@@ -730,6 +734,7 @@ impl ChatScreenState {
 
             let display_name = format!("@{recipient_name}");
             self.message_pane_data.set_channel(channel_id, display_name);
+            self.message_pane_state.on_channel_change();
             self.message_input_state.set_has_channel(true);
             self.message_input_state.clear();
 
@@ -862,6 +867,140 @@ impl ChatScreenState {
     /// Set the message input content.
     pub fn set_message_input_content(&mut self, content: &str) {
         self.message_input_state.set_content(content);
+    }
+
+    /// Returns a reference to the image manager.
+    #[must_use]
+    pub const fn image_manager(&self) -> &ImageManager {
+        &self.image_manager
+    }
+
+    /// Returns a mutable reference to the image manager.
+    pub fn image_manager_mut(&mut self) -> &mut ImageManager {
+        &mut self.image_manager
+    }
+
+    /// Collects all image attachments that need loading within the visible range.
+    /// Returns a list of (`ImageId`, URL) pairs.
+    #[must_use]
+    pub fn collect_needed_image_loads(&self) -> Vec<(crate::domain::entities::ImageId, String)> {
+        let mut needed = Vec::new();
+
+        // Only check visible messages + buffer
+        let visible_range = self.calculate_visible_range();
+        let buffer = super::super::widgets::LOAD_BUFFER;
+        let start = visible_range.0.saturating_sub(buffer);
+        let end = (visible_range.1 + buffer).min(self.message_pane_data.message_count());
+
+        for idx in start..end {
+            if let Some(ui_msg) = self.message_pane_data.messages().get(idx) {
+                for load in ui_msg.collect_image_loads() {
+                    needed.push(load);
+                }
+            }
+        }
+
+        needed
+    }
+
+    /// Calculates the visible message range based on scroll position.
+    fn calculate_visible_range(&self) -> (usize, usize) {
+        let offset = self.message_pane_state.vertical_scroll;
+        let viewport_height = self.message_pane_state.viewport_height() as usize;
+
+        let mut y = 0;
+        let mut start_idx = 0;
+        let mut end_idx = 0;
+        let mut found_start = false;
+
+        for (idx, msg) in self.message_pane_data.messages().iter().enumerate() {
+            let h = msg.estimated_height as usize;
+
+            if !found_start && y + h > offset {
+                start_idx = idx;
+                found_start = true;
+            }
+
+            if y >= offset + viewport_height {
+                end_idx = idx;
+                break;
+            }
+
+            y += h;
+            end_idx = idx + 1;
+        }
+
+        (start_idx, end_idx)
+    }
+
+    /// Updates an image attachment when it finishes loading.
+    pub fn on_image_loaded(
+        &mut self,
+        id: &crate::domain::entities::ImageId,
+        image: &std::sync::Arc<image::DynamicImage>,
+    ) {
+        for ui_msg in self.message_pane_data.ui_messages_mut() {
+            for attachment in &mut ui_msg.image_attachments {
+                if &attachment.id == id {
+                    attachment.set_loaded(image.clone());
+                }
+            }
+        }
+        // Mark as dirty to recalculate heights
+        self.message_pane_data.mark_dirty();
+    }
+
+    /// Updates image protocols for visible messages.
+    /// Should be called before rendering.
+    /// Only processes images that need protocol updates.
+    pub fn update_visible_image_protocols(&mut self, terminal_width: u16) {
+        // Quick check: if no messages or no images, skip entirely
+        if self.message_pane_data.is_empty() {
+            return;
+        }
+
+        // Update cached width for tracking
+        self.image_manager.set_width(terminal_width);
+
+        let visible_range = self.calculate_visible_range();
+        let buffer = super::super::widgets::LOAD_BUFFER;
+        let start = visible_range.0.saturating_sub(buffer);
+        let end = (visible_range.1 + buffer).min(self.message_pane_data.message_count());
+
+        let picker = self.image_manager.picker();
+
+        for idx in start..end {
+            if let Some(ui_msg) = self.message_pane_data.ui_messages_mut().get_mut(idx) {
+                for attachment in &mut ui_msg.image_attachments {
+                    // Only process if image is ready and needs protocol update
+                    if attachment.is_ready() {
+                        attachment.update_protocol_if_needed(picker, terminal_width);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Marks an image as downloading.
+    pub fn mark_image_downloading(&mut self, id: &crate::domain::entities::ImageId) {
+        for ui_msg in self.message_pane_data.ui_messages_mut() {
+            for attachment in &mut ui_msg.image_attachments {
+                if &attachment.id == id {
+                    attachment.set_downloading();
+                }
+            }
+        }
+    }
+
+    /// Marks an image as failed.
+    pub fn mark_image_failed(&mut self, id: &crate::domain::entities::ImageId, error: &str) {
+        for ui_msg in self.message_pane_data.ui_messages_mut() {
+            for attachment in &mut ui_msg.image_attachments {
+                if &attachment.id == id {
+                    attachment.set_failed(error.to_owned());
+                }
+            }
+        }
     }
 
     pub fn toggle_file_explorer(&mut self) {

@@ -3,6 +3,7 @@ mod file_explorer;
 mod footer_bar;
 mod guilds_tree;
 mod header_bar;
+mod image_state;
 mod input;
 mod mention_popup;
 mod message_input;
@@ -16,6 +17,7 @@ pub use guilds_tree::{
     GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, GuildsTreeStyle, TreeNodeId,
 };
 pub use header_bar::{HeaderBar, HeaderBarStyle};
+pub use image_state::{IMAGE_HEIGHT, ImageAttachment, ImageManager, LOAD_BUFFER};
 pub use input::TextInput;
 pub use mention_popup::MentionPopup;
 pub use message_input::{
@@ -23,6 +25,6 @@ pub use message_input::{
 };
 pub use message_pane::{
     LoadingState, MessagePane, MessagePaneAction, MessagePaneData, MessagePaneState,
-    MessagePaneStyle,
+    MessagePaneStyle, UiMessage,
 };
 pub use status_bar::{StatusBar, StatusLevel};
