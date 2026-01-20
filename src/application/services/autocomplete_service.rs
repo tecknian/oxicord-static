@@ -49,7 +49,25 @@ impl AutocompleteService {
             return false;
         }
 
-        let slice_up_to_cursor = &text[..cursor_idx];
+        let safe_cursor_idx = if text.is_char_boundary(cursor_idx) {
+            cursor_idx
+        } else {
+            text.char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| i < cursor_idx)
+                .last()
+                .unwrap_or(0)
+        };
+
+        if safe_cursor_idx == 0 {
+            if self.state.active {
+                self.reset();
+                return true;
+            }
+            return false;
+        }
+
+        let slice_up_to_cursor = &text[..safe_cursor_idx];
 
         if let Some(last_at_index) = slice_up_to_cursor.rfind('@') {
             let valid_trigger = if last_at_index == 0 {

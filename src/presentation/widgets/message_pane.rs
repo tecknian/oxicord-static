@@ -20,7 +20,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::domain::entities::{ChannelId, Message, MessageId};
 
-use super::image_state::{IMAGE_HEIGHT, ImageAttachment};
+use super::image_state::ImageAttachment;
 
 const SCROLL_AMOUNT: u16 = 3;
 const SCROLLBAR_MARGIN: u16 = 2;
@@ -113,11 +113,11 @@ impl UiMessage {
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
     pub fn total_image_height(&self) -> u16 {
-        let count = self
-            .image_attachments
-            .len()
-            .min(usize::from(u16::MAX) / usize::from(IMAGE_HEIGHT));
-        (count as u16).saturating_mul(IMAGE_HEIGHT)
+        // Sum actual heights from each image attachment
+        self.image_attachments
+            .iter()
+            .map(ImageAttachment::height)
+            .fold(0u16, |acc, h| acc.saturating_add(h))
     }
 
     /// Returns true if this message has any image attachments.
@@ -1164,12 +1164,13 @@ fn render_ui_message(
             continue;
         }
 
-        // Render the image using ratatui-image protocol
+        let actual_height = img_attachment.height();
+        let actual_width = img_attachment.width();
+
         if let Some(ref mut protocol) = img_attachment.protocol {
             let img_start_y = current_msg_y;
-            let img_height = i32::from(IMAGE_HEIGHT);
+            let img_height = i32::from(actual_height);
 
-            // Only render if visible
             if img_start_y + img_height > 0 && img_start_y < i32::from(area.height) {
                 let top_clip = if img_start_y < 0 {
                     u16::try_from(img_start_y.unsigned_abs()).unwrap_or(0)
@@ -1179,27 +1180,33 @@ fn render_ui_message(
 
                 let target_y = u16::try_from(img_start_y.max(0)).unwrap_or(0);
                 let available_height = area.height.saturating_sub(target_y);
-                let effective_height = IMAGE_HEIGHT.saturating_sub(top_clip).min(available_height);
+                let effective_height = actual_height.saturating_sub(top_clip).min(available_height);
 
                 if effective_height > 0 {
+                    let max_width = area.width.saturating_sub(
+                        u16::try_from(CONTENT_INDENT).unwrap_or(0) + SCROLLBAR_MARGIN,
+                    );
+                    let effective_width = if actual_width > 0 {
+                        actual_width.min(max_width)
+                    } else {
+                        max_width
+                    };
+
                     let img_area = Rect::new(
                         area.x + u16::try_from(CONTENT_INDENT).unwrap_or(0),
                         area.y + target_y,
-                        area.width.saturating_sub(
-                            u16::try_from(CONTENT_INDENT).unwrap_or(0) + SCROLLBAR_MARGIN,
-                        ),
+                        effective_width,
                         effective_height,
                     );
 
                     use ratatui_image::{Resize, StatefulImage};
-                    let image_widget = StatefulImage::default().resize(Resize::Fit(None));
+                    let image_widget = StatefulImage::default().resize(Resize::Crop(None));
                     ratatui::widgets::StatefulWidget::render(image_widget, img_area, buf, protocol);
                 }
             }
 
             current_msg_y += img_height;
         } else {
-            // Image ready but no protocol yet - show placeholder
             if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
                 let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
                 let placeholder_text = "\u{1F5BC}  [Image]";

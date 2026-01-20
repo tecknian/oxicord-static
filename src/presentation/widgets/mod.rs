@@ -17,7 +17,7 @@ pub use guilds_tree::{
     GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, GuildsTreeStyle, TreeNodeId,
 };
 pub use header_bar::{HeaderBar, HeaderBarStyle};
-pub use image_state::{IMAGE_HEIGHT, ImageAttachment, ImageManager, LOAD_BUFFER};
+pub use image_state::{ImageAttachment, ImageManager, LOAD_BUFFER, MAX_IMAGE_HEIGHT};
 pub use input::TextInput;
 pub use mention_popup::MentionPopup;
 pub use message_input::{

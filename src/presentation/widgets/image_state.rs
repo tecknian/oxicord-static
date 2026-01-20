@@ -1,25 +1,16 @@
 //! Image attachment state for message rendering.
-//!
-//! This module provides the presentation-layer wrapper that holds
-//! both the decoded image and the ratatui-image protocol state.
 
 use std::sync::Arc;
 
-use ratatui_image::picker::Picker;
+use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
 
 use crate::domain::entities::{ImageId, ImageStatus};
 
-/// Height of rendered images in terminal rows.
-pub const IMAGE_HEIGHT: u16 = 20;
-
+pub const MAX_IMAGE_HEIGHT: u16 = 20;
 const MAX_IMAGE_WIDTH: u32 = 800;
-const MAX_IMAGE_HEIGHT: u32 = 600;
-
-/// Buffer size for loading images around visible area.
 pub const LOAD_BUFFER: usize = 5;
 
-/// Holds both the decoded image and the render-ready protocol.
 pub struct ImageAttachment {
     pub id: ImageId,
     pub url: String,
@@ -27,6 +18,8 @@ pub struct ImageAttachment {
     pub protocol: Option<StatefulProtocol>,
     pub last_width: u16,
     pub status: ImageStatus,
+    rendered_height: u16,
+    rendered_width: u16,
 }
 
 impl ImageAttachment {
@@ -39,6 +32,8 @@ impl ImageAttachment {
             protocol: None,
             last_width: 0,
             status: ImageStatus::NotStarted,
+            rendered_height: 0,
+            rendered_width: 0,
         }
     }
 
@@ -57,6 +52,8 @@ impl ImageAttachment {
         self.status = ImageStatus::Ready;
         self.protocol = None;
         self.last_width = 0;
+        self.rendered_height = 0;
+        self.rendered_width = 0;
     }
 
     pub fn set_downloading(&mut self) {
@@ -82,7 +79,6 @@ impl ImageAttachment {
         self.status.is_not_started()
     }
 
-    /// Updates the protocol if terminal width changed. Returns true if updated.
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -100,24 +96,44 @@ impl ImageAttachment {
             return false;
         };
 
-        let (width, height) = (image.width(), image.height());
-        let resized_image = if width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT {
-            let scale_w = f64::from(MAX_IMAGE_WIDTH) / f64::from(width);
-            let scale_h = f64::from(MAX_IMAGE_HEIGHT) / f64::from(height);
-            let scale = scale_w.min(scale_h);
+        let (font_width, font_height) = picker.font_size();
 
+        if font_width == 0 || font_height == 0 {
+            return false;
+        }
+
+        let max_height_pixels = u32::from(MAX_IMAGE_HEIGHT) * u32::from(font_height);
+        let available_width = terminal_width.saturating_sub(10);
+        let max_width_pixels = u32::from(available_width) * u32::from(font_width);
+
+        let (width, height) = (image.width(), image.height());
+
+        let scale_w = f64::from(max_width_pixels.min(MAX_IMAGE_WIDTH)) / f64::from(width);
+        let scale_h = f64::from(max_height_pixels) / f64::from(height);
+        let scale = scale_w.min(scale_h).min(1.0);
+
+        let (final_width, final_height) = if scale < 1.0 {
             let new_width = (f64::from(width) * scale) as u32;
             let new_height = (f64::from(height) * scale) as u32;
+            (new_width.max(1), new_height.max(1))
+        } else {
+            (width, height)
+        };
 
-            image.resize(
-                new_width,
-                new_height,
-                image::imageops::FilterType::CatmullRom,
-            )
+        let filter = if picker.protocol_type() == ProtocolType::Sixel {
+            image::imageops::FilterType::Nearest
+        } else {
+            image::imageops::FilterType::Triangle
+        };
+
+        let resized_image = if scale < 1.0 {
+            image.resize(final_width, final_height, filter)
         } else {
             (**image).clone()
         };
 
+        self.rendered_height = (final_height as f32 / f32::from(font_height)).ceil() as u16;
+        self.rendered_width = (final_width as f32 / f32::from(font_width)).ceil() as u16;
         self.protocol = Some(picker.new_resize_protocol(resized_image));
         self.last_width = terminal_width;
 
@@ -131,11 +147,18 @@ impl ImageAttachment {
 
     #[must_use]
     pub const fn height(&self) -> u16 {
-        if self.image.is_some() || self.status.is_loading() {
-            IMAGE_HEIGHT
+        if self.rendered_height > 0 {
+            self.rendered_height
+        } else if self.image.is_some() || self.status.is_loading() {
+            MAX_IMAGE_HEIGHT
         } else {
             0
         }
+    }
+
+    #[must_use]
+    pub const fn width(&self) -> u16 {
+        self.rendered_width
     }
 }
 
@@ -148,24 +171,42 @@ impl std::fmt::Debug for ImageAttachment {
             .field("has_protocol", &self.protocol.is_some())
             .field("last_width", &self.last_width)
             .field("status", &self.status)
+            .field("rendered_height", &self.rendered_height)
+            .field("rendered_width", &self.rendered_width)
             .finish()
     }
 }
 
-/// Manager for handling image attachments in messages.
-/// Tracks which images need loading based on visible range.
 pub struct ImageManager {
-    /// The ratatui-image picker for protocol creation.
     picker: Picker,
-    /// Current terminal width for resize tracking.
     current_width: u16,
 }
 
 impl ImageManager {
-    /// Creates a new image manager with halfblocks (universal fallback).
     #[must_use]
     pub fn new() -> Self {
-        // Use halfblocks as a safe universal fallback
+        let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+
+        let caps = picker.capabilities();
+        let has_sixel = caps
+            .iter()
+            .any(|c| matches!(c, ratatui_image::picker::Capability::Sixel));
+        let has_kitty = caps
+            .iter()
+            .any(|c| matches!(c, ratatui_image::picker::Capability::Kitty));
+
+        if has_sixel && !has_kitty && picker.protocol_type() == ProtocolType::Halfblocks {
+            picker.set_protocol_type(ProtocolType::Sixel);
+        }
+
+        Self {
+            picker,
+            current_width: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn halfblocks() -> Self {
         let picker = Picker::halfblocks();
         Self {
             picker,
@@ -173,42 +214,37 @@ impl ImageManager {
         }
     }
 
-    /// Creates an image manager by querying the terminal.
-    /// May block briefly during startup.
+    #[deprecated(since = "0.2.0", note = "use `new()` instead")]
     #[must_use]
     pub fn from_query() -> Self {
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-        Self {
-            picker,
-            current_width: 0,
-        }
+        Self::new()
     }
 
-    /// Returns a reference to the picker.
+    #[must_use]
+    pub fn protocol_type(&self) -> ProtocolType {
+        self.picker.protocol_type()
+    }
+
     #[must_use]
     pub const fn picker(&self) -> &Picker {
         &self.picker
     }
 
-    /// Updates the current terminal width.
     pub const fn set_width(&mut self, width: u16) {
         self.current_width = width;
     }
 
-    /// Returns the current width.
     #[must_use]
     pub const fn width(&self) -> u16 {
         self.current_width
     }
 
-    /// Updates protocols for visible images only.
     pub fn update_visible_protocols(&self, attachments: &mut [&mut ImageAttachment], width: u16) {
         for attachment in attachments {
             attachment.update_protocol_if_needed(&self.picker, width);
         }
     }
 
-    /// Clears protocols for images outside the visible + buffer range.
     pub fn clear_distant_protocols(
         &self,
         attachments: &mut [&mut ImageAttachment],
@@ -225,7 +261,6 @@ impl ImageManager {
         }
     }
 
-    /// Collects IDs of images that need loading within the visible + buffer range.
     #[must_use]
     pub fn collect_needed_loads(
         attachments: &[ImageAttachment],
@@ -310,7 +345,6 @@ mod tests {
             ImageAttachment::new(ImageId::new("4"), "url4".to_string()),
         ];
 
-        // Visible range 1-2, buffer should include 0-4 with LOAD_BUFFER=5
         let needed = ImageManager::collect_needed_loads(&attachments, 1, 2);
         assert!(needed.len() >= 2);
     }
