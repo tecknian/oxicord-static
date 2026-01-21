@@ -11,11 +11,9 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        StatefulWidget, Widget,
-    },
+    widgets::{Block, Borders, Padding, Paragraph, StatefulWidget, Widget},
 };
+use tui_scrollbar::{GlyphSet, ScrollBar, ScrollLengths};
 use unicode_width::UnicodeWidthStr;
 
 use crate::domain::entities::{ChannelId, Embed, Message, MessageId};
@@ -570,7 +568,6 @@ impl Default for MessagePaneData {
 
 pub struct MessagePaneState {
     pub vertical_scroll: usize,
-    pub scrollbar_state: ScrollbarState,
     selected_index: Option<usize>,
     focused: bool,
     is_following: bool,
@@ -585,7 +582,6 @@ impl MessagePaneState {
     pub fn new() -> Self {
         Self {
             vertical_scroll: 0,
-            scrollbar_state: ScrollbarState::default(),
             selected_index: None,
             focused: false,
             is_following: true,
@@ -595,6 +591,8 @@ impl MessagePaneState {
             last_width: 0,
         }
     }
+
+
 
     pub const fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
@@ -626,7 +624,7 @@ impl MessagePaneState {
         }
 
         self.vertical_scroll = self.vertical_scroll.saturating_add(added_height);
-        self.scrollbar_state = self.scrollbar_state.position(self.vertical_scroll);
+        self.content_height = self.content_height.saturating_add(added_height);
     }
 
     pub fn select_next(&mut self, message_count: usize) {
@@ -694,7 +692,6 @@ impl MessagePaneState {
         self.vertical_scroll = 0;
         self.content_height = 0;
         self.viewport_height = 0;
-        self.scrollbar_state = ScrollbarState::default();
     }
 
     #[allow(clippy::missing_const_for_fn)]
@@ -707,14 +704,12 @@ impl MessagePaneState {
             .vertical_scroll
             .saturating_add(SCROLL_AMOUNT as usize)
             .min(max_scroll);
-        self.scrollbar_state = self.scrollbar_state.position(self.vertical_scroll);
     }
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_up(&mut self) {
         self.is_following = false;
         self.vertical_scroll = self.vertical_scroll.saturating_sub(SCROLL_AMOUNT as usize);
-        self.scrollbar_state = self.scrollbar_state.position(self.vertical_scroll);
     }
 
     #[allow(clippy::missing_const_for_fn)]
@@ -724,13 +719,11 @@ impl MessagePaneState {
         } else {
             self.vertical_scroll = 0;
         }
-        self.scrollbar_state = self.scrollbar_state.position(self.vertical_scroll);
     }
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_to_top(&mut self) {
         self.vertical_scroll = 0;
-        self.scrollbar_state = self.scrollbar_state.position(0);
     }
 
     pub fn update_dimensions(&mut self, content_height: usize, viewport_height: u16) {
@@ -741,12 +734,10 @@ impl MessagePaneState {
             self.scroll_to_bottom();
         } else {
             let max_scroll = content_height.saturating_sub(viewport_height as usize);
-            self.vertical_scroll = self.vertical_scroll.min(max_scroll);
+            if self.vertical_scroll > max_scroll {
+                 self.vertical_scroll = max_scroll;
+            }
         }
-
-        self.scrollbar_state = ScrollbarState::new(content_height)
-            .viewport_content_length(viewport_height as usize)
-            .position(self.vertical_scroll);
     }
 
     pub fn handle_key(
@@ -1507,7 +1498,6 @@ impl StatefulWidget for MessagePane<'_> {
             }
 
             state.vertical_scroll = offset;
-            state.scrollbar_state = state.scrollbar_state.position(offset);
             state.scroll_to_selection = false;
         }
 
@@ -1525,16 +1515,24 @@ impl StatefulWidget for MessagePane<'_> {
             current_y += i32::try_from(h).unwrap_or(0);
         }
 
-        let scrollbar = Scrollbar::default()
-            .orientation(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"))
-            .thumb_symbol("█")
-            .style(style.scrollbar_track_style)
+        let scroll_lengths = ScrollLengths {
+            content_len: content_height,
+            viewport_len: inner_area.height as usize,
+        };
+
+        let scrollbar = ScrollBar::vertical(scroll_lengths)
+            .offset(state.vertical_scroll)
+            .glyph_set(GlyphSet::unicode())
+            .track_style(style.scrollbar_track_style)
             .thumb_style(style.scrollbar_thumb_style);
-        let scrollbar_area = inner_area;
-        scrollbar.render(scrollbar_area, buf, &mut state.scrollbar_state);
+        
+        let scrollbar_area = Rect {
+            x: inner_area.x + inner_area.width.saturating_sub(1),
+            y: inner_area.y,
+            width: 1,
+            height: inner_area.height,
+        };
+        scrollbar.render(scrollbar_area, buf);
     }
 }
 
