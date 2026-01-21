@@ -27,6 +27,9 @@ pub enum AuthError {
     #[error("rate limited by Discord, retry after {retry_after_ms}ms")]
     RateLimited { retry_after_ms: u64 },
 
+    #[error("secure storage error: {0}")]
+    Secret(#[from] super::SecretError),
+
     #[error("unexpected authentication error: {message}")]
     Unexpected { message: String },
 }

@@ -117,7 +117,7 @@ impl UiMessage {
         self.image_attachments
             .iter()
             .map(ImageAttachment::height)
-            .fold(0u16, |acc, h| acc.saturating_add(h))
+            .fold(0u16, u16::saturating_add)
     }
 
     /// Returns true if this message has any image attachments.

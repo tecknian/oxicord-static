@@ -394,10 +394,10 @@ impl ChatScreenState {
                 Some(ChatKeyResult::Consumed)
             }
             Some(Action::ToggleHelp) => {
-                if self.focus == ChatFocus::MessageInput {
-                    if let KeyCode::Char(_) = key.code {
-                        return None;
-                    }
+                if self.focus == ChatFocus::MessageInput
+                    && matches!(key.code, KeyCode::Char(_))
+                {
+                    return None;
                 }
                 self.toggle_help();
                 Some(ChatKeyResult::ToggleHelp)

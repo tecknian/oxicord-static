@@ -27,6 +27,13 @@ pub struct LoginScreen {
     persist_token: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginAction {
+    None,
+    Submit,
+    DeleteToken,
+}
+
 impl LoginScreen {
     /// Creates new login screen.
     #[must_use]
@@ -54,7 +61,11 @@ impl LoginScreen {
     #[must_use]
     pub fn token(&self) -> Option<&str> {
         let value = self.token_input.value();
-        if value.is_empty() { None } else { Some(value) }
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
     }
 
     /// Returns persistence preference.
@@ -87,22 +98,25 @@ impl LoginScreen {
         self.error_message = None;
     }
 
-    /// Handles key event, returns true if submit.
-    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+    /// Handles key event, returns action.
+    pub fn handle_key(&mut self, key: KeyEvent) -> LoginAction {
         if self.state == LoginState::Validating {
-            return false;
+            return LoginAction::None;
         }
 
         if self.state == LoginState::Error {
             self.reset();
-            return false;
+            return LoginAction::None;
         }
 
         match key.code {
             KeyCode::Enter => {
                 if !self.token_input.value().is_empty() {
-                    return true;
+                    return LoginAction::Submit;
                 }
+            }
+            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                return LoginAction::DeleteToken;
             }
             KeyCode::Char(c) => {
                 self.token_input.input_char(c);
@@ -131,7 +145,7 @@ impl LoginScreen {
             _ => {}
         }
 
-        false
+        LoginAction::None
     }
 
     fn render_inner(&self, area: Rect, buf: &mut Buffer) {
@@ -185,10 +199,13 @@ impl LoginScreen {
         persist_para.render(areas[4], buf);
 
         let status = match self.state {
-            LoginState::Input => Line::from(Span::styled(
-                "Press Enter to login, Esc to quit",
-                Style::default().fg(Color::DarkGray),
-            )),
+            LoginState::Input => Line::from(vec![
+                Span::styled("Enter: Login", Style::default().fg(Color::DarkGray)),
+                Span::raw(" | "),
+                Span::styled("Esc: Quit", Style::default().fg(Color::DarkGray)),
+                Span::raw(" | "),
+                Span::styled("Alt+D: Clear Saved", Style::default().fg(Color::DarkGray)),
+            ]),
             LoginState::Validating => Line::from(Span::styled(
                 "Validating token...",
                 Style::default()
@@ -267,13 +284,20 @@ mod tests {
     #[test]
     fn test_submit_empty_returns_false() {
         let mut screen = LoginScreen::new();
-        assert!(!screen.handle_key(key(KeyCode::Enter)));
+        assert_eq!(screen.handle_key(key(KeyCode::Enter)), LoginAction::None);
     }
 
     #[test]
     fn test_submit_with_token_returns_true() {
         let mut screen = LoginScreen::new();
         screen.handle_key(key(KeyCode::Char('x')));
-        assert!(screen.handle_key(key(KeyCode::Enter)));
+        assert_eq!(screen.handle_key(key(KeyCode::Enter)), LoginAction::Submit);
+    }
+
+    #[test]
+    fn test_delete_token_action() {
+        let mut screen = LoginScreen::new();
+        let event = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT);
+        assert_eq!(screen.handle_key(event), LoginAction::DeleteToken);
     }
 }

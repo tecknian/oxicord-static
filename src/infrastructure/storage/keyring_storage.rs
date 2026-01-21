@@ -5,11 +5,11 @@ use keyring::Entry;
 use tracing::{debug, warn};
 
 use crate::domain::entities::AuthToken;
-use crate::domain::errors::AuthError;
+use crate::domain::errors::{AuthError, SecretError};
 use crate::domain::ports::TokenStoragePort;
 
 const KEYRING_SERVICE: &str = "oxicord";
-const KEYRING_USER: &str = "token";
+const KEYRING_USER: &str = "default";
 
 /// System keyring token storage adapter.
 pub struct KeyringTokenStorage {
@@ -35,11 +35,6 @@ impl KeyringTokenStorage {
             user: user.into(),
         }
     }
-
-    fn entry(&self) -> Result<Entry, AuthError> {
-        Entry::new(&self.service, &self.user)
-            .map_err(|e| AuthError::retrieval_failed(format!("failed to access keyring: {e}")))
-    }
 }
 
 impl Default for KeyringTokenStorage {
@@ -53,57 +48,82 @@ impl TokenStoragePort for KeyringTokenStorage {
     async fn get_token(&self) -> Result<Option<AuthToken>, AuthError> {
         debug!(service = %self.service, "Retrieving token from keyring");
 
-        let entry = self.entry()?;
+        let service = self.service.clone();
+        let user = self.user.clone();
 
-        match entry.get_password() {
-            Ok(password) => {
-                debug!("Token found in keyring");
-                Ok(AuthToken::new(&password))
+        tokio::task::spawn_blocking(move || {
+            let entry = Entry::new(&service, &user)
+                .map_err(|e| SecretError::AccessFailed(e.to_string()))?;
+
+            match entry.get_password() {
+                Ok(password) => {
+                    debug!("Token found in keyring");
+                    Ok(AuthToken::new(&password))
+                }
+                Err(keyring::Error::NoEntry) => {
+                    debug!("No token stored in keyring");
+                    Ok(None)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to retrieve token from keyring");
+                    Err(SecretError::RetrievalFailed(e.to_string()).into())
+                }
             }
-            Err(keyring::Error::NoEntry) => {
-                debug!("No token stored in keyring");
-                Ok(None)
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to retrieve token from keyring");
-                Err(AuthError::retrieval_failed(e.to_string()))
-            }
-        }
+        })
+        .await
+        .map_err(|e| AuthError::Unexpected { message: e.to_string() })?
     }
 
     async fn store_token(&self, token: &AuthToken) -> Result<(), AuthError> {
         debug!(service = %self.service, "Storing token in keyring");
 
-        let entry = self.entry()?;
+        let service = self.service.clone();
+        let user = self.user.clone();
+        let token = token.clone();
 
-        entry.set_password(token.as_str()).map_err(|e| {
-            warn!(error = %e, "Failed to store token in keyring");
-            AuthError::storage_failed(e.to_string())
-        })?;
+        tokio::task::spawn_blocking(move || {
+            let entry = Entry::new(&service, &user)
+                .map_err(|e| SecretError::AccessFailed(e.to_string()))?;
 
-        debug!("Token stored successfully");
-        Ok(())
+            entry.set_password(token.as_str()).map_err(|e| {
+                warn!(error = %e, "Failed to store token in keyring");
+                SecretError::StorageFailed(e.to_string())
+            })?;
+
+            debug!("Token stored successfully");
+            Ok(())
+        })
+        .await
+        .map_err(|e| AuthError::Unexpected { message: e.to_string() })?
     }
 
     async fn delete_token(&self) -> Result<(), AuthError> {
         debug!(service = %self.service, "Deleting token from keyring");
 
-        let entry = self.entry()?;
+        let service = self.service.clone();
+        let user = self.user.clone();
 
-        match entry.delete_credential() {
-            Ok(()) => {
-                debug!("Token deleted from keyring");
-                Ok(())
+        tokio::task::spawn_blocking(move || {
+            let entry = Entry::new(&service, &user)
+                .map_err(|e| SecretError::AccessFailed(e.to_string()))?;
+
+            match entry.delete_credential() {
+                Ok(()) => {
+                    debug!("Token deleted from keyring");
+                    Ok(())
+                }
+                Err(keyring::Error::NoEntry) => {
+                    debug!("No token to delete");
+                    Ok(())
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to delete token from keyring");
+                    Err(SecretError::DeletionFailed(e.to_string()).into())
+                }
             }
-            Err(keyring::Error::NoEntry) => {
-                debug!("No token to delete");
-                Ok(())
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to delete token from keyring");
-                Err(AuthError::storage_failed(e.to_string()))
-            }
-        }
+        })
+        .await
+        .map_err(|e| AuthError::Unexpected { message: e.to_string() })?
     }
 }
 

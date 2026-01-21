@@ -26,7 +26,7 @@ use crate::infrastructure::discord::{
 use crate::infrastructure::image::{ImageLoadedEvent, ImageLoader};
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::ui::{
-    ChatKeyResult, ChatScreen, ChatScreenState, LoginScreen, SplashScreen,
+    ChatKeyResult, ChatScreen, ChatScreenState, LoginAction, LoginScreen, SplashScreen,
     backend::{Action, Backend, BackendCommand},
 };
 
@@ -302,8 +302,10 @@ impl App {
 
         let result = match &mut self.screen {
             CurrentScreen::Login(screen) => {
-                if screen.handle_key(key) {
-                    self.handle_login_submit();
+                match screen.handle_key(key) {
+                    LoginAction::Submit => self.handle_login_submit(),
+                    LoginAction::DeleteToken => self.handle_delete_token(),
+                    LoginAction::None => {}
                 }
                 return EventResult::Continue;
             }
@@ -425,6 +427,24 @@ impl App {
                         token,
                         source: TokenSource::UserInput,
                     });
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::LoginFailure(e));
+                }
+            }
+        });
+    }
+
+    fn handle_delete_token(&self) {
+        let use_case = self.login_use_case.clone();
+        let tx = self.action_tx.clone();
+
+        tokio::spawn(async move {
+            match use_case.delete_token().await {
+                Ok(()) => {
+                    let _ = tx.send(Action::LoginFailure(AuthError::unexpected(
+                        "Token deleted from secure storage",
+                    )));
                 }
                 Err(e) => {
                     let _ = tx.send(Action::LoginFailure(e));

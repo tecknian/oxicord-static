@@ -11,6 +11,6 @@ pub mod utils;
 pub use app::App;
 pub use backend::{Action, Backend, BackendCommand};
 pub use chat_screen::{ChatFocus, ChatKeyResult, ChatScreen, ChatScreenState};
-pub use login_screen::LoginScreen;
+pub use login_screen::{LoginAction, LoginScreen};
 pub use main_screen::MainScreen;
 pub use splash_screen::SplashScreen;

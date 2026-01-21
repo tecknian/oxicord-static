@@ -57,11 +57,11 @@ impl LoginUseCase {
         let token_persisted = if request.persist_token {
             match self.storage_port.store_token(&token).await {
                 Ok(()) => {
-                    debug!("Token persisted to storage");
+                    info!("Token persisted to secure storage");
                     true
                 }
                 Err(e) => {
-                    warn!(error = %e, "Failed to persist token, continuing anyway");
+                    tracing::error!(error = %e, "Failed to persist token to secure storage");
                     false
                 }
             }
@@ -71,6 +71,24 @@ impl LoginUseCase {
         };
 
         Ok(LoginResponse::new(user, request.source, token_persisted))
+    }
+
+    /// Deletes the stored token.
+    ///
+    /// # Errors
+    /// Returns error if deletion fails.
+    pub async fn delete_token(&self) -> Result<(), AuthError> {
+        debug!("Deleting token from secure storage");
+        match self.storage_port.delete_token().await {
+            Ok(()) => {
+                info!("Token deleted from secure storage");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to delete token from secure storage");
+                Err(e)
+            }
+        }
     }
 }
 

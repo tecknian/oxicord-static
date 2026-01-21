@@ -1,9 +1,10 @@
 //! Discord authentication token value object.
 
 use std::fmt;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Discord authentication token with validation and masking.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct AuthToken {
     value: String,
 }
@@ -42,9 +43,13 @@ impl AuthToken {
     }
 
     /// Consumes token and returns inner string.
+    ///
+    /// # Safety
+    /// The returned `String` is NOT zeroized on drop.
+    /// Callers should ensure the string is short-lived or explicitly zeroed if possible.
     #[must_use]
     pub fn into_inner(self) -> String {
-        self.value
+        self.value.clone()
     }
 
     /// Returns masked token for display.

@@ -205,7 +205,7 @@ impl std::fmt::Debug for ImageAttachment {
             .field("status", &self.status)
             .field("rendered_height", &self.rendered_height)
             .field("rendered_width", &self.rendered_width)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
