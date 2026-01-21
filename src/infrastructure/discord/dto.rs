@@ -174,6 +174,12 @@ pub struct MessageResponse {
     pub pinned: bool,
     #[serde(default)]
     pub mentions: Vec<MentionUserResponse>,
+    pub member: Option<MemberResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemberResponse {
+    pub color: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,6 +191,7 @@ pub struct MentionUserResponse {
     pub avatar: Option<String>,
     #[serde(default)]
     pub bot: bool,
+    pub member: Option<MemberResponse>,
 }
 
 #[derive(Debug, serde::Serialize)]

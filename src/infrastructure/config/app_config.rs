@@ -80,6 +80,10 @@ pub struct AppConfig {
     /// Enable mouse support.
     #[arg(long, default_value_t = true)]
     pub mouse: bool,
+
+    /// Disable user colors (monochrome mode).
+    #[arg(long, default_value_t = false)]
+    pub disable_user_colors: bool,
 }
 
 impl AppConfig {
@@ -124,6 +128,7 @@ impl Default for AppConfig {
             log_path: None,
             log_level: LogLevel::Info,
             mouse: true,
+            disable_user_colors: false,
         }
     }
 }

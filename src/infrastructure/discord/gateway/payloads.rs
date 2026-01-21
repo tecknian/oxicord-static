@@ -179,6 +179,12 @@ pub struct MessagePayload {
     pub pinned: bool,
     #[serde(default)]
     pub mentions: Vec<MentionUserPayload>,
+    pub member: Option<MemberPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemberPayload {
+    pub color: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,6 +196,7 @@ pub struct MentionUserPayload {
     pub avatar: Option<String>,
     #[serde(default)]
     pub bot: bool,
+    pub member: Option<MemberPayload>,
 }
 
 #[derive(Debug, Deserialize)]

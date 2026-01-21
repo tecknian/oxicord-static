@@ -147,57 +147,82 @@ impl DiscordClient {
     }
 
     fn parse_message_response(response: MessageResponse, channel_id: u64) -> Option<Message> {
-        let id: u64 = response.id.parse().ok()?;
-        let author = MessageAuthor::new(
-            response.author.id,
-            response.author.username,
-            response.author.discriminator,
-            response.author.avatar,
-            response.author.bot,
+        let MessageResponse {
+            id,
+            author,
+            content,
+            timestamp,
+            edited_timestamp,
+            kind,
+            attachments,
+            embeds,
+            message_reference,
+            referenced_message,
+            pinned,
+            mentions,
+            member,
+            ..
+        } = response;
+
+        let id: u64 = id.parse().ok()?;
+        let message_author = MessageAuthor::new(
+            author.id,
+            author.username,
+            author.discriminator,
+            author.avatar,
+            author.bot,
+            member.and_then(|m| m.color),
         );
 
-        let timestamp: DateTime<Utc> = response.timestamp.parse().ok()?;
+        let timestamp: DateTime<Utc> = timestamp.parse().ok()?;
 
         let mut message = Message::new(
             id,
             channel_id,
-            author,
-            response.content,
+            message_author,
+            content,
             timestamp.with_timezone(&Local),
         )
-        .with_kind(MessageKind::from(response.kind))
-        .with_pinned(response.pinned);
+        .with_kind(MessageKind::from(kind))
+        .with_pinned(pinned);
 
-        if !response.attachments.is_empty() {
-            let attachments = response
-                .attachments
+        if !attachments.is_empty() {
+            let attachments = attachments
                 .into_iter()
                 .map(Self::parse_attachment)
                 .collect();
             message = message.with_attachments(attachments);
         }
 
-        if !response.embeds.is_empty() {
-            let embeds = response.embeds.into_iter().map(Self::parse_embed).collect();
+        if !embeds.is_empty() {
+            let embeds = embeds.into_iter().map(Self::parse_embed).collect();
             message = message.with_embeds(embeds);
         }
 
-        if !response.mentions.is_empty() {
-            let mentions: Vec<User> = response
-                .mentions
+        if !mentions.is_empty() {
+            let mentions: Vec<User> = mentions
                 .into_iter()
-                .map(|m| User::new(m.id, m.username, m.discriminator, m.avatar, m.bot))
+                .map(|m| {
+                    User::new(
+                        m.id,
+                        m.username,
+                        m.discriminator,
+                        m.avatar,
+                        m.bot,
+                        m.member.and_then(|mem| mem.color),
+                    )
+                })
                 .collect();
             message = message.with_mentions(mentions);
         }
 
-        if let Some(edited) = response.edited_timestamp
+        if let Some(edited) = edited_timestamp
             && let Ok(edited_ts) = edited.parse::<DateTime<Utc>>()
         {
             message = message.with_edited_timestamp(edited_ts.with_timezone(&Local));
         }
 
-        if let Some(reference) = response.message_reference {
+        if let Some(reference) = message_reference {
             let ref_msg_id = reference.message_id.and_then(|id| id.parse::<u64>().ok());
             let ref_channel_id = reference.channel_id.and_then(|id| id.parse::<u64>().ok());
             message = message.with_reference(MessageReference::new(
@@ -206,7 +231,7 @@ impl DiscordClient {
             ));
         }
 
-        if let Some(referenced) = response.referenced_message
+        if let Some(referenced) = referenced_message
             && let Some(ref_message) = Self::parse_message_response(*referenced, channel_id)
         {
             message = message.with_referenced(ref_message);
@@ -263,6 +288,7 @@ impl AuthPort for DiscordClient {
             user_response.discriminator,
             user_response.avatar,
             user_response.bot,
+            None,
         ))
     }
 

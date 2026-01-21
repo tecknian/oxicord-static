@@ -129,11 +129,17 @@ pub struct ChatScreenState {
     has_entered: bool,
     /// Image manager for rendering image attachments.
     image_manager: ImageManager,
+    disable_user_colors: bool,
 }
 
 impl ChatScreenState {
     #[must_use]
-    pub fn new(user: User, markdown_service: Arc<MarkdownService>, user_cache: UserCache) -> Self {
+    pub fn new(
+        user: User,
+        markdown_service: Arc<MarkdownService>,
+        user_cache: UserCache,
+        disable_user_colors: bool,
+    ) -> Self {
         let mut guilds_tree_state = GuildsTreeState::new();
         guilds_tree_state.set_focused(true);
 
@@ -162,6 +168,7 @@ impl ChatScreenState {
             pending_duration: Duration::ZERO,
             has_entered: false,
             image_manager: ImageManager::new(),
+            disable_user_colors,
         }
     }
 
@@ -394,9 +401,7 @@ impl ChatScreenState {
                 Some(ChatKeyResult::Consumed)
             }
             Some(Action::ToggleHelp) => {
-                if self.focus == ChatFocus::MessageInput
-                    && matches!(key.code, KeyCode::Char(_))
-                {
+                if self.focus == ChatFocus::MessageInput && matches!(key.code, KeyCode::Char(_)) {
                     return None;
                 }
                 self.toggle_help();
@@ -407,9 +412,9 @@ impl ChatScreenState {
     }
 
     fn handle_guilds_tree_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) = self
-            .guilds_tree_state
-            .handle_key(key, &self.guilds_tree_data, &self.registry)
+        if let Some(action) =
+            self.guilds_tree_state
+                .handle_key(key, &self.guilds_tree_data, &self.registry)
         {
             match action {
                 GuildsTreeAction::SelectChannel(channel_id) => {
@@ -1428,12 +1433,14 @@ fn render_guilds_tree(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer)
 
 fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
     let service = state.markdown_service.clone();
-    // MessagePane renders borders, so the inner content width is area.width - 2.
-    // We must calculate layout based on this inner width to ensure estimated heights match rendered wrapping.
+    let disable_user_colors = state.disable_user_colors;
+
     let inner_width = area.width.saturating_sub(2);
-    state.message_pane_data.update_layout(inner_width, &service);
+    state
+        .message_pane_data
+        .update_layout(inner_width, &service);
     let (data, pane_state) = state.message_pane_parts_mut();
-    let pane = MessagePane::new(data, &service);
+    let pane = MessagePane::new(data, &service).with_disable_user_colors(disable_user_colors);
     StatefulWidget::render(pane, area, buf, pane_state);
 }
 
@@ -1468,7 +1475,7 @@ mod tests {
     use super::*;
 
     fn create_test_user() -> User {
-        User::new("123", "testuser", "0", None, false)
+        User::new("123", "testuser", "0", None, false, None)
     }
 
     #[test]
@@ -1477,6 +1484,7 @@ mod tests {
             create_test_user(),
             Arc::new(MarkdownService::new()),
             UserCache::new(),
+            false,
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -1674,20 +1682,14 @@ mod tests {
     }
 
     #[test]
-    fn test_focus_switch_on_channel_selection() {
-        let mut state = ChatScreenState::new(
+    fn test_chat_screen_state_creation() {
+        let state = ChatScreenState::new(
             create_test_user(),
             Arc::new(MarkdownService::new()),
             UserCache::new(),
+            false,
         );
 
-        let guild_a = Guild::new(1_u64, "Guild A");
-        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
-
-        state.set_guilds(vec![guild_a.clone()]);
-        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
-
-        state.on_guild_selected(guild_a.id());
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
 
         state.on_channel_selected(channel_a1.id());

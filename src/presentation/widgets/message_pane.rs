@@ -19,6 +19,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::domain::entities::{ChannelId, Embed, Message, MessageId};
 
 use super::image_state::ImageAttachment;
+use crate::presentation::ui::utils::get_author_color;
 
 const SCROLL_AMOUNT: u16 = 3;
 const SCROLLBAR_MARGIN: u16 = 2;
@@ -921,6 +922,7 @@ impl Default for MessagePaneStyle {
 pub struct MessagePane<'a> {
     data: &'a mut MessagePaneData,
     style: MessagePaneStyle,
+    disable_user_colors: bool,
 }
 
 impl<'a> MessagePane<'a> {
@@ -929,12 +931,19 @@ impl<'a> MessagePane<'a> {
         Self {
             data,
             style: MessagePaneStyle::default(),
+            disable_user_colors: false,
         }
     }
 
     #[must_use]
     pub const fn style(mut self, style: MessagePaneStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_disable_user_colors(mut self, disable: bool) -> Self {
+        self.disable_user_colors = disable;
         self
     }
 
@@ -1119,7 +1128,7 @@ fn render_embed(
     current_y - start_y
 }
 
-#[allow(clippy::too_many_lines, clippy::items_after_statements)]
+#[allow(clippy::too_many_lines, clippy::items_after_statements, clippy::too_many_arguments)]
 fn render_ui_message(
     ui_msg: &mut UiMessage,
     style: &MessagePaneStyle,
@@ -1128,6 +1137,7 @@ fn render_ui_message(
     area: Rect,
     buf: &mut Buffer,
     state: &mut MessagePaneState,
+    disable_user_colors: bool,
 ) {
     let message = &ui_msg.message;
     let is_selected = state.selected_index == Some(index);
@@ -1181,6 +1191,12 @@ fn render_ui_message(
             (style.timestamp_style, style.edited_style)
         };
 
+        let author_color = if disable_user_colors {
+            style.author_style.fg.unwrap_or(Color::Yellow)
+        } else {
+            get_author_color(message.author())
+        };
+
         let mut header_spans = vec![
             Span::styled(
                 format!(
@@ -1190,7 +1206,10 @@ fn render_ui_message(
                 ),
                 timestamp_style,
             ),
-            Span::styled(message.author().display_name(), style.author_style),
+            Span::styled(
+                message.author().display_name(),
+                style.author_style.fg(author_color),
+            ),
         ];
 
         if message.author().is_bot() {
@@ -1434,7 +1453,11 @@ impl StatefulWidget for MessagePane<'_> {
         let inner_area = block.inner(area);
         block.render(area, buf);
 
-        let MessagePane { data, style } = self;
+        let MessagePane {
+            data,
+            style,
+            disable_user_colors,
+        } = self;
 
         match data.loading_state() {
             LoadingState::Loading => {
@@ -1510,7 +1533,16 @@ impl StatefulWidget for MessagePane<'_> {
             if current_y_usize + h > offset && current_y_usize < offset + inner_area.height as usize
             {
                 let render_y = current_y - i32::try_from(offset).unwrap_or(0);
-                render_ui_message(ui_msg, &style, idx, render_y, inner_area, buf, state);
+                render_ui_message(
+                    ui_msg,
+                    &style,
+                    idx,
+                    render_y,
+                    inner_area,
+                    buf,
+                    state,
+                    disable_user_colors,
+                );
             }
             current_y += i32::try_from(h).unwrap_or(0);
         }

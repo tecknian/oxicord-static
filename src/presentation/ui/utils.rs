@@ -1,4 +1,57 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Color;
+
+use crate::domain::entities::{MessageAuthor, User};
+
+const USER_PALETTE: &[Color] = &[
+    Color::Red,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Cyan,
+    Color::LightRed,
+    Color::LightGreen,
+    Color::LightYellow,
+    Color::LightBlue,
+    Color::LightMagenta,
+    Color::LightCyan,
+];
+
+#[must_use]
+pub fn hash_id_to_color(id: u64) -> Color {
+    #[allow(clippy::cast_possible_truncation)]
+    let index = (id % USER_PALETTE.len() as u64) as usize;
+    USER_PALETTE[index]
+}
+
+#[must_use]
+pub fn u32_to_color(color: u32) -> Color {
+    Color::Rgb(
+        u8::try_from((color >> 16) & 0xFF).unwrap_or(0),
+        u8::try_from((color >> 8) & 0xFF).unwrap_or(0),
+        u8::try_from(color & 0xFF).unwrap_or(0),
+    )
+}
+
+#[must_use]
+pub fn get_author_color(author: &MessageAuthor) -> Color {
+    if let Some(c) = author.color() {
+        u32_to_color(c)
+    } else {
+        let id = author.id().parse::<u64>().unwrap_or(0);
+        hash_id_to_color(id)
+    }
+}
+
+#[must_use]
+pub fn get_user_color(user: &User) -> Color {
+    if let Some(c) = user.color() {
+        u32_to_color(c)
+    } else {
+        let id = user.id().parse::<u64>().unwrap_or(0);
+        hash_id_to_color(id)
+    }
+}
 
 /// Helper function to create a centered rect using up certain percentage of the available rect `r`
 #[must_use]

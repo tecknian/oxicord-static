@@ -281,6 +281,7 @@ pub struct MessageAuthor {
     discriminator: String,
     avatar: Option<String>,
     bot: bool,
+    color: Option<u32>,
 }
 
 #[allow(missing_docs)]
@@ -292,6 +293,7 @@ impl MessageAuthor {
         discriminator: impl Into<String>,
         avatar: Option<String>,
         bot: bool,
+        color: Option<u32>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -299,6 +301,7 @@ impl MessageAuthor {
             discriminator: discriminator.into(),
             avatar,
             bot,
+            color,
         }
     }
 
@@ -328,6 +331,11 @@ impl MessageAuthor {
     }
 
     #[must_use]
+    pub const fn color(&self) -> Option<u32> {
+        self.color
+    }
+
+    #[must_use]
     pub fn display_name(&self) -> String {
         if self.discriminator == "0" {
             self.username.clone()
@@ -345,6 +353,7 @@ impl From<User> for MessageAuthor {
             discriminator: user.discriminator().to_string(),
             avatar: user.avatar().map(String::from),
             bot: user.is_bot(),
+            color: user.color(),
         }
     }
 }
@@ -545,7 +554,7 @@ mod tests {
     use super::*;
 
     fn create_test_author() -> MessageAuthor {
-        MessageAuthor::new("123", "testuser", "0", None, false)
+        MessageAuthor::new("123", "testuser", "0", None, false, None)
     }
 
     #[test]

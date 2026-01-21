@@ -52,7 +52,12 @@ fn create_app() -> Result<(App, Option<String>)> {
     let discord_client = Arc::new(DiscordClient::new()?);
     let token_storage = Arc::new(KeyringTokenStorage::new());
 
-    let app = App::new(discord_client.clone(), discord_client, token_storage);
+    let app = App::new(
+        discord_client.clone(),
+        discord_client,
+        token_storage,
+        config.disable_user_colors,
+    );
 
     Ok((app, cli_token))
 }

@@ -10,6 +10,7 @@ pub struct User {
     discriminator: String,
     avatar: Option<String>,
     bot: bool,
+    color: Option<u32>,
 }
 
 impl User {
@@ -21,6 +22,7 @@ impl User {
         discriminator: impl Into<String>,
         avatar: Option<String>,
         bot: bool,
+        color: Option<u32>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -28,6 +30,7 @@ impl User {
             discriminator: discriminator.into(),
             avatar,
             bot,
+            color,
         }
     }
 
@@ -61,6 +64,12 @@ impl User {
         self.bot
     }
 
+    /// Returns user color.
+    #[must_use]
+    pub const fn color(&self) -> Option<u32> {
+        self.color
+    }
+
     /// Returns display name.
     #[must_use]
     pub fn display_name(&self) -> String {
@@ -84,6 +93,7 @@ mod tests {
             "1234",
             Some("abc123".into()),
             false,
+            None,
         );
 
         assert_eq!(user.id(), "123456789");
@@ -95,13 +105,13 @@ mod tests {
 
     #[test]
     fn test_display_name_legacy() {
-        let user = User::new("123", "olduser", "1234", None, false);
+        let user = User::new("123", "olduser", "1234", None, false, None);
         assert_eq!(user.display_name(), "olduser#1234");
     }
 
     #[test]
     fn test_display_name_new_style() {
-        let user = User::new("123", "newuser", "0", None, false);
+        let user = User::new("123", "newuser", "0", None, false, None);
         assert_eq!(user.display_name(), "newuser");
     }
 }

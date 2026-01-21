@@ -78,6 +78,7 @@ pub struct App {
     image_load_rx: Option<mpsc::UnboundedReceiver<ImageLoadedEvent>>,
     /// Last time we checked for images to load.
     last_image_check: Instant,
+    disable_user_colors: bool,
 }
 
 impl App {
@@ -86,6 +87,7 @@ impl App {
         auth_port: Arc<dyn AuthPort>,
         discord_data: Arc<dyn DiscordDataPort>,
         storage_port: Arc<dyn TokenStoragePort>,
+        disable_user_colors: bool,
     ) -> Self {
         let login_use_case = LoginUseCase::new(auth_port, storage_port.clone());
         let resolve_token_use_case = ResolveTokenUseCase::new(storage_port);
@@ -122,6 +124,7 @@ impl App {
             image_loader: None,
             image_load_rx: None,
             last_image_check: Instant::now(),
+            disable_user_colors,
         }
     }
 
@@ -870,6 +873,7 @@ impl App {
                     user,
                     self.markdown_service.clone(),
                     self.user_cache.clone(),
+                    self.disable_user_colors,
                 );
 
                 chat_state.set_connection_status(self.connection_status);
@@ -1382,7 +1386,7 @@ mod tests {
         let auth = Arc::new(MockAuthPort::new(true));
         let data = Arc::new(MockDiscordData);
         let storage = Arc::new(MockTokenStorage::new());
-        let app = App::new(auth, data, storage);
+        let app = App::new(auth, data, storage, false);
 
         assert_eq!(app.state, AppState::Login);
     }
