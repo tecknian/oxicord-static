@@ -2193,7 +2193,6 @@ dependencies = [
  "tracing-subscriber",
  "tui-scrollbar",
  "tui-textarea",
- "tui-tree-widget",
  "unicode-width 0.2.0",
  "zeroize",
 ]
@@ -3980,17 +3979,6 @@ checksum = "0a5318dd619ed73c52a9417ad19046724effc1287fb75cdcc4eca1d6ac1acbae"
 dependencies = [
  "crossterm 0.28.1",
  "ratatui 0.29.0",
- "unicode-width 0.2.0",
-]
-
-[[package]]
-name = "tui-tree-widget"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deca119555009eee2e0cfb9c020f39f632444dc4579918d5fc009d51d75dff92"
-dependencies = [
- "ratatui-core",
- "ratatui-widgets",
  "unicode-width 0.2.0",
 ]
 

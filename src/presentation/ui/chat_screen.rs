@@ -407,7 +407,10 @@ impl ChatScreenState {
     }
 
     fn handle_guilds_tree_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) = self.guilds_tree_state.handle_key(key, &self.registry) {
+        if let Some(action) = self
+            .guilds_tree_state
+            .handle_key(key, &self.guilds_tree_data, &self.registry)
+        {
             match action {
                 GuildsTreeAction::SelectChannel(channel_id) => {
                     if let Some(result) = self.on_channel_selected(channel_id) {

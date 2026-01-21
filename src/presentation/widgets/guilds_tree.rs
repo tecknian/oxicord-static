@@ -1,33 +1,35 @@
 //! Guilds tree widget for server/channel navigation.
 
+use std::collections::HashSet;
+use std::sync::OnceLock;
+
 use crossterm::event::KeyEvent;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, StatefulWidget, Widget},
+    widgets::{Block, Borders, List, ListItem, StatefulWidget, Widget},
 };
-use tui_tree_widget::{Tree, TreeItem, TreeState};
 
 use crate::domain::entities::{Channel, ChannelId, Guild, GuildId, ReadState};
 use crate::domain::keybinding::Action;
 use crate::presentation::commands::CommandRegistry;
+use regex::Regex;
 
 /// Unique identifier for nodes in the guilds tree.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TreeNodeId {
-    /// Root node for direct messages.
     DirectMessages,
-    /// A direct message conversation with a user.
+
     DirectMessageUser(String),
-    /// A guild (server) node.
+
     Guild(GuildId),
-    /// A category (channel group) node.
+
     Category(ChannelId),
-    /// A channel node.
+
     Channel(ChannelId),
-    /// Placeholder node for unloaded content.
+
     Placeholder(GuildId),
 }
 
@@ -47,168 +49,189 @@ impl std::fmt::Display for TreeNodeId {
 /// Actions that can be triggered by the guilds tree.
 #[derive(Debug, Clone)]
 pub enum GuildsTreeAction {
-    /// A channel was selected.
     SelectChannel(ChannelId),
-    /// A guild was selected.
+
     SelectGuild(GuildId),
-    /// A direct message conversation was selected.
+
     SelectDirectMessage(String),
-    /// An ID was yanked (copied).
+
     YankId(String),
-    /// Request to load channels for a guild (lazy loading).
+
     LoadGuildChannels(GuildId),
 }
 
 /// State for the guilds tree widget.
 pub struct GuildsTreeState {
-    tree_state: TreeState<TreeNodeId>,
+    expanded: HashSet<TreeNodeId>,
+    selected: Option<TreeNodeId>,
     focused: bool,
+
+    list_state: ratatui::widgets::ListState,
 }
 
 impl GuildsTreeState {
-    /// Creates a new guilds tree state.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            tree_state: TreeState::default(),
+            expanded: HashSet::new(),
+            selected: None,
             focused: false,
+            list_state: ratatui::widgets::ListState::default(),
         }
     }
 
-    /// Sets whether the tree is focused.
-    pub const fn set_focused(&mut self, focused: bool) {
+    pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
-    /// Returns whether the tree is focused.
     #[must_use]
     pub const fn is_focused(&self) -> bool {
         self.focused
     }
 
-    /// Selects the next item in the tree.
-    pub fn select_next(&mut self) {
-        self.tree_state.key_down();
+    #[must_use]
+    pub fn selected(&self) -> Option<&TreeNodeId> {
+        self.selected.as_ref()
     }
 
-    /// Selects the previous item in the tree.
-    pub fn select_previous(&mut self) {
-        self.tree_state.key_up();
+    pub fn select(&mut self, node_id: TreeNodeId) {
+        self.selected = Some(node_id);
     }
 
-    /// Selects the first item in the tree.
-    pub fn select_first(&mut self) {
-        self.tree_state.select_first();
-    }
-
-    /// Selects the last item in the tree.
-    pub fn select_last(&mut self) {
-        self.tree_state.select_last();
-    }
-
-    /// Toggles expansion of the current node using the full selection path.
     pub fn toggle_current(&mut self) {
-        self.tree_state.toggle_selected();
-    }
-
-    /// Expands the current node using the full selection path.
-    pub fn expand_current(&mut self) {
-        let selected_path = self.tree_state.selected().to_vec();
-        if !selected_path.is_empty() {
-            self.tree_state.open(selected_path);
+        if let Some(selected) = &self.selected {
+            if self.expanded.contains(selected) {
+                self.expanded.remove(selected);
+            } else {
+                self.expanded.insert(selected.clone());
+            }
         }
     }
 
-    /// Collapses the current node using the full selection path.
-    pub fn collapse_current(&mut self) {
-        let selected_path = self.tree_state.selected().to_vec();
-        if !selected_path.is_empty() {
-            self.tree_state.close(&selected_path);
-        }
+    pub fn expand(&mut self, node_id: TreeNodeId) {
+        self.expanded.insert(node_id);
     }
 
-    /// Collapses the parent of the current node.
-    pub fn collapse_parent(&mut self) {
-        let selected = self.tree_state.selected().to_vec();
-        if selected.len() > 1 {
-            let parent_path: Vec<_> = selected[..selected.len() - 1].to_vec();
-            self.tree_state.close(&parent_path);
-        }
+    pub fn collapse(&mut self, node_id: &TreeNodeId) {
+        self.expanded.remove(node_id);
     }
 
-    /// Moves selection to the parent node.
-    pub fn move_to_parent(&mut self) {
-        let selected = self.tree_state.selected().to_vec();
-        if selected.len() > 1 {
-            let parent_path: Vec<_> = selected[..selected.len() - 1].to_vec();
-            self.tree_state.select(parent_path);
-        }
-    }
-
-    /// Returns the currently selected path.
     #[must_use]
-    pub fn selected(&self) -> &[TreeNodeId] {
-        self.tree_state.selected()
+    pub fn is_expanded(&self, node_id: &TreeNodeId) -> bool {
+        self.expanded.contains(node_id)
     }
 
-    /// Returns the currently selected node.
-    #[must_use]
-    pub fn current_selection(&self) -> Option<&TreeNodeId> {
-        self.tree_state.selected().last()
-    }
-
-    /// Handles a key event and returns an optional action.
+    #[allow(clippy::too_many_lines)]
     pub fn handle_key(
         &mut self,
         key: KeyEvent,
+        data: &GuildsTreeData,
         registry: &CommandRegistry,
     ) -> Option<GuildsTreeAction> {
+        let flattened = data.flatten(self, u16::MAX);
+
+        let current_index = self
+            .selected
+            .as_ref()
+            .and_then(|sel| flattened.iter().position(|node| &node.id == sel));
+
         match registry.find_action(key) {
             Some(Action::NavigateDown) => {
-                self.select_next();
+                if !flattened.is_empty() {
+                    let next_index = current_index
+                        .map_or(0, |i| if i + 1 >= flattened.len() { 0 } else { i + 1 });
+                    self.selected = Some(flattened[next_index].id.clone());
+                    self.list_state.select(Some(next_index));
+                }
                 None
             }
             Some(Action::NavigateUp) => {
-                self.select_previous();
+                if !flattened.is_empty() {
+                    let prev_index = current_index.map_or(0, |i| {
+                        if i == 0 {
+                            flattened.len().saturating_sub(1)
+                        } else {
+                            i - 1
+                        }
+                    });
+                    self.selected = Some(flattened[prev_index].id.clone());
+                    self.list_state.select(Some(prev_index));
+                }
                 None
             }
             Some(Action::NavigateLeft) => {
-                self.tree_state.key_left();
+                if let Some(selected) = &self.selected {
+                    if self.expanded.contains(selected) {
+                        self.expanded.remove(selected);
+                    } else if let Some(idx) = current_index {
+                        let current_depth = flattened[idx].depth;
+                        for i in (0..idx).rev() {
+                            if flattened[i].depth < current_depth {
+                                self.selected = Some(flattened[i].id.clone());
+                                self.list_state.select(Some(i));
+                                break;
+                            }
+                        }
+                    }
+                }
                 None
             }
             Some(Action::NavigateRight) => {
-                let action = self.current_selection().and_then(|node| match node {
-                    TreeNodeId::Guild(id) => Some(GuildsTreeAction::LoadGuildChannels(*id)),
-                    TreeNodeId::Channel(id) => Some(GuildsTreeAction::SelectChannel(*id)),
-                    TreeNodeId::DirectMessageUser(id) => {
-                        Some(GuildsTreeAction::SelectDirectMessage(id.clone()))
+                if let Some(selected) = &self.selected {
+                    let can_expand = matches!(
+                        selected,
+                        TreeNodeId::Guild(_) | TreeNodeId::Category(_) | TreeNodeId::DirectMessages
+                    );
+
+                    if can_expand && !self.expanded.contains(selected) {
+                        self.expanded.insert(selected.clone());
+                        if let TreeNodeId::Guild(id) = selected
+                            && data.channels(*id).is_none()
+                        {
+                            return Some(GuildsTreeAction::LoadGuildChannels(*id));
+                        }
+                    } else {
+                        return self.get_selection_action();
                     }
-                    _ => None,
-                });
-                self.tree_state.key_right();
-                action
+                }
+                None
             }
             Some(Action::SelectFirst) => {
-                self.select_first();
+                if !flattened.is_empty() {
+                    self.selected = Some(flattened[0].id.clone());
+                    self.list_state.select(Some(0));
+                }
                 None
             }
             Some(Action::SelectLast) => {
-                self.select_last();
+                if !flattened.is_empty() {
+                    let idx = flattened.len() - 1;
+                    self.selected = Some(flattened[idx].id.clone());
+                    self.list_state.select(Some(idx));
+                }
                 None
             }
             Some(Action::Select) => {
-                self.toggle_current();
-                self.get_selection_action()
+                if let Some(selected) = self.selected.clone() {
+                    match &selected {
+                        TreeNodeId::Guild(id) => {
+                            self.toggle_current();
+                            if self.expanded.contains(&selected) && data.channels(*id).is_none() {
+                                return Some(GuildsTreeAction::LoadGuildChannels(*id));
+                            }
+                            None
+                        }
+                        TreeNodeId::Category(_) | TreeNodeId::DirectMessages => {
+                            self.toggle_current();
+                            None
+                        }
+                        _ => self.get_selection_action(),
+                    }
+                } else {
+                    None
+                }
             }
-            Some(Action::Collapse) => {
-                self.collapse_parent();
-                None
-            }
-            Some(Action::MoveToParent) => {
-                self.move_to_parent();
-                None
-            }
-            Some(Action::YankId) => self.current_selection().map(|node| {
+            Some(Action::YankId) => self.selected.as_ref().map(|node| {
                 let id = match node {
                     TreeNodeId::DirectMessages => "direct_messages".to_string(),
                     TreeNodeId::DirectMessageUser(id) => id.clone(),
@@ -222,7 +245,7 @@ impl GuildsTreeState {
     }
 
     fn get_selection_action(&self) -> Option<GuildsTreeAction> {
-        self.current_selection().and_then(|node| match node {
+        self.selected.as_ref().and_then(|node| match node {
             TreeNodeId::Channel(id) => Some(GuildsTreeAction::SelectChannel(*id)),
             TreeNodeId::Guild(id) => Some(GuildsTreeAction::SelectGuild(*id)),
             TreeNodeId::DirectMessageUser(id) => {
@@ -230,11 +253,6 @@ impl GuildsTreeState {
             }
             _ => None,
         })
-    }
-
-    /// Returns a mutable reference to the underlying tree state.
-    pub const fn tree_state_mut(&mut self) -> &mut TreeState<TreeNodeId> {
-        &mut self.tree_state
     }
 }
 
@@ -295,6 +313,14 @@ impl Default for GuildsTreeStyle {
     }
 }
 
+/// A flattened representation of a tree node for display.
+#[derive(Debug, Clone)]
+pub struct FlattenedNode<'a> {
+    pub id: TreeNodeId,
+    pub label: Line<'a>,
+    pub depth: usize,
+}
+
 /// Data container for the guilds tree.
 pub struct GuildsTreeData {
     guilds: Vec<Guild>,
@@ -306,7 +332,6 @@ pub struct GuildsTreeData {
 }
 
 impl GuildsTreeData {
-    /// Creates a new empty data container.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -319,12 +344,10 @@ impl GuildsTreeData {
         }
     }
 
-    /// Sets the list of guilds.
     pub fn set_guilds(&mut self, guilds: Vec<Guild>) {
         self.guilds = guilds;
     }
 
-    /// Sets the channels for a specific guild.
     pub fn set_channels(&mut self, guild_id: GuildId, channels: Vec<Channel>) {
         tracing::debug!(
             guild_id = %guild_id,
@@ -335,63 +358,52 @@ impl GuildsTreeData {
         self.channels_by_guild.insert(guild_id, channels);
     }
 
-    /// Sets the list of DM users.
     pub fn set_dm_users(&mut self, users: Vec<(String, String)>) {
         self.dm_users = users;
     }
 
-    /// Returns the list of guilds.
     #[must_use]
     pub fn guilds(&self) -> &[Guild] {
         &self.guilds
     }
 
-    /// Returns the channels for a specific guild.
     #[must_use]
     pub fn channels(&self, guild_id: GuildId) -> Option<&Vec<Channel>> {
         self.channels_by_guild.get(&guild_id)
     }
 
-    /// Returns the list of DM users.
     #[must_use]
     pub fn dm_users(&self) -> &[(String, String)] {
         &self.dm_users
     }
 
-    /// Sets the active guild.
     pub const fn set_active_guild(&mut self, guild_id: Option<GuildId>) {
         self.active_guild_id = guild_id;
     }
 
-    /// Sets the active channel.
     pub const fn set_active_channel(&mut self, channel_id: Option<ChannelId>) {
         self.active_channel_id = channel_id;
     }
 
-    /// Sets the active DM user.
     pub fn set_active_dm_user(&mut self, user_id: Option<String>) {
         self.active_dm_user_id = user_id;
     }
 
-    /// Returns the active guild ID.
     #[must_use]
     pub const fn active_guild_id(&self) -> Option<GuildId> {
         self.active_guild_id
     }
 
-    /// Returns the active channel ID.
     #[must_use]
     pub const fn active_channel_id(&self) -> Option<ChannelId> {
         self.active_channel_id
     }
 
-    /// Returns the active DM user ID.
     #[must_use]
     pub fn active_dm_user_id(&self) -> Option<&str> {
         self.active_dm_user_id.as_deref()
     }
 
-    /// Finds the guild ID containing a specific channel.
     #[must_use]
     pub fn find_guild_for_channel(&self, channel_id: ChannelId) -> Option<GuildId> {
         for (guild_id, channels) in &self.channels_by_guild {
@@ -402,7 +414,6 @@ impl GuildsTreeData {
         None
     }
 
-    /// Returns a mutable reference to a channel by its ID.
     pub fn get_channel_mut(&mut self, channel_id: ChannelId) -> Option<&mut Channel> {
         for channels in self.channels_by_guild.values_mut() {
             if let Some(channel) = channels.iter_mut().find(|c| c.id() == channel_id) {
@@ -412,7 +423,6 @@ impl GuildsTreeData {
         None
     }
 
-    /// Updates the unread status of all channels based on the provided read states.
     pub fn update_unread_status(
         &mut self,
         read_states: &std::collections::HashMap<ChannelId, ReadState>,
@@ -437,116 +447,117 @@ impl GuildsTreeData {
             }
         }
     }
-}
 
-impl Default for GuildsTreeData {
-    fn default() -> Self {
-        Self::new()
+    fn clean_text(s: &str) -> String {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let re = RE.get_or_init(|| {
+            Regex::new(r"[\p{Extended_Pictographic}\p{Emoji_Presentation}\u{FE0F}\u{200D}\u{20E3}]")
+                .expect("Invalid regex")
+        });
+        re.replace_all(s, "").to_string()
     }
-}
 
-/// Widget for displaying the guilds tree.
-pub struct GuildsTree<'a> {
-    data: &'a GuildsTreeData,
-    style: GuildsTreeStyle,
-    title: &'a str,
-}
-
-impl<'a> GuildsTree<'a> {
-    /// Creates a new guilds tree widget.
     #[must_use]
-    pub fn new(data: &'a GuildsTreeData) -> Self {
-        Self {
-            data,
-            style: GuildsTreeStyle::default(),
-            title: "Guilds",
-        }
-    }
+    pub fn flatten<'a>(&'a self, state: &GuildsTreeState, width: u16) -> Vec<FlattenedNode<'a>> {
+        let mut nodes = Vec::new();
 
-    /// Sets the style configuration.
-    #[must_use]
-    pub const fn style(mut self, style: GuildsTreeStyle) -> Self {
-        self.style = style;
-        self
-    }
+        let dm_expanded = state.expanded.contains(&TreeNodeId::DirectMessages);
+        nodes.push(FlattenedNode {
+            id: TreeNodeId::DirectMessages,
+            label: Line::from(vec![
+                Span::raw(if dm_expanded { "▾ " } else { "▸ " }),
+                Span::raw("Direct Messages"),
+            ]),
+            depth: 0,
+        });
 
-    /// Sets the title.
-    #[must_use]
-    pub const fn title(mut self, title: &'a str) -> Self {
-        self.title = title;
-        self
-    }
+        if dm_expanded {
+            for (i, (id, name)) in self.dm_users.iter().enumerate() {
+                let is_last = i == self.dm_users.len() - 1;
+                let prefix = if is_last { "└── " } else { "├── " };
 
-    fn build_tree_items(&self, width: u16) -> Vec<TreeItem<'static, TreeNodeId>> {
-        let mut items = Vec::with_capacity(self.data.guilds.len() + 1);
-
-        items.push(self.build_dm_node());
-
-        for guild in &self.data.guilds {
-            items.push(self.build_guild_node(guild, width));
-        }
-
-        items
-    }
-
-    fn build_dm_node(&self) -> TreeItem<'static, TreeNodeId> {
-        let dm_children: Vec<TreeItem<'static, TreeNodeId>> = self
-            .data
-            .dm_users
-            .iter()
-            .map(|(id, name)| {
-                let is_active = self.data.active_dm_user_id() == Some(id.as_str());
+                let is_active = self.active_dm_user_id() == Some(id);
                 let style = if is_active {
-                    self.style.active_channel_style
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    self.style.dm_style
+                    Style::default().fg(Color::Magenta)
                 };
-                let text = Line::from(vec![
-                    Span::styled("@", style),
-                    Span::styled(name.clone(), style),
-                ]);
-                TreeItem::new_leaf(TreeNodeId::DirectMessageUser(id.clone()), text)
-            })
-            .collect();
 
-        let dm_text = Line::from(Span::styled("Direct Messages", self.style.dm_style));
+                let clean_name = Self::clean_text(name);
 
-        TreeItem::new(TreeNodeId::DirectMessages, dm_text, dm_children)
-            .expect("DM node should have unique children")
+                nodes.push(FlattenedNode {
+                    id: TreeNodeId::DirectMessageUser(id.clone()),
+                    label: Line::from(vec![
+                        Span::raw(prefix),
+                        Span::styled("@ ", style),
+                        Span::styled(clean_name, style),
+                    ]),
+                    depth: 1,
+                });
+            }
+        }
+
+        for (i, guild) in self.guilds.iter().enumerate() {
+            let _is_last_guild = i == self.guilds.len() - 1;
+            let guild_id = guild.id();
+            let expanded = state.expanded.contains(&TreeNodeId::Guild(guild_id));
+
+            let is_active = self.active_guild_id() == Some(guild_id);
+            let guild_style = if is_active {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else if guild.has_unread() {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let clean_name = Self::clean_text(guild.name());
+
+            let arrow = if expanded { "▾ " } else { "▸ " };
+            nodes.push(FlattenedNode {
+                id: TreeNodeId::Guild(guild_id),
+                label: Line::from(vec![
+                    Span::raw(arrow),
+                    Span::styled(clean_name, guild_style),
+                ]),
+                depth: 0,
+            });
+
+            if expanded {
+                if let Some(channels) = self.channels(guild_id) {
+                    self.flatten_channels(&mut nodes, channels, state, width);
+                } else {
+                    nodes.push(FlattenedNode {
+                        id: TreeNodeId::Placeholder(guild_id),
+                        label: Line::from(vec![
+                            Span::raw("└── "),
+                            Span::styled(
+                                "Loading...",
+                                Style::default().add_modifier(Modifier::ITALIC),
+                            ),
+                        ]),
+                        depth: 1,
+                    });
+                }
+            }
+        }
+
+        nodes
     }
 
-    fn build_guild_node(&self, guild: &Guild, width: u16) -> TreeItem<'static, TreeNodeId> {
-        let is_active = self.data.active_guild_id() == Some(guild.id());
-        let guild_style = if is_active {
-            self.style.active_guild_style
-        } else if guild.has_unread() {
-            self.style.guild_unread_style
-        } else {
-            self.style.guild_style
-        };
-
-        let guild_text = Line::from(Span::styled(guild.name().to_string(), guild_style));
-
-        let channel_items = self.data.channels(guild.id()).map_or_else(
-            || vec![self.build_placeholder_node(guild.id())],
-            |channels| self.build_channel_nodes(channels, width),
-        );
-
-        TreeItem::new(TreeNodeId::Guild(guild.id()), guild_text, channel_items)
-            .expect("Guild node should have unique children")
-    }
-
-    fn build_placeholder_node(&self, guild_id: GuildId) -> TreeItem<'static, TreeNodeId> {
-        let text = Line::from(Span::styled("Loading...", self.style.placeholder_style));
-        TreeItem::new_leaf(TreeNodeId::Placeholder(guild_id), text)
-    }
-
-    fn build_channel_nodes(
-        &self,
-        channels: &[Channel],
+    fn flatten_channels<'a>(
+        &'a self,
+        nodes: &mut Vec<FlattenedNode<'a>>,
+        channels: &'a [Channel],
+        state: &GuildsTreeState,
         width: u16,
-    ) -> Vec<TreeItem<'static, TreeNodeId>> {
-        let mut result = Vec::new();
+    ) {
         let mut categories: std::collections::HashMap<ChannelId, Vec<&Channel>> =
             std::collections::HashMap::new();
         let mut orphan_channels: Vec<&Channel> = Vec::new();
@@ -563,113 +574,184 @@ impl<'a> GuildsTree<'a> {
         }
 
         orphan_channels.sort_by_key(|c| c.position());
-        for channel in orphan_channels {
-            if let Some(item) = self.build_channel_leaf(channel, width, 1) {
-                result.push(item);
+        category_channels.sort_by_key(|c| c.position());
+
+        for (i, channel) in orphan_channels.iter().enumerate() {
+            let is_last = i == orphan_channels.len() - 1 && category_channels.is_empty();
+            let prefix = if is_last { "└── " } else { "├── " };
+            if let Some(node) = self.create_channel_node(channel, 1, is_last, prefix, width) {
+                nodes.push(node);
             }
         }
 
-        category_channels.sort_by_key(|c| c.position());
-        for category in category_channels {
-            let children_channels = categories.get(&category.id()).cloned().unwrap_or_default();
-            result.push(self.build_category_node(category, &children_channels, width));
+        for (i, category) in category_channels.iter().enumerate() {
+            let is_last_category = i == category_channels.len() - 1;
+            let cat_prefix = if is_last_category {
+                "└── "
+            } else {
+                "├── "
+            };
+            let child_indent = if is_last_category { "    " } else { "│   " };
+
+            let expanded = state
+                .expanded
+                .contains(&TreeNodeId::Category(category.id()));
+            let arrow = if expanded { "▾ " } else { "▸ " };
+
+            let clean_name = Self::clean_text(category.name());
+
+            nodes.push(FlattenedNode {
+                id: TreeNodeId::Category(category.id()),
+                label: Line::from(vec![
+                    Span::raw(cat_prefix),
+                    Span::raw(arrow),
+                    Span::styled(
+                        clean_name.to_uppercase(),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ]),
+                depth: 1,
+            });
+
+            if expanded && let Some(children) = categories.get(&category.id()) {
+                let mut sorted_children = children.clone();
+                sorted_children.sort_by_key(|c| c.position());
+
+                for (j, child) in sorted_children.iter().enumerate() {
+                    let is_last_child = j == sorted_children.len() - 1;
+                    let mut prefix = child_indent.to_string();
+                    prefix.push_str(if is_last_child {
+                        "└── "
+                    } else {
+                        "├── "
+                    });
+
+                    if let Some(node) =
+                        self.create_channel_node(child, 2, is_last_child, &prefix, width)
+                    {
+                        nodes.push(node);
+                    }
+                }
+            }
         }
-
-        result
     }
 
-    fn build_category_node(
-        &self,
-        category: &Channel,
-        children: &[&Channel],
+    fn create_channel_node<'a>(
+        &'a self,
+        channel: &'a Channel,
+        depth: usize,
+        _is_last: bool,
+        prefix: &str,
         width: u16,
-    ) -> TreeItem<'static, TreeNodeId> {
-        let text = Line::from(Span::styled(
-            category.name().to_uppercase(),
-            self.style.category_style,
-        ));
-
-        let mut sorted_children: Vec<&Channel> = children.to_vec();
-        sorted_children.sort_by_key(|c| c.position());
-
-        let child_items: Vec<TreeItem<'static, TreeNodeId>> = sorted_children
-            .iter()
-            .filter_map(|ch| self.build_channel_leaf(ch, width, 2))
-            .collect();
-
-        TreeItem::new(TreeNodeId::Category(category.id()), text, child_items)
-            .expect("Category should have unique children")
-    }
-
-    fn build_channel_leaf(
-        &self,
-        channel: &Channel,
-        width: u16,
-        depth: u16,
-    ) -> Option<TreeItem<'static, TreeNodeId>> {
+    ) -> Option<FlattenedNode<'a>> {
         if !channel.kind().is_text_based() && !channel.kind().is_voice() {
             return None;
         }
 
-        let is_active = self.data.active_channel_id() == Some(channel.id());
+        let is_active = self.active_channel_id() == Some(channel.id());
         let style = if is_active {
-            self.style.active_channel_style
+            Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 40, 50))
         } else if channel.has_unread() {
-            self.style.channel_unread_style
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         } else {
-            self.style.channel_style
+            Style::default().fg(Color::Gray)
         };
+
+        let prefix_width =
+            u16::try_from(unicode_width::UnicodeWidthStr::width(prefix)).unwrap_or(u16::MAX);
+        let dot_width = 1;
+        let padding_right = 1;
+
+        let max_name_width = width
+            .saturating_sub(prefix_width)
+            .saturating_sub(dot_width)
+            .saturating_sub(padding_right);
 
         let name = channel.display_name();
-        let indent = 2 * depth;
-        let available_width = width.saturating_sub(indent).saturating_sub(3);
+        let mut clean_name = Self::clean_text(&name);
 
-        let mut display_name = name.clone();
+        let name_width = u16::try_from(unicode_width::UnicodeWidthStr::width(clean_name.as_str()))
+            .unwrap_or(u16::MAX);
 
-        let available_name_width = if channel.has_unread() {
-            available_width.saturating_sub(2)
-        } else {
-            available_width
-        };
-
-        let current_width = u16::try_from(Span::styled(&display_name, style).width()).unwrap_or(0);
-        if current_width > available_name_width {
-            let mut truncated = display_name.clone();
-            while !truncated.is_empty()
-                && u16::try_from(Span::styled(&truncated, style).width()).unwrap_or(0)
-                    > available_name_width
-            {
-                truncated.pop();
+        if name_width > max_name_width {
+            let mut w = 0;
+            let mut new_len = 0;
+            for (idx, c) in clean_name.char_indices() {
+                let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                if w + cw > max_name_width as usize {
+                    break;
+                }
+                w += cw;
+                new_len = idx + c.len_utf8();
             }
-            display_name = truncated;
-        } else {
-            let padding = available_name_width.saturating_sub(current_width);
-            if padding > 0 {
-                display_name.push_str(&" ".repeat(padding as usize));
-            }
+            clean_name = clean_name[..new_len].to_string();
         }
 
-        let name_span = Span::styled(display_name, style);
-        let name_width = u16::try_from(name_span.width()).unwrap_or(0);
-
-        let mut spans = vec![name_span];
+        let mut spans = vec![Span::raw(prefix.to_string())];
+        spans.push(Span::styled(clean_name.clone(), style));
 
         if channel.has_unread() {
-            let dot = "●";
-            let dot_width = 1;
-            let padding = available_width
-                .saturating_sub(name_width)
-                .saturating_sub(dot_width);
+            let used_width = prefix_width.saturating_add(
+                u16::try_from(unicode_width::UnicodeWidthStr::width(clean_name.as_str()))
+                    .unwrap_or(0),
+            );
+            let total_available = width
+                .saturating_sub(dot_width)
+                .saturating_sub(padding_right);
+            let padding_needed = total_available.saturating_sub(used_width);
 
-            if padding > 0 {
-                spans.push(Span::raw(" ".repeat(padding as usize)));
-                spans.push(Span::styled(dot, style));
+            if padding_needed > 0 {
+                spans.push(Span::raw(" ".repeat(padding_needed as usize)));
+            } else {
+                spans.push(Span::raw(" "));
             }
+            spans.push(Span::styled("⦁", Style::default().fg(Color::White)));
         }
 
-        let text = Line::from(spans);
+        Some(FlattenedNode {
+            id: TreeNodeId::Channel(channel.id()),
+            label: Line::from(spans),
+            depth,
+        })
+    }
+}
+impl Default for GuildsTreeData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-        Some(TreeItem::new_leaf(TreeNodeId::Channel(channel.id()), text))
+/// Widget for displaying the guilds tree.
+pub struct GuildsTree<'a> {
+    data: &'a GuildsTreeData,
+    style: GuildsTreeStyle,
+    title: &'a str,
+}
+
+impl<'a> GuildsTree<'a> {
+    #[must_use]
+    pub fn new(data: &'a GuildsTreeData) -> Self {
+        Self {
+            data,
+            style: GuildsTreeStyle::default(),
+            title: "Guilds",
+        }
+    }
+
+    #[must_use]
+    pub const fn style(mut self, style: GuildsTreeStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    #[must_use]
+    pub const fn title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
     }
 }
 
@@ -694,14 +776,39 @@ impl StatefulWidget for GuildsTree<'_> {
             ));
 
         let inner_area = block.inner(area);
-        let items = self.build_tree_items(inner_area.width);
 
-        let tree = Tree::new(&items)
-            .expect("Tree items should be valid")
+        let flattened_nodes = self.data.flatten(state, inner_area.width);
+
+        if let Some(selected_id) = &state.selected {
+            if let Some(index) = flattened_nodes.iter().position(|n| &n.id == selected_id) {
+                state.list_state.select(Some(index));
+            } else {
+                state.list_state.select(None);
+            }
+        } else {
+            state.list_state.select(None);
+        }
+
+        let items: Vec<ListItem> = flattened_nodes
+            .iter()
+            .map(|node| {
+                let is_selected = state.selected.as_ref() == Some(&node.id);
+
+                let mut label = node.label.clone();
+
+                if is_selected {
+                    label = label.patch_style(self.style.selected_style);
+                }
+
+                ListItem::new(label)
+            })
+            .collect();
+
+        let list = List::new(items)
             .block(block)
             .highlight_style(self.style.selected_style);
 
-        StatefulWidget::render(tree, area, buf, state.tree_state_mut());
+        StatefulWidget::render(list, area, buf, &mut state.list_state);
     }
 }
 
@@ -714,7 +821,7 @@ mod tests {
     fn test_guilds_tree_state_creation() {
         let state = GuildsTreeState::new();
         assert!(!state.is_focused());
-        assert!(state.selected().is_empty());
+        assert!(state.selected().is_none());
     }
 
     #[test]
@@ -742,16 +849,24 @@ mod tests {
     fn test_handle_navigation_keys() {
         let mut state = GuildsTreeState::new();
         let registry = CommandRegistry::default();
+        let mut data = GuildsTreeData::new();
+        data.set_guilds(vec![Guild::new(1_u64, "Test Guild")]);
+
+        state.handle_key(
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
+            &data,
+            &registry,
+        );
+        let flattened = data.flatten(&state, 100);
+        state.select(flattened[0].id.clone());
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert!(state.handle_key(key_j, &registry).is_none());
 
-        let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        assert!(state.handle_key(key_k, &registry).is_none());
+        assert!(state.handle_key(key_j, &data, &registry).is_none());
     }
 
     #[test]
-    fn test_all_guilds_included_in_tree_items() {
+    fn test_flatten_includes_all_guilds() {
         let mut data = GuildsTreeData::new();
         let guilds = vec![
             Guild::new(1_u64, "Nix/NixOS (unofficial)"),
@@ -765,26 +880,15 @@ mod tests {
         ];
 
         data.set_guilds(guilds.clone());
+        let state = GuildsTreeState::new();
+        let nodes = data.flatten(&state, 100);
 
-        let tree = GuildsTree::new(&data);
-        let items = tree.build_tree_items(100);
-
-        assert_eq!(
-            items.len(),
-            guilds.len() + 1,
-            "Tree should have DM node + all guilds"
-        );
+        assert_eq!(nodes.len(), guilds.len() + 1);
 
         for (i, guild) in guilds.iter().enumerate() {
             let expected_id = TreeNodeId::Guild(guild.id());
-            let item = &items[i + 1];
-            assert_eq!(
-                item.identifier(),
-                &expected_id,
-                "Guild at index {} should be {}",
-                i,
-                guild.name()
-            );
+            let node = &nodes[i + 1];
+            assert_eq!(node.id, expected_id);
         }
     }
 
@@ -796,10 +900,9 @@ mod tests {
             .collect();
 
         data.set_guilds(guilds);
+        let state = GuildsTreeState::new();
+        let nodes = data.flatten(&state, 100);
 
-        let tree = GuildsTree::new(&data);
-        let items = tree.build_tree_items(100);
-
-        assert_eq!(items.len(), 101, "Should have DM node + 100 guilds");
+        assert_eq!(nodes.len(), 101, "Should have DM node + 100 guilds");
     }
 }
