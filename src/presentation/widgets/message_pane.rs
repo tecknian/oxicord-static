@@ -907,7 +907,7 @@ impl MessagePaneState {
             Some(Action::JumpToReply) => self
                 .get_selected_message(data)
                 .and_then(|m| m.reference())
-                .and_then(crate::domain::entities::MessageReference::message_id)
+                .and_then(|r| r.message_id)
                 .map(MessagePaneAction::JumpToReply),
             _ => None,
         }
@@ -1709,7 +1709,7 @@ fn render_ui_message(
         }
         if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
             let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
-            let attachment_text = format!("\u{1F4CE} {}", attachment.filename());
+            let attachment_text = format!("\u{1F4CE} {}", attachment.filename);
             let attachment_line = Line::from(vec![
                 indent_span.clone(),
                 Span::styled(attachment_text, style.attachment_style),
@@ -1969,8 +1969,22 @@ mod tests {
     use chrono::Local;
 
     fn create_test_message(id: u64, content: &str) -> Message {
-        let author = MessageAuthor::new("1", "testuser", "0", None, false, None);
-        Message::new(id, 100_u64, author, content, Local::now())
+        let author = MessageAuthor {
+            id: "1".to_string(),
+            username: "testuser".to_string(),
+            discriminator: "0".to_string(),
+            avatar: None,
+            bot: false,
+            global_name: None,
+        };
+        Message::new(
+            id.into(), 
+            ChannelId(100), 
+            author, 
+            content.to_string(), 
+            Local::now(),
+            crate::domain::entities::MessageKind::Default
+        )
     }
 
     #[test]
@@ -2015,7 +2029,14 @@ mod tests {
 
     #[test]
     fn test_author_color() {
-        let author = MessageAuthor::new("1", "testuser", "0", None, false, None);
+        let author = MessageAuthor {
+            id: "1".to_string(),
+            username: "testuser".to_string(),
+            discriminator: "0".to_string(),
+            avatar: None,
+            bot: false,
+            global_name: None,
+        };
         let color = get_author_color(&author);
         assert_ne!(color, ratatui::style::Color::Reset);
     }

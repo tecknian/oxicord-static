@@ -55,6 +55,7 @@ image = { version = "0.25.9", default-features = false, features = ["png", "jpeg
 sha2 = "0.10.9"
 hex = "0.4.3"
 regex = "1.11"
+bitflags = { version = "2.6", features = ["serde"] }
 tui-scrollbar = "0.2.2"
 uuid = { version = "1.19.0", features = ["v4", "fast-rng"] }
 

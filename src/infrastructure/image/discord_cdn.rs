@@ -75,6 +75,56 @@ pub fn is_discord_cdn_url(url: &str) -> bool {
     url.contains("cdn.discordapp.com") || url.contains("media.discordapp.net")
 }
 
+/// Generates an avatar URL for a user.
+#[must_use]
+pub fn avatar_url(user_id: &str, avatar_hash: Option<&str>, discriminator: &str) -> String {
+    if let Some(hash) = avatar_hash {
+        let ext = if hash.starts_with("a_") { "gif" } else { "png" };
+        format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.{ext}")
+    } else {
+        default_avatar_url(user_id, discriminator)
+    }
+}
+
+/// Generates a default avatar URL.
+#[must_use]
+pub fn default_avatar_url(user_id: &str, discriminator: &str) -> String {
+    let index = if discriminator == "0" {
+        // New username system: (user_id >> 22) % 6
+        let id = user_id.parse::<u64>().unwrap_or(0);
+        (id >> 22) % 6
+    } else {
+        // Legacy system: discriminator % 5
+        let disc = discriminator.parse::<u64>().unwrap_or(0);
+        disc % 5
+    };
+    format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
+}
+
+/// Generates a guild icon URL.
+#[must_use]
+pub fn guild_icon_url(guild_id: &str, icon_hash: Option<&str>) -> Option<String> {
+    icon_hash.map(|hash| {
+        let ext = if hash.starts_with("a_") { "gif" } else { "png" };
+        format!("https://cdn.discordapp.com/icons/{guild_id}/{hash}.{ext}")
+    })
+}
+
+/// Generates a guild banner URL.
+#[must_use]
+pub fn guild_banner_url(guild_id: &str, banner_hash: Option<&str>) -> Option<String> {
+    banner_hash.map(|hash| {
+        let ext = if hash.starts_with("a_") { "gif" } else { "png" };
+        format!("https://cdn.discordapp.com/banners/{guild_id}/{hash}.{ext}")
+    })
+}
+
+/// Generates a guild splash URL.
+#[must_use]
+pub fn guild_splash_url(guild_id: &str, splash_hash: Option<&str>) -> Option<String> {
+    splash_hash.map(|hash| format!("https://cdn.discordapp.com/splashes/{guild_id}/{hash}.png"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +190,58 @@ mod tests {
 
         assert!(optimized.contains("width=400"));
         assert!(optimized.contains("height=300"));
+    }
+
+    #[test]
+    fn test_avatar_url_generation() {
+        let user_id = "123456";
+        let hash_static = "abcdef";
+        let hash_animated = "a_abcdef";
+        let discriminator = "1234";
+
+        assert_eq!(
+            avatar_url(user_id, Some(hash_static), discriminator),
+            "https://cdn.discordapp.com/avatars/123456/abcdef.png"
+        );
+        assert_eq!(
+            avatar_url(user_id, Some(hash_animated), discriminator),
+            "https://cdn.discordapp.com/avatars/123456/a_abcdef.gif"
+        );
+    }
+
+    #[test]
+    fn test_default_avatar_url() {
+        // Legacy: 1234 % 5 = 4
+        assert_eq!(
+            default_avatar_url("123456", "1234"),
+            "https://cdn.discordapp.com/embed/avatars/4.png"
+        );
+        // New: (123456 >> 22) % 6. 123456 is small, shift 22 makes it 0. 0 % 6 = 0.
+        assert_eq!(
+            default_avatar_url("123456", "0"),
+            "https://cdn.discordapp.com/embed/avatars/0.png"
+        );
+    }
+
+    #[test]
+    fn test_guild_asset_urls() {
+        let guild_id = "123";
+        let hash = "abc";
+        let hash_anim = "a_abc";
+
+        assert_eq!(
+            guild_icon_url(guild_id, Some(hash)),
+            Some("https://cdn.discordapp.com/icons/123/abc.png".to_string())
+        );
+        assert_eq!(
+            guild_icon_url(guild_id, Some(hash_anim)),
+            Some("https://cdn.discordapp.com/icons/123/a_abc.gif".to_string())
+        );
+        assert_eq!(guild_icon_url(guild_id, None), None);
+
+        assert_eq!(
+            guild_splash_url(guild_id, Some(hash)),
+            Some("https://cdn.discordapp.com/splashes/123/abc.png".to_string())
+        );
     }
 }

@@ -272,7 +272,7 @@ impl ChatScreenState {
         if let Some(channel) = self.guilds_tree_data.get_channel_mut(message.channel_id()) {
             channel.set_last_message_id(Some(message.id()));
 
-            let is_own_message = message.author().id() == self.user.id();
+            let is_own_message = message.author().id() == self.user.id_str();
             let is_active_channel = self
                 .selected_channel
                 .as_ref()
@@ -710,7 +710,7 @@ impl ChatScreenState {
 
             for mention in msg.message.mentions() {
                 if seen_ids.insert(mention.id().to_string()) {
-                    if let Some(cached) = self.user_cache.get(mention.id()) {
+                    if let Some(cached) = self.user_cache.get(&mention.id_str()) {
                         candidates.push(cached);
                     } else {
                         candidates.push(CachedUser::from_user(mention));

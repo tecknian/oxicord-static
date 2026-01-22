@@ -57,12 +57,10 @@ fn extract_build_number(js: &str) -> Option<u32> {
     static BUILD_REGEX: OnceLock<Regex> = OnceLock::new();
     let build_regex = BUILD_REGEX.get_or_init(|| Regex::new(r#"build_number:"(\d+)""#).expect("Invalid regex"));
 
-    if let Some(caps) = build_regex.captures(js) {
-        if let Some(m) = caps.get(1) {
-            if let Ok(num) = m.as_str().parse::<u32>() {
-                return Some(num);
-            }
-        }
+    if let Some(caps) = build_regex.captures(js) 
+        && let Some(m) = caps.get(1) 
+        && let Ok(num) = m.as_str().parse::<u32>() {
+            return Some(num);
     }
     None
 }

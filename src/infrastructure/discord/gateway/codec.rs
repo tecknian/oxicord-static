@@ -171,6 +171,8 @@ impl EventParser {
             "GUILD_UPDATE" => Self::parse_guild_update(data),
             "GUILD_DELETE" => Self::parse_guild_delete(data),
             "USER_UPDATE" => Self::parse_user_update(data),
+            "VOICE_STATE_UPDATE" => Self::parse_voice_state_update(data),
+            "VOICE_SERVER_UPDATE" => Self::parse_voice_server_update(data),
             _ => Ok(DispatchEvent::Unknown {
                 event_type: event_type.to_string(),
             }),
@@ -601,6 +603,41 @@ impl EventParser {
         })
     }
 
+    fn parse_voice_state_update(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
+        let payload: super::payloads::VoiceStateUpdatePayload = serde_json::from_value(data)
+            .map_err(|e| GatewayError::serialization(format!("Failed to parse VoiceStateUpdate: {e}")))?;
+
+        let guild_id = payload.guild_id.and_then(|id| id.parse::<u64>().ok()).map(GuildId);
+        let channel_id = payload.channel_id.and_then(|id| id.parse::<u64>().ok()).map(ChannelId);
+
+        Ok(DispatchEvent::VoiceStateUpdate {
+            guild_id,
+            channel_id,
+            user_id: payload.user_id,
+            session_id: payload.session_id,
+            deaf: payload.deaf,
+            mute: payload.mute,
+            self_deaf: payload.self_deaf,
+            self_mute: payload.self_mute,
+            self_video: payload.self_video,
+            suppress: payload.suppress,
+        })
+    }
+
+    fn parse_voice_server_update(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
+        let payload: super::payloads::VoiceServerUpdatePayload = serde_json::from_value(data)
+            .map_err(|e| GatewayError::serialization(format!("Failed to parse VoiceServerUpdate: {e}")))?;
+
+        let guild_id = payload.guild_id.parse::<u64>().map(GuildId)
+            .map_err(|_| GatewayError::protocol("Invalid guild ID"))?;
+
+        Ok(DispatchEvent::VoiceServerUpdate {
+            token: payload.token,
+            guild_id,
+            endpoint: payload.endpoint,
+        })
+    }
+
     fn convert_message_payload(payload: MessagePayload) -> GatewayResult<Message> {
         let id: u64 = payload
             .id
@@ -617,23 +654,23 @@ impl EventParser {
             .parse()
             .map_err(|_| GatewayError::protocol("Invalid timestamp"))?;
 
-        let author = MessageAuthor::new(
-            payload.author.id,
-            payload.author.username,
-            payload.author.discriminator,
-            payload.author.avatar,
-            payload.author.bot,
-            payload.member.and_then(|m| m.color),
-        );
+        let author = MessageAuthor {
+            id: payload.author.id,
+            username: payload.author.username,
+            discriminator: payload.author.discriminator,
+            avatar: payload.author.avatar,
+            bot: payload.author.bot,
+            global_name: None, // Payload doesn't seem to have global_name yet? DTO check needed.
+        };
 
         let mut message = Message::new(
-            id,
-            channel_id,
+            MessageId(id),
+            ChannelId(channel_id),
             author,
             payload.content,
             timestamp.with_timezone(&Local),
+            MessageKind::from(payload.kind),
         )
-        .with_kind(MessageKind::from(payload.kind))
         .with_pinned(payload.pinned);
 
         if !payload.attachments.is_empty() {
@@ -660,16 +697,18 @@ impl EventParser {
         if let Some(reference) = payload.message_reference {
             let ref_msg_id = reference.message_id.and_then(|id| id.parse::<u64>().ok());
             let ref_channel_id = reference.channel_id.and_then(|id| id.parse::<u64>().ok());
+            
             message = message.with_reference(MessageReference::new(
                 ref_msg_id.map(Into::into),
                 ref_channel_id.map(Into::into),
+                None,
             ));
         }
 
         if let Some(referenced) = payload.referenced_message
             && let Ok(ref_message) = Self::convert_message_payload(*referenced)
         {
-            message = message.with_referenced(ref_message);
+            message = message.with_referenced_message(Some(ref_message));
         }
 
         if !payload.mentions.is_empty() {

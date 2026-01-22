@@ -67,7 +67,7 @@ pub fn get_user_color(user: &User) -> Color {
     if let Some(c) = user.color() {
         u32_to_color(c)
     } else {
-        let id = user.id().parse::<u64>().unwrap_or(0);
+        let id = user.id().as_u64();
         hash_id_to_color(id)
     }
 }

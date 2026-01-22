@@ -47,8 +47,7 @@ impl Default for SuperProperties {
             device: String::new(),
             system_locale: "en-US".to_string(),
             browser_user_agent: format!(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) discord/{} Chrome/{} Electron/{} Safari/537.36",
-                CLIENT_VERSION, CHROME_VERSION, ELECTRON_VERSION
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) discord/{CLIENT_VERSION} Chrome/{CHROME_VERSION} Electron/{ELECTRON_VERSION} Safari/537.36"
             ),
             browser_version: ELECTRON_VERSION.to_string(),
             os_version: "5.15.153".to_string(),
@@ -77,9 +76,9 @@ fn generate_launch_signature() -> String {
     // Discord uses specific UUID bits to detect client modifications.
     // This mask clears detection bits to avoid identification.
     let mask: [u8; 16] = [
-        0b11111111, 0b01111111, 0b11101111, 0b11101111, 0b11110111, 0b11101111, 0b11110111,
-        0b11111111, 0b11011111, 0b01111110, 0b11111111, 0b10111111, 0b11111110, 0b11111111,
-        0b11110111, 0b11111111,
+        0b1111_1111, 0b0111_1111, 0b1110_1111, 0b1110_1111, 0b1111_0111, 0b1110_1111, 0b1111_0111,
+        0b1111_1111, 0b1101_1111, 0b0111_1110, 0b1111_1111, 0b1011_1111, 0b1111_1110, 0b1111_1111,
+        0b1111_0111, 0b1111_1111,
     ];
 
     let mut uuid_bytes = *Uuid::new_v4().as_bytes();

@@ -52,8 +52,8 @@ impl ImageAttachment {
             return None;
         }
 
-        let id = ImageId::from_url(attachment.url());
-        Some(Self::new(id, attachment.url().to_string()))
+        let id = ImageId::from_url(&attachment.url);
+        Some(Self::new(id, attachment.url.clone()))
     }
 
     pub fn set_loaded(&mut self, image: Arc<image::DynamicImage>) {

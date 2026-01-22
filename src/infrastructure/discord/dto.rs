@@ -2,88 +2,102 @@
 
 use serde::Deserialize;
 
-/// Discord API user response structure.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct UserResponse {
-    /// Discord user ID.
     pub id: String,
-    /// Discord username.
     pub username: String,
-    /// User discriminator tag.
     pub discriminator: String,
-    /// Optional avatar hash.
     pub avatar: Option<String>,
-    /// Whether the user is a bot.
     #[serde(default)]
     pub bot: bool,
+    #[serde(default)]
+    pub global_name: Option<String>,
 }
 
-/// Discord API error response structure.
 #[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
-    /// Error message from Discord.
     pub message: String,
 }
 
-/// Discord API guild response structure from /users/@me/guilds.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GuildResponse {
-    /// Guild ID (snowflake as string).
     pub id: String,
-    /// Guild name.
     #[serde(default)]
     pub name: String,
-    /// Guild icon hash (null if no custom icon).
     pub icon: Option<String>,
-    /// Whether the current user owns this guild.
     #[serde(default)]
     #[allow(dead_code)]
     pub owner: bool,
-    /// User's permissions in this guild (string of permission bits).
     #[serde(default)]
     #[allow(dead_code)]
     pub permissions: Option<String>,
-    /// Guild feature flags.
     #[serde(default)]
     #[allow(dead_code)]
     pub features: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub splash: Option<String>,
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
-/// Discord API channel response structure.
 #[derive(Debug, Deserialize)]
-pub struct ChannelResponse {
-    /// Channel ID.
+#[allow(dead_code)]
+pub struct PermissionOverwriteDto {
     pub id: String,
-    /// Channel type.
+    #[serde(rename = "type")]
+    pub overwrite_type: u8,
+    #[serde(default)]
+    pub allow: String,
+    #[serde(default)]
+    pub deny: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ChannelResponse {
+    pub id: String,
     #[serde(rename = "type")]
     pub kind: u8,
-    /// Guild ID (if guild channel).
     #[allow(dead_code)]
     pub guild_id: Option<String>,
-    /// Channel name.
     pub name: Option<String>,
-    /// Owner ID (for threads).
     pub owner_id: Option<String>,
-    /// Parent category ID.
     pub parent_id: Option<String>,
-    /// Position in channel list.
     #[serde(default)]
     pub position: i32,
-    /// Channel topic.
     pub topic: Option<String>,
-    /// Last message ID.
     pub last_message_id: Option<String>,
-    /// Message count (for threads).
     #[serde(default)]
     pub message_count: Option<u32>,
-    /// Member count (for threads).
     #[serde(default)]
     pub member_count: Option<u32>,
-    /// Applied tags (for threads in forum channels).
     #[serde(default)]
     pub applied_tags: Vec<String>,
-    /// Thread metadata.
     pub thread_metadata: Option<ThreadMetadataDto>,
+    #[serde(default)]
+    pub nsfw: bool,
+    #[serde(default)]
+    pub bitrate: Option<u32>,
+    #[serde(default)]
+    pub user_limit: Option<u8>,
+    #[serde(default)]
+    pub rate_limit_per_user: Option<u16>,
+    #[serde(default)]
+    pub flags: Option<u64>,
+    #[serde(default)]
+    pub permission_overwrites: Vec<PermissionOverwriteDto>,
+    #[serde(default)]
+    pub rtc_region: Option<String>,
+    #[serde(default)]
+    pub video_quality_mode: Option<u8>,
+    #[serde(default)]
+    pub default_auto_archive_duration: Option<u16>,
+    #[serde(default)]
+    pub last_pin_timestamp: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +107,8 @@ pub struct ThreadMetadataDto {
     pub auto_archive_duration: i32,
     pub archive_timestamp: String,
     pub locked: bool,
+    #[serde(default)]
+    pub invitable: Option<bool>,
     pub create_timestamp: Option<String>,
 }
 
@@ -111,33 +127,24 @@ pub struct ReactionEmojiDto {
     pub name: Option<String>,
 }
 
-/// Discord API DM recipient structure.
 #[derive(Debug, Deserialize)]
 pub struct DmRecipient {
-    /// User ID.
     pub id: String,
-    /// Username.
     pub username: String,
-    /// Global display name.
     #[serde(default)]
     pub global_name: Option<String>,
 }
 
-/// Discord API DM channel response structure.
 #[derive(Debug, Deserialize)]
 pub struct DmChannelResponse {
-    /// Channel ID.
     pub id: String,
-    /// Channel type (DM = 1, Group DM = 3).
     #[serde(rename = "type")]
     #[allow(dead_code)]
     pub kind: u8,
-    /// List of recipients in this DM.
     #[serde(default)]
     pub recipients: Vec<DmRecipient>,
 }
 
-/// Discord API message author structure.
 #[derive(Debug, Deserialize)]
 pub struct MessageAuthorResponse {
     pub id: String,
@@ -147,10 +154,12 @@ pub struct MessageAuthorResponse {
     pub avatar: Option<String>,
     #[serde(default)]
     pub bot: bool,
+    #[serde(default)]
+    pub global_name: Option<String>,
 }
 
-/// Discord API attachment structure.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AttachmentResponse {
     pub id: String,
     pub filename: String,
@@ -158,6 +167,40 @@ pub struct AttachmentResponse {
     pub size: u64,
     pub url: String,
     pub content_type: Option<String>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub spoiler: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmbedAuthorDto {
+    pub name: Option<String>,
+    pub url: Option<String>,
+    pub icon_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmbedFooterDto {
+    pub text: String,
+    pub icon_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmbedFieldDto {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub inline: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmbedImageDto {
+    pub url: String,
+    pub height: Option<u64>,
+    pub width: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,24 +217,39 @@ pub struct EmbedThumbnailDto {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct EmbedVideoDto {
+    pub url: Option<String>,
+    pub height: Option<u64>,
+    pub width: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct EmbedDto {
     pub title: Option<String>,
     pub description: Option<String>,
     pub url: Option<String>,
     pub color: Option<u32>,
+    pub timestamp: Option<String>,
     pub provider: Option<EmbedProviderDto>,
     pub thumbnail: Option<EmbedThumbnailDto>,
+    pub author: Option<EmbedAuthorDto>,
+    pub footer: Option<EmbedFooterDto>,
+    pub image: Option<EmbedImageDto>,
+    pub video: Option<EmbedVideoDto>,
+    #[serde(default)]
+    pub fields: Vec<EmbedFieldDto>,
 }
 
-/// Discord API message reference structure.
 #[derive(Debug, Deserialize)]
+#[allow(clippy::struct_field_names)]
 pub struct MessageReferenceResponse {
     pub message_id: Option<String>,
     pub channel_id: Option<String>,
+    pub guild_id: Option<String>,
 }
 
-/// Discord API message response structure.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct MessageResponse {
     pub id: String,
     #[allow(dead_code)]
@@ -216,6 +274,10 @@ pub struct MessageResponse {
     #[allow(dead_code)]
     pub reactions: Vec<ReactionDto>,
     pub member: Option<MemberResponse>,
+    #[serde(default)]
+    pub flags: Option<u64>,
+    #[serde(default)]
+    pub tts: bool,
 }
 
 #[derive(Debug, Deserialize)]

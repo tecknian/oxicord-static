@@ -87,7 +87,7 @@ impl Widget for &MainScreen {
             ]),
             Line::from(vec![
                 Span::raw("User ID: "),
-                Span::styled(self.user.id(), Style::default().fg(Color::DarkGray)),
+                Span::styled(self.user.id_str(), Style::default().fg(Color::DarkGray)),
             ]),
             Line::from(""),
             Line::from(Span::styled(

@@ -15,8 +15,8 @@ use super::identity::ClientIdentity;
 use super::scraper;
 use crate::domain::entities::{
     Attachment, AuthToken, Channel, ChannelId, ChannelKind, Embed, EmbedProvider, EmbedThumbnail,
-    ForumThread, Guild, GuildId, Message, MessageAuthor, MessageKind, MessageReference, ReadState,
-    Reaction, ReactionEmoji, User,
+    ForumThread, Guild, GuildId, Message, MessageAuthor, ReadState,
+    User,
 };
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
@@ -113,7 +113,8 @@ impl DiscordClient {
 
                 let mut channel = Channel::new(id, name, kind)
                     .with_guild(guild_id)
-                    .with_position(c.position);
+                    .with_position(c.position)
+                    .with_nsfw(c.nsfw);
 
                 if let Some(last_message_id) = c.last_message_id
                     && let Ok(lmid) = last_message_id.parse::<u64>()
@@ -131,6 +132,34 @@ impl DiscordClient {
                     && !topic.is_empty()
                 {
                     channel = channel.with_topic(topic);
+                }
+
+                if let Some(bitrate) = c.bitrate {
+                    channel = channel.with_bitrate(bitrate);
+                }
+
+                if let Some(user_limit) = c.user_limit {
+                    channel = channel.with_user_limit(user_limit);
+                }
+
+                if let Some(rate_limit) = c.rate_limit_per_user {
+                    channel = channel.with_rate_limit_per_user(rate_limit);
+                }
+
+                if let Some(flags) = c.flags {
+                    channel = channel.with_flags(crate::domain::entities::ChannelFlags::from_bits_truncate(flags));
+                }
+
+                if let Some(rtc_region) = c.rtc_region {
+                    channel = channel.with_rtc_region(rtc_region);
+                }
+
+                if let Some(video_mode) = c.video_quality_mode {
+                    channel = channel.with_video_quality_mode(video_mode.into());
+                }
+
+                if let Some(auto_archive) = c.default_auto_archive_duration {
+                    channel = channel.with_default_auto_archive_duration(auto_archive);
                 }
 
                 Some(channel)
@@ -157,15 +186,49 @@ impl DiscordClient {
             description: embed.description,
             url: embed.url,
             color: embed.color,
+            timestamp: embed.timestamp,
             provider: embed.provider.map(|p| EmbedProvider {
                 name: p.name,
                 url: p.url,
             }),
             thumbnail: embed.thumbnail.map(|t| EmbedThumbnail {
                 url: t.url,
+                proxy_url: None, // DTO doesn't have proxy_url yet, effectively
                 height: t.height,
                 width: t.width,
             }),
+            author: embed.author.map(|a| crate::domain::entities::EmbedAuthor {
+                name: a.name.unwrap_or_default(),
+                url: a.url,
+                icon_url: a.icon_url,
+                proxy_icon_url: None,
+            }),
+            footer: embed.footer.map(|f| crate::domain::entities::EmbedFooter {
+                text: f.text,
+                icon_url: f.icon_url,
+                proxy_icon_url: None,
+            }),
+            image: embed.image.map(|i| crate::domain::entities::EmbedImage {
+                url: i.url,
+                proxy_url: None,
+                height: i.height,
+                width: i.width,
+            }),
+            video: embed.video.map(|v| crate::domain::entities::EmbedVideo {
+                url: v.url,
+                proxy_url: None,
+                height: v.height,
+                width: v.width,
+            }),
+            fields: embed
+                .fields
+                .into_iter()
+                .map(|f| crate::domain::entities::EmbedField {
+                    name: f.name,
+                    value: f.value,
+                    inline: f.inline,
+                })
+                .collect(),
         }
     }
 
@@ -183,38 +246,53 @@ impl DiscordClient {
             referenced_message,
             pinned,
             mentions,
-            member,
+            member: _,
             reactions,
+            flags,
             ..
         } = response;
 
         let id: u64 = id.parse().ok()?;
-        let message_author = MessageAuthor::new(
-            author.id,
-            author.username,
-            author.discriminator,
-            author.avatar,
-            author.bot,
-            member.and_then(|m| m.color),
-        );
+        let message_author = MessageAuthor {
+            id: author.id,
+            username: author.username,
+            discriminator: author.discriminator,
+            avatar: author.avatar,
+            bot: author.bot,
+            global_name: author.global_name,
+        };
 
         let timestamp: DateTime<Utc> = timestamp.parse().ok()?;
 
         let mut message = Message::new(
-            id,
-            channel_id,
+            id.into(),
+            channel_id.into(),
             message_author,
             content,
-            timestamp.with_timezone(&Local),
+            timestamp.into(),
+            kind.into(),
         )
-        .with_kind(MessageKind::from(kind))
         .with_pinned(pinned);
 
+        if let Some(r) = message_reference {
+             let mr = crate::domain::entities::MessageReference {
+                 message_id: r.message_id.and_then(|id| id.parse::<u64>().ok().map(Into::into)),
+                 channel_id: r.channel_id.and_then(|id| id.parse::<u64>().ok().map(Into::into)),
+                 guild_id: r.guild_id.and_then(|id| id.parse::<u64>().ok()),
+             };
+             message = message.with_reference(mr);
+        }
+
+        if let Some(ref_msg) = referenced_message {
+             // referenced_message is Box<MessageResponse>
+             let ref_cid = ref_msg.channel_id.parse().unwrap_or(channel_id);
+             if let Some(parsed_ref) = Self::parse_message_response(*ref_msg, ref_cid) {
+                 message = message.with_referenced_message(Some(parsed_ref));
+             }
+        }
+
         if !attachments.is_empty() {
-            let attachments = attachments
-                .into_iter()
-                .map(Self::parse_attachment)
-                .collect();
+            let attachments = attachments.into_iter().map(Self::parse_attachment).collect();
             message = message.with_attachments(attachments);
         }
 
@@ -224,35 +302,36 @@ impl DiscordClient {
         }
 
         if !mentions.is_empty() {
-            let mentions: Vec<User> = mentions
-                .into_iter()
-                .map(|m| {
-                    User::new(
-                        m.id,
-                        m.username,
-                        m.discriminator,
-                        m.avatar,
-                        m.bot,
-                        m.member.and_then(|mem| mem.color),
-                    )
-                })
-                .collect();
+             let mentions = mentions.into_iter().map(|m| {
+                 crate::domain::entities::User::new(
+                    m.id,
+                    m.username,
+                    m.discriminator,
+                    m.avatar,
+                    m.bot,
+                    m.member.and_then(|mb| mb.color),
+                 )
+            }).collect();
             message = message.with_mentions(mentions);
         }
 
         if !reactions.is_empty() {
-            let reactions = reactions
-                .into_iter()
-                .map(|r| Reaction {
-                    count: r.count,
-                    me: r.me,
-                    emoji: ReactionEmoji {
-                        id: r.emoji.id,
-                        name: r.emoji.name,
-                    },
-                })
-                .collect();
+             let reactions = reactions.into_iter().map(|r| {
+                 crate::domain::entities::Reaction {
+                     count: r.count,
+                     me: r.me,
+                     emoji: crate::domain::entities::ReactionEmoji {
+                         id: r.emoji.id,
+                         name: r.emoji.name,
+                     }
+                 }
+            }).collect();
             message = message.with_reactions(reactions);
+        }
+
+        if let Some(f) = flags 
+            && let Some(message_flags) = crate::domain::entities::MessageFlags::from_bits(f) {
+                message = message.with_flags(message_flags);
         }
 
         if let Some(edited) = edited_timestamp
@@ -261,20 +340,7 @@ impl DiscordClient {
             message = message.with_edited_timestamp(edited_ts.with_timezone(&Local));
         }
 
-        if let Some(reference) = message_reference {
-            let ref_msg_id = reference.message_id.and_then(|id| id.parse::<u64>().ok());
-            let ref_channel_id = reference.channel_id.and_then(|id| id.parse::<u64>().ok());
-            message = message.with_reference(MessageReference::new(
-                ref_msg_id.map(Into::into),
-                ref_channel_id.map(Into::into),
-            ));
-        }
 
-        if let Some(referenced) = referenced_message
-            && let Some(ref_message) = Self::parse_message_response(*referenced, channel_id)
-        {
-            message = message.with_referenced(ref_message);
-        }
 
         Some(message)
     }
@@ -814,7 +880,7 @@ impl DiscordDataPort for DiscordClient {
         offset: u32,
         limit: Option<u8>,
     ) -> Result<Vec<ForumThread>, AuthError> {
-        let effective_limit = limit.unwrap_or(25).min(100);
+        let effective_limit = limit.unwrap_or(25).min(25);
 
         let url = format!(
             "{}/channels/{}/threads/search?archived=false&sort_by=last_message_time&sort_order=desc&limit={}&tag_setting=match_some&offset={}",

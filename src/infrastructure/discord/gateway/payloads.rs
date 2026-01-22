@@ -230,6 +230,7 @@ pub struct ReadyGuild {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct MessagePayload {
     pub id: String,
     pub channel_id: String,
@@ -393,6 +394,7 @@ pub struct ChannelPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GuildCreatePayload {
     pub id: String,
     pub name: String,
@@ -400,6 +402,8 @@ pub struct GuildCreatePayload {
     pub unavailable: bool,
     #[serde(default)]
     pub channels: Vec<ChannelPayload>,
+    #[serde(default)]
+    pub threads: Vec<ChannelPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -416,6 +420,32 @@ pub struct UserUpdatePayload {
     #[serde(default)]
     pub discriminator: String,
     pub avatar: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct VoiceStateUpdatePayload {
+    pub guild_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub user_id: String,
+    pub member: Option<MemberPayload>,
+    pub session_id: String,
+    pub deaf: bool,
+    pub mute: bool,
+    pub self_deaf: bool,
+    pub self_mute: bool,
+    pub self_video: bool,
+    pub suppress: bool,
+    pub request_to_speak_timestamp: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct VoiceServerUpdatePayload {
+    pub token: String,
+    pub guild_id: String,
+    pub endpoint: Option<String>,
 }
 
 #[cfg(test)]

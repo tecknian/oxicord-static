@@ -164,6 +164,24 @@ pub enum DispatchEvent {
         avatar: Option<String>,
     },
 
+    VoiceStateUpdate {
+        guild_id: Option<GuildId>,
+        channel_id: Option<ChannelId>,
+        user_id: String,
+        session_id: String,
+        deaf: bool,
+        mute: bool,
+        self_deaf: bool,
+        self_mute: bool,
+        self_video: bool,
+        suppress: bool,
+    },
+    VoiceServerUpdate {
+        token: String,
+        guild_id: GuildId,
+        endpoint: Option<String>,
+    },
+
     Unknown {
         event_type: String,
     },
@@ -190,6 +208,8 @@ impl DispatchEvent {
             Self::GuildUpdate { .. } => "GUILD_UPDATE",
             Self::GuildDelete { .. } => "GUILD_DELETE",
             Self::UserUpdate { .. } => "USER_UPDATE",
+            Self::VoiceStateUpdate { .. } => "VOICE_STATE_UPDATE",
+            Self::VoiceServerUpdate { .. } => "VOICE_SERVER_UPDATE",
             Self::Unknown { .. } => "UNKNOWN",
         }
     }
@@ -208,7 +228,8 @@ impl DispatchEvent {
             | Self::TypingStart { channel_id, .. }
             | Self::ChannelCreate { channel_id, .. }
             | Self::ChannelUpdate { channel_id, .. }
-            | Self::ChannelDelete { channel_id, .. } => Some(*channel_id),
+            | Self::ChannelDelete { channel_id, .. } 
+            | Self::VoiceStateUpdate { channel_id: Some(channel_id), .. } => Some(*channel_id),
             _ => None,
         }
     }
@@ -225,10 +246,12 @@ impl DispatchEvent {
             | Self::PresenceUpdate { guild_id, .. }
             | Self::ChannelCreate { guild_id, .. }
             | Self::ChannelUpdate { guild_id, .. }
-            | Self::ChannelDelete { guild_id, .. } => *guild_id,
+            | Self::ChannelDelete { guild_id, .. }
+            | Self::VoiceStateUpdate { guild_id, .. } => *guild_id,
             Self::GuildCreate { guild_id, .. }
             | Self::GuildUpdate { guild_id, .. }
-            | Self::GuildDelete { guild_id, .. } => Some(*guild_id),
+            | Self::GuildDelete { guild_id, .. }
+            | Self::VoiceServerUpdate { guild_id, .. } => Some(*guild_id),
             _ => None,
         }
     }

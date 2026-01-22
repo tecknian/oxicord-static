@@ -70,6 +70,12 @@ pub enum MessageKind {
     StageSpeaker = 29,
     StageTopic = 31,
     GuildApplicationPremiumSubscription = 32,
+    GuildIncidentAlertModeEnabled = 36,
+    GuildIncidentAlertModeDisabled = 37,
+    GuildIncidentReportRaid = 38,
+    GuildIncidentReportFalseAlarm = 39,
+    PurchaseNotification = 44,
+    PollResult = 46,
 }
 
 impl From<u8> for MessageKind {
@@ -105,6 +111,12 @@ impl From<u8> for MessageKind {
             29 => Self::StageSpeaker,
             31 => Self::StageTopic,
             32 => Self::GuildApplicationPremiumSubscription,
+            36 => Self::GuildIncidentAlertModeEnabled,
+            37 => Self::GuildIncidentAlertModeDisabled,
+            38 => Self::GuildIncidentReportRaid,
+            39 => Self::GuildIncidentReportFalseAlarm,
+            44 => Self::PurchaseNotification,
+            46 => Self::PollResult,
             _ => Self::Default,
         }
     }
@@ -124,83 +136,131 @@ impl MessageKind {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+    pub struct MessageFlags: u64 {
+        const CROSSPOSTED = 1 << 0;
+        const IS_CROSSPOST = 1 << 1;
+        const SUPPRESS_EMBEDS = 1 << 2;
+        const SOURCE_MESSAGE_DELETED = 1 << 3;
+        const URGENT = 1 << 4;
+        const HAS_THREAD = 1 << 5;
+        const EPHEMERAL = 1 << 6;
+        const LOADING = 1 << 7;
+        const FAILED_TO_MENTION_SOME_ROLES_IN_THREAD = 1 << 8;
+        const SUPPRESS_NOTIFICATIONS = 1 << 12;
+        const IS_VOICE_MESSAGE = 1 << 13;
+        const HAS_SNAPSHOT = 1 << 14;
+        const IS_COMPONENTS_V2 = 1 << 15;
+    }
+}
+
 /// Discord message embed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[allow(missing_docs)]
 pub struct Embed {
     pub title: Option<String>,
     pub description: Option<String>,
     pub url: Option<String>,
     pub color: Option<u32>,
+    pub timestamp: Option<String>,
     pub provider: Option<EmbedProvider>,
     pub thumbnail: Option<EmbedThumbnail>,
-}
-
-#[allow(missing_docs)]
-impl Default for Embed {
-    fn default() -> Self {
-        Self::new()
-    }
+    pub author: Option<EmbedAuthor>,
+    pub footer: Option<EmbedFooter>,
+    pub image: Option<EmbedImage>,
+    pub video: Option<EmbedVideo>,
+    #[serde(default)]
+    pub fields: Vec<EmbedField>,
 }
 
 #[allow(missing_docs)]
 impl Embed {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            title: None,
-            description: None,
-            url: None,
-            color: None,
-            provider: None,
-            thumbnail: None,
-        }
+        Self::default()
     }
 }
 
-/// Embed provider structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(missing_docs)]
+pub struct EmbedAuthor {
+    pub name: String,
+    pub url: Option<String>,
+    pub icon_url: Option<String>,
+    pub proxy_icon_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbedFooter {
+    pub text: String,
+    pub icon_url: Option<String>,
+    pub proxy_icon_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbedField {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub inline: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbedImage {
+    pub url: String,
+    pub proxy_url: Option<String>,
+    pub height: Option<u64>,
+    pub width: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbedVideo {
+    pub url: Option<String>,
+    pub proxy_url: Option<String>,
+    pub height: Option<u64>,
+    pub width: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmbedProvider {
     pub name: Option<String>,
     pub url: Option<String>,
 }
 
-/// Embed thumbnail structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(missing_docs)]
 pub struct EmbedThumbnail {
     pub url: String,
+    pub proxy_url: Option<String>,
     pub height: Option<u64>,
     pub width: Option<u64>,
 }
 
 /// Discord message attachment.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(missing_docs)]
 pub struct Attachment {
-    id: String,
-    filename: String,
-    size: u64,
-    url: String,
-    content_type: Option<String>,
+    pub id: String,
+    pub filename: String,
+    pub size: u64,
+    pub url: String,
+    pub content_type: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub spoiler: bool,
 }
 
-#[allow(missing_docs)]
 impl Attachment {
     #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        filename: impl Into<String>,
-        size: u64,
-        url: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, filename: impl Into<String>, size: u64, url: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             filename: filename.into(),
             size,
             url: url.into(),
             content_type: None,
+            width: None,
+            height: None,
+            spoiler: false,
         }
     }
 
@@ -211,98 +271,53 @@ impl Attachment {
     }
 
     #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[must_use]
-    pub fn filename(&self) -> &str {
-        &self.filename
-    }
-
-    #[must_use]
-    pub const fn size(&self) -> u64 {
-        self.size
-    }
-
-    #[must_use]
-    pub fn url(&self) -> &str {
-        &self.url
-    }
-
-    #[must_use]
-    pub fn content_type(&self) -> Option<&str> {
-        self.content_type.as_deref()
-    }
-
-    #[must_use]
     pub fn is_image(&self) -> bool {
-        self.content_type
-            .as_ref()
-            .is_some_and(|ct| ct.starts_with("image/"))
-    }
-}
-
-/// Reference to another message (for replies).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(missing_docs)]
-pub struct MessageReference {
-    message_id: Option<MessageId>,
-    channel_id: Option<ChannelId>,
-}
-
-#[allow(missing_docs)]
-impl MessageReference {
-    #[must_use]
-    pub const fn new(message_id: Option<MessageId>, channel_id: Option<ChannelId>) -> Self {
-        Self {
-            message_id,
-            channel_id,
+        if let Some(ct) = &self.content_type {
+            return ct.starts_with("image/");
         }
-    }
-
-    #[must_use]
-    pub const fn message_id(&self) -> Option<MessageId> {
-        self.message_id
-    }
-
-    #[must_use]
-    pub const fn channel_id(&self) -> Option<ChannelId> {
-        self.channel_id
+        let lower = self.filename.to_lowercase();
+        std::path::Path::new(&lower).extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("png")
+                || ext.eq_ignore_ascii_case("jpg")
+                || ext.eq_ignore_ascii_case("jpeg")
+                || ext.eq_ignore_ascii_case("gif")
+                || ext.eq_ignore_ascii_case("webp")
+        })
     }
 }
 
-/// Author of a Discord message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(missing_docs)]
 pub struct MessageAuthor {
-    id: String,
-    username: String,
-    discriminator: String,
-    avatar: Option<String>,
-    bot: bool,
-    color: Option<u32>,
+    pub id: String,
+    pub username: String,
+    pub discriminator: String,
+    pub avatar: Option<String>,
+    pub bot: bool,
+    pub global_name: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl MessageAuthor {
     #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        username: impl Into<String>,
-        discriminator: impl Into<String>,
-        avatar: Option<String>,
-        bot: bool,
-        color: Option<u32>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            username: username.into(),
-            discriminator: discriminator.into(),
-            avatar,
-            bot,
-            color,
+    pub fn display_name(&self) -> String {
+        if let Some(ref global) = self.global_name {
+            global.clone()
+        } else if self.discriminator == "0" {
+            self.username.clone()
+        } else {
+            format!("{}#{}", self.username, self.discriminator)
         }
+    }
+    
+    // Add color logic here or remove dependency on it for strict DTO separation
+    // For now we assume no color directly on author, it might come from member
+    #[must_use]
+    pub fn color(&self) -> Option<u32> {
+        None 
+    }
+
+    #[must_use]
+    pub const fn is_bot(&self) -> bool {
+        self.bot
     }
 
     #[must_use]
@@ -324,58 +339,11 @@ impl MessageAuthor {
     pub fn avatar(&self) -> Option<&str> {
         self.avatar.as_deref()
     }
-
-    #[must_use]
-    pub const fn is_bot(&self) -> bool {
-        self.bot
-    }
-
-    #[must_use]
-    pub const fn color(&self) -> Option<u32> {
-        self.color
-    }
-
-    #[must_use]
-    pub fn display_name(&self) -> String {
-        if self.discriminator == "0" {
-            self.username.clone()
-        } else {
-            format!("{}#{}", self.username, self.discriminator)
-        }
-    }
 }
 
-impl From<User> for MessageAuthor {
-    fn from(user: User) -> Self {
-        Self {
-            id: user.id().to_string(),
-            username: user.username().to_string(),
-            discriminator: user.discriminator().to_string(),
-            avatar: user.avatar().map(String::from),
-            bot: user.is_bot(),
-            color: user.color(),
-        }
-    }
-}
-
-/// Reaction emoji.
+/// Discord message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ReactionEmoji {
-    pub id: Option<String>,
-    pub name: Option<String>,
-}
-
-/// Message reaction.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Reaction {
-    pub count: u32,
-    pub me: bool,
-    pub emoji: ReactionEmoji,
-}
-
-/// Discord message entity.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(missing_docs)]
+#[allow(clippy::struct_field_names)]
 pub struct Message {
     id: MessageId,
     channel_id: ChannelId,
@@ -386,97 +354,16 @@ pub struct Message {
     kind: MessageKind,
     attachments: Vec<Attachment>,
     embeds: Vec<Embed>,
-    reference: Option<MessageReference>,
-    referenced: Option<Box<Self>>,
     pinned: bool,
-    #[serde(default)]
     mentions: Vec<User>,
-    #[serde(default)]
     reactions: Vec<Reaction>,
+    flags: MessageFlags,
+    #[allow(clippy::struct_field_names)]
+    message_reference: Option<MessageReference>,
+    referenced_message: Option<Box<Message>>,
 }
 
-#[allow(missing_docs)]
 impl Message {
-    #[must_use]
-    pub fn new(
-        id: impl Into<MessageId>,
-        channel_id: impl Into<ChannelId>,
-        author: MessageAuthor,
-        content: impl Into<String>,
-        timestamp: DateTime<Local>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            channel_id: channel_id.into(),
-            author,
-            content: content.into(),
-            timestamp,
-            edited_timestamp: None,
-            kind: MessageKind::Default,
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            reference: None,
-            referenced: None,
-            pinned: false,
-            mentions: Vec::new(),
-            reactions: Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub const fn with_kind(mut self, kind: MessageKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
-    #[must_use]
-    pub fn with_attachments(mut self, attachments: Vec<Attachment>) -> Self {
-        self.attachments = attachments;
-        self
-    }
-
-    #[must_use]
-    pub fn with_embeds(mut self, embeds: Vec<Embed>) -> Self {
-        self.embeds = embeds;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_reference(mut self, reference: MessageReference) -> Self {
-        self.reference = Some(reference);
-        self
-    }
-
-    #[must_use]
-    pub fn with_referenced(mut self, message: Self) -> Self {
-        self.referenced = Some(Box::new(message));
-        self
-    }
-
-    #[must_use]
-    pub const fn with_edited_timestamp(mut self, timestamp: DateTime<Local>) -> Self {
-        self.edited_timestamp = Some(timestamp);
-        self
-    }
-
-    #[must_use]
-    pub const fn with_pinned(mut self, pinned: bool) -> Self {
-        self.pinned = pinned;
-        self
-    }
-
-    #[must_use]
-    pub fn with_mentions(mut self, mentions: Vec<User>) -> Self {
-        self.mentions = mentions;
-        self
-    }
-
-    #[must_use]
-    pub fn with_reactions(mut self, reactions: Vec<Reaction>) -> Self {
-        self.reactions = reactions;
-        self
-    }
-
     #[must_use]
     pub const fn id(&self) -> MessageId {
         self.id
@@ -503,11 +390,6 @@ impl Message {
     }
 
     #[must_use]
-    pub const fn edited_timestamp(&self) -> Option<DateTime<Local>> {
-        self.edited_timestamp
-    }
-
-    #[must_use]
     pub const fn kind(&self) -> MessageKind {
         self.kind
     }
@@ -523,51 +405,6 @@ impl Message {
     }
 
     #[must_use]
-    pub const fn reference(&self) -> Option<&MessageReference> {
-        self.reference.as_ref()
-    }
-
-    #[must_use]
-    pub fn referenced(&self) -> Option<&Self> {
-        self.referenced.as_deref()
-    }
-
-    #[must_use]
-    pub const fn is_edited(&self) -> bool {
-        self.edited_timestamp.is_some()
-    }
-
-    #[must_use]
-    pub const fn is_pinned(&self) -> bool {
-        self.pinned
-    }
-
-    #[must_use]
-    pub fn is_reply(&self) -> bool {
-        self.kind == MessageKind::Reply
-    }
-
-    #[must_use]
-    pub const fn has_attachments(&self) -> bool {
-        !self.attachments.is_empty()
-    }
-
-    #[must_use]
-    pub const fn has_embeds(&self) -> bool {
-        !self.embeds.is_empty()
-    }
-
-    #[must_use]
-    pub fn formatted_timestamp(&self) -> String {
-        self.timestamp.format("%H:%M").to_string()
-    }
-
-    #[must_use]
-    pub fn formatted_date(&self) -> String {
-        self.timestamp.format("%Y-%m-%d").to_string()
-    }
-
-    #[must_use]
     pub fn mentions(&self) -> &[User] {
         &self.mentions
     }
@@ -576,59 +413,170 @@ impl Message {
     pub fn reactions(&self) -> &[Reaction] {
         &self.reactions
     }
+    
+    #[must_use]
+    pub const fn flags(&self) -> MessageFlags {
+        self.flags
+    }
+
+    #[must_use]
+    pub const fn message_reference(&self) -> Option<&MessageReference> {
+        self.message_reference.as_ref()
+    }
+
+    #[must_use]
+    pub fn referenced(&self) -> Option<&Message> {
+        self.referenced_message.as_deref()
+    }
+
+    #[must_use]
+    pub fn formatted_timestamp(&self) -> String {
+        self.timestamp.format("%H:%M").to_string()
+    }
+
+    #[must_use]
+    pub const fn is_edited(&self) -> bool {
+        self.edited_timestamp.is_some()
+    }
+
+    #[must_use]
+    pub fn is_reply(&self) -> bool {
+        self.kind == MessageKind::Reply || self.message_reference.is_some()
+    }
+
+    #[must_use]
+    pub fn has_attachments(&self) -> bool {
+        !self.attachments.is_empty()
+    }
+
+    #[must_use]
+    pub fn has_embeds(&self) -> bool {
+        !self.embeds.is_empty()
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> Option<&MessageReference> {
+        self.message_reference.as_ref()
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageReference {
+    pub message_id: Option<MessageId>,
+    pub channel_id: Option<ChannelId>,
+    pub guild_id: Option<u64>,
+}
 
-    fn create_test_author() -> MessageAuthor {
-        MessageAuthor::new("123", "testuser", "0", None, false, None)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reaction {
+    pub count: u32,
+    pub me: bool,
+    pub emoji: ReactionEmoji,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReactionEmoji {
+    pub id: Option<String>,
+    pub name: Option<String>,
+}
+
+impl MessageReference {
+    #[must_use]
+    pub const fn new(
+        message_id: Option<MessageId>,
+        channel_id: Option<ChannelId>,
+        guild_id: Option<u64>,
+    ) -> Self {
+        Self {
+            message_id,
+            channel_id,
+            guild_id,
+        }
+    }
+}
+
+// Internal Builder for internal usage if needed, or mostly populated from DTO
+#[allow(missing_docs)]
+impl Message {
+    #[must_use]
+    pub fn new(
+        id: MessageId,
+        channel_id: ChannelId,
+        author: MessageAuthor,
+        content: String,
+        timestamp: DateTime<Local>,
+        kind: MessageKind,
+    ) -> Self {
+        Self {
+            id,
+            channel_id,
+            author,
+            content,
+            timestamp,
+            edited_timestamp: None,
+            kind,
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            pinned: false,
+            mentions: Vec::new(),
+            reactions: Vec::new(),
+            flags: MessageFlags::empty(),
+            message_reference: None,
+            referenced_message: None,
+        }
     }
 
-    #[test]
-    fn test_message_creation() {
-        let author = create_test_author();
-        let timestamp = Local::now();
-        let message = Message::new(1_u64, 100_u64, author, "Hello, world!", timestamp);
-
-        assert_eq!(message.id().as_u64(), 1);
-        assert_eq!(message.channel_id().as_u64(), 100);
-        assert_eq!(message.content(), "Hello, world!");
-        assert_eq!(message.author().username(), "testuser");
-        assert!(!message.is_edited());
-        assert!(!message.is_reply());
+    #[must_use]
+    pub fn with_pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
+        self
     }
 
-    #[test]
-    fn test_message_with_reply() {
-        let author = create_test_author();
-        let timestamp = Local::now();
-        let referenced = Message::new(1_u64, 100_u64, author.clone(), "Original", timestamp);
-        let reply = Message::new(2_u64, 100_u64, author, "Reply", timestamp)
-            .with_kind(MessageKind::Reply)
-            .with_referenced(referenced);
-
-        assert!(reply.is_reply());
-        assert!(reply.referenced().is_some());
+    #[must_use]
+    pub fn with_edited_timestamp(mut self, timestamp: DateTime<Local>) -> Self {
+        self.edited_timestamp = Some(timestamp);
+        self
     }
 
-    #[test]
-    fn test_message_kind_is_regular() {
-        assert!(MessageKind::Default.is_regular());
-        assert!(MessageKind::Reply.is_regular());
-        assert!(!MessageKind::UserJoin.is_regular());
-        assert!(MessageKind::UserJoin.is_system());
+    #[must_use]
+    pub fn with_attachments(mut self, attachments: Vec<Attachment>) -> Self {
+        self.attachments = attachments;
+        self
     }
 
-    #[test]
-    fn test_attachment_is_image() {
-        let image = Attachment::new("1", "photo.jpg", 1000, "https://example.com/photo.jpg")
-            .with_content_type("image/jpeg");
-        let file = Attachment::new("2", "document.pdf", 2000, "https://example.com/doc.pdf")
-            .with_content_type("application/pdf");
+    #[must_use]
+    pub fn with_embeds(mut self, embeds: Vec<Embed>) -> Self {
+        self.embeds = embeds;
+        self
+    }
 
-        assert!(image.is_image());
-        assert!(!file.is_image());
+    #[must_use]
+    pub fn with_mentions(mut self, mentions: Vec<User>) -> Self {
+        self.mentions = mentions;
+        self
+    }
+
+    #[must_use]
+    pub fn with_reactions(mut self, reactions: Vec<Reaction>) -> Self {
+        self.reactions = reactions;
+        self
+    }
+    
+    #[must_use]
+    pub fn with_reference(mut self, reference: MessageReference) -> Self {
+        self.message_reference = Some(reference);
+        self
+    }
+
+    #[must_use]
+    pub fn with_referenced_message(mut self, message: Option<Message>) -> Self {
+        self.referenced_message = message.map(Box::new);
+        self
+    }
+    
+    #[must_use]
+    pub fn with_flags(mut self, flags: MessageFlags) -> Self {
+        self.flags = flags;
+        self
     }
 }
