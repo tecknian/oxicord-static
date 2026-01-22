@@ -334,10 +334,17 @@ impl ImageLoaderHandle {
             .map_err(|e| format!("Failed to read body: {e}"))?;
 
         let bytes_clone = bytes.to_vec();
-        let decoded = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes_clone))
+        let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
+            let img = image::load_from_memory(&bytes_clone).map_err(|e| format!("Decode failed: {e}"))?;
+
+            if img.width() > 800 {
+                Ok(img.resize(800, 600, image::imageops::FilterType::Lanczos3))
+            } else {
+                Ok(img)
+            }
+        })
             .await
-            .map_err(|e| format!("Decode task panicked: {e}"))?
-            .map_err(|e| format!("Decode failed: {e}"))?;
+            .map_err(|e| format!("Decode task panicked: {e}"))??;
 
         let img = Arc::new(decoded);
 

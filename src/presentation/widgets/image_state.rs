@@ -1,17 +1,15 @@
 //! Image attachment state for message rendering.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::Resize;
 
 use crate::domain::entities::{ImageId, ImageStatus};
 
 pub const MAX_IMAGE_HEIGHT: u16 = 20;
-const MAX_IMAGE_WIDTH: u32 = 800;
 pub const LOAD_BUFFER: usize = 5;
 
 pub struct ImageAttachment {
@@ -19,13 +17,7 @@ pub struct ImageAttachment {
     pub url: String,
     pub image: Option<Arc<image::DynamicImage>>,
     pub protocol: Option<StatefulProtocol>,
-    pub last_width: u16,
     pub status: ImageStatus,
-    rendered_height: u16,
-    rendered_width: u16,
-    pub last_area: Option<Rect>,
-    pub last_hash: u64,
-    protocol_version: u64,
 }
 
 impl ImageAttachment {
@@ -36,13 +28,7 @@ impl ImageAttachment {
             url,
             image: None,
             protocol: None,
-            last_width: 0,
             status: ImageStatus::NotStarted,
-            rendered_height: 0,
-            rendered_width: 0,
-            last_area: None,
-            last_hash: 0,
-            protocol_version: 0,
         }
     }
 
@@ -60,9 +46,6 @@ impl ImageAttachment {
         self.image = Some(image);
         self.status = ImageStatus::Ready;
         self.protocol = None;
-        self.last_width = 0;
-        self.rendered_height = 0;
-        self.rendered_width = 0;
     }
 
     pub fn set_downloading(&mut self) {
@@ -88,109 +71,38 @@ impl ImageAttachment {
         self.status.is_not_started()
     }
 
-    pub fn update_state_and_check_redraw(&mut self, new_area: Rect) -> bool {
-        let mut hasher = DefaultHasher::new();
-        self.id.hash(&mut hasher);
-
-        if let Some(img) = &self.image {
-            img.width().hash(&mut hasher);
-            img.height().hash(&mut hasher);
-            img.as_bytes().len().hash(&mut hasher);
-        }
-        self.protocol_version.hash(&mut hasher);
-
-        let current_hash = hasher.finish();
-
-        if self.last_area == Some(new_area) && self.last_hash == current_hash {
-            return false;
+    pub fn update_protocol_if_needed(&mut self, picker: &Picker) {
+        if self.protocol.is_some() {
+            return;
         }
 
-        self.last_area = Some(new_area);
-        self.last_hash = current_hash;
-        true
-    }
-
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
-    pub fn update_protocol_if_needed(&mut self, picker: &Picker, terminal_width: u16) -> bool {
-        let needs_update =
-            self.image.is_some() && (self.protocol.is_none() || self.last_width != terminal_width);
-
-        if !needs_update {
-            return false;
+        if let Some(ref image) = self.image {
+            self.protocol = Some(picker.new_resize_protocol((**image).clone()));
         }
-
-        let Some(ref image) = self.image else {
-            return false;
-        };
-
-        let (font_width, font_height) = picker.font_size();
-
-        if font_width == 0 || font_height == 0 {
-            return false;
-        }
-
-        let max_height_pixels = u32::from(MAX_IMAGE_HEIGHT) * u32::from(font_height);
-        let available_width = terminal_width.saturating_sub(10);
-        let max_width_pixels = u32::from(available_width) * u32::from(font_width);
-
-        let (width, height) = (image.width(), image.height());
-
-        let scale_w = f64::from(max_width_pixels.min(MAX_IMAGE_WIDTH)) / f64::from(width);
-        let scale_h = f64::from(max_height_pixels) / f64::from(height);
-        let scale = scale_w.min(scale_h).min(1.0);
-
-        let (final_width, final_height) = if scale < 1.0 {
-            let new_width = (f64::from(width) * scale) as u32;
-            let new_height = (f64::from(height) * scale) as u32;
-            (new_width.max(1), new_height.max(1))
-        } else {
-            (width, height)
-        };
-
-        let filter = if picker.protocol_type() == ProtocolType::Sixel {
-            image::imageops::FilterType::Nearest
-        } else {
-            image::imageops::FilterType::Triangle
-        };
-
-        let resized_image = if scale < 1.0 {
-            image.resize(final_width, final_height, filter)
-        } else {
-            (**image).clone()
-        };
-
-        self.rendered_height = (final_height as f32 / f32::from(font_height)).ceil() as u16;
-        self.rendered_width = (final_width as f32 / f32::from(font_width)).ceil() as u16;
-        self.protocol = Some(picker.new_resize_protocol(resized_image));
-        self.last_width = terminal_width;
-        self.protocol_version = self.protocol_version.wrapping_add(1);
-
-        true
     }
 
     pub fn clear_protocol(&mut self) {
         self.protocol = None;
-        self.last_width = 0;
     }
 
     #[must_use]
-    pub const fn height(&self) -> u16 {
-        if self.rendered_height > 0 {
-            self.rendered_height
+    pub fn height(&self, width: u16) -> u16 {
+        if let Some(protocol) = &self.protocol {
+            let area = Rect::new(0, 0, width, MAX_IMAGE_HEIGHT);
+            return protocol.size_for(Resize::Fit(None), area).height;
         } else if self.image.is_some() || self.status.is_loading() {
-            MAX_IMAGE_HEIGHT
-        } else {
-            0
+            return 3;
         }
+        0
     }
 
     #[must_use]
-    pub const fn width(&self) -> u16 {
-        self.rendered_width
+    pub fn width(&self, width: u16) -> u16 {
+        if let Some(protocol) = &self.protocol {
+            let area = Rect::new(0, 0, width, MAX_IMAGE_HEIGHT);
+            return protocol.size_for(Resize::Fit(None), area).width;
+        }
+        0
     }
 }
 
@@ -201,17 +113,13 @@ impl std::fmt::Debug for ImageAttachment {
             .field("url", &self.url)
             .field("has_image", &self.image.is_some())
             .field("has_protocol", &self.protocol.is_some())
-            .field("last_width", &self.last_width)
             .field("status", &self.status)
-            .field("rendered_height", &self.rendered_height)
-            .field("rendered_width", &self.rendered_width)
             .finish_non_exhaustive()
     }
 }
 
 pub struct ImageManager {
     picker: Picker,
-    current_width: u16,
 }
 
 impl ImageManager {
@@ -231,18 +139,13 @@ impl ImageManager {
             picker.set_protocol_type(ProtocolType::Sixel);
         }
 
-        Self {
-            picker,
-            current_width: 0,
-        }
+        Self { picker }
     }
 
     #[must_use]
     pub fn halfblocks() -> Self {
-        let picker = Picker::halfblocks();
         Self {
-            picker,
-            current_width: 0,
+            picker: Picker::halfblocks(),
         }
     }
 
@@ -262,18 +165,16 @@ impl ImageManager {
         &self.picker
     }
 
-    pub const fn set_width(&mut self, width: u16) {
-        self.current_width = width;
-    }
+    pub const fn set_width(&mut self, _width: u16) {}
 
     #[must_use]
     pub const fn width(&self) -> u16 {
-        self.current_width
+        0
     }
 
-    pub fn update_visible_protocols(&self, attachments: &mut [&mut ImageAttachment], width: u16) {
+    pub fn update_visible_protocols(&self, attachments: &mut [&mut ImageAttachment]) {
         for attachment in attachments {
-            attachment.update_protocol_if_needed(&self.picker, width);
+            attachment.update_protocol_if_needed(&self.picker);
         }
     }
 
@@ -286,9 +187,22 @@ impl ImageManager {
         let buffer_start = visible_start.saturating_sub(LOAD_BUFFER);
         let buffer_end = visible_end + LOAD_BUFFER;
 
+        let memory_buffer = LOAD_BUFFER * 3;
+        let memory_start = visible_start.saturating_sub(memory_buffer);
+        let memory_end = visible_end + memory_buffer;
+
         for (idx, attachment) in attachments.iter_mut().enumerate() {
             if idx < buffer_start || idx > buffer_end {
                 attachment.clear_protocol();
+            }
+
+            if idx < memory_start || idx > memory_end {
+                if attachment.image.is_some() {
+                    attachment.image = None;
+                    if matches!(attachment.status, ImageStatus::Ready) {
+                        attachment.status = ImageStatus::NotStarted;
+                    }
+                }
             }
         }
     }

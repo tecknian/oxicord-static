@@ -32,6 +32,7 @@ pub fn optimize_cdn_url(url: &str, width: u32, height: u32) -> String {
         format!("format=webp"),
         format!("width={width}"),
         format!("height={height}"),
+        format!("quality=low"),
     ];
 
     if let Some(existing) = existing_params {
@@ -137,6 +138,7 @@ mod tests {
         assert!(optimized.contains("format=webp"));
         assert!(optimized.contains("width=800"));
         assert!(optimized.contains("height=600"));
+        assert!(optimized.contains("quality=low"));
     }
 
     #[test]

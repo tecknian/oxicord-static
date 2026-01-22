@@ -1118,7 +1118,7 @@ impl ChatScreenState {
             if let Some(ui_msg) = self.message_pane_data.ui_messages_mut().get_mut(idx) {
                 for attachment in &mut ui_msg.image_attachments {
                     if attachment.is_ready() {
-                        attachment.update_protocol_if_needed(picker, terminal_width);
+                        attachment.update_protocol_if_needed(picker);
                     }
                 }
             }

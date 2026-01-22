@@ -123,10 +123,10 @@ impl UiMessage {
 
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
-    pub fn total_image_height(&self) -> u16 {
+    pub fn total_image_height(&self, width: u16) -> u16 {
         self.image_attachments
             .iter()
-            .map(ImageAttachment::height)
+            .map(|img| img.height(width))
             .fold(0u16, u16::saturating_add)
     }
 
@@ -511,7 +511,7 @@ impl MessagePaneData {
                 .count();
             height += u16::try_from(non_image_attachments).unwrap_or(0);
 
-            height += ui_msg.total_image_height();
+            height += ui_msg.total_image_height(content_width);
 
             let mut rendered_embeds = Vec::new();
             for embed in message.embeds() {
@@ -1649,6 +1649,7 @@ fn render_ui_message(
     };
 
     let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
+    let max_image_width = area.width.saturating_sub(indent_width + SCROLLBAR_MARGIN);
 
     let text = if let Some(t) = &ui_msg.rendered_content {
         t.clone()
@@ -1673,7 +1674,7 @@ fn render_ui_message(
         .filter(|a| !a.is_image())
         .count();
     content_height -= i32::try_from(non_image_count).unwrap_or(0);
-    content_height -= i32::from(ui_msg.total_image_height());
+    content_height -= i32::from(ui_msg.total_image_height(max_image_width));
 
     for embed in &ui_msg.rendered_embeds {
         content_height -= i32::from(embed.height);
@@ -1758,8 +1759,8 @@ fn render_ui_message(
             continue;
         }
 
-        let actual_height = img_attachment.height();
-        let actual_width = img_attachment.width();
+        let actual_height = img_attachment.height(max_image_width);
+        let actual_width = img_attachment.width(max_image_width);
 
         let has_protocol = img_attachment.protocol.is_some();
 
@@ -1779,13 +1780,10 @@ fn render_ui_message(
                 let effective_height = actual_height.saturating_sub(top_clip).min(available_height);
 
                 if effective_height > 0 {
-                    let max_width = area.width.saturating_sub(
-                        u16::try_from(CONTENT_INDENT).unwrap_or(0) + SCROLLBAR_MARGIN,
-                    );
                     let effective_width = if actual_width > 0 {
-                        actual_width.min(max_width)
+                        actual_width.min(max_image_width)
                     } else {
-                        max_width
+                        max_image_width
                     };
 
                     let img_area = Rect::new(
@@ -1795,23 +1793,15 @@ fn render_ui_message(
                         effective_height,
                     );
 
-                    if img_attachment.update_state_and_check_redraw(img_area) {
-                        if let Some(ref mut protocol) = img_attachment.protocol {
-                            use ratatui_image::{Resize, StatefulImage};
-                            let image_widget = StatefulImage::default().resize(Resize::Crop(None));
-                            ratatui::widgets::StatefulWidget::render(
-                                image_widget,
-                                img_area,
-                                buf,
-                                protocol,
-                            );
-                        }
-                    } else {
-                        for y in img_area.top()..img_area.bottom() {
-                            for x in img_area.left()..img_area.right() {
-                                buf[(x, y)].set_skip(true);
-                            }
-                        }
+                    if let Some(ref mut protocol) = img_attachment.protocol {
+                        use ratatui_image::{Resize, StatefulImage};
+                        let image_widget = StatefulImage::default().resize(Resize::Fit(None));
+                        ratatui::widgets::StatefulWidget::render(
+                            image_widget,
+                            img_area,
+                            buf,
+                            protocol,
+                        );
                     }
                 }
             }
