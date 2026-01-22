@@ -1,8 +1,12 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use std::sync::{Arc, RwLock};
+use uuid::Uuid;
 
 const DEFAULT_BUILD_NUMBER: u32 = 307_749;
+const CLIENT_VERSION: &str = "0.0.670";
+const CHROME_VERSION: &str = "134.0.6998.179";
+const ELECTRON_VERSION: &str = "35.1.5";
 
 #[derive(Debug, Serialize, Clone)]
 pub struct SuperProperties {
@@ -20,18 +24,34 @@ pub struct SuperProperties {
     pub release_channel: String,
     pub client_build_number: u32,
     pub client_event_source: Option<String>,
+    pub client_version: String,
+    pub os_arch: String,
+    pub app_arch: String,
+    pub has_client_mods: bool,
+    pub client_launch_id: String,
+    pub launch_signature: String,
+    pub client_heartbeat_session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_build_number: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_manager: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distro: Option<String>,
 }
 
 impl Default for SuperProperties {
     fn default() -> Self {
         Self {
             os: "Linux".to_string(),
-            browser: "Chrome".to_string(),
+            browser: "Discord Client".to_string(),
             device: String::new(),
             system_locale: "en-US".to_string(),
-            browser_user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
-            browser_version: "120.0.0.0".to_string(),
-            os_version: String::new(),
+            browser_user_agent: format!(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) discord/{} Chrome/{} Electron/{} Safari/537.36",
+                CLIENT_VERSION, CHROME_VERSION, ELECTRON_VERSION
+            ),
+            browser_version: ELECTRON_VERSION.to_string(),
+            os_version: "5.15.153".to_string(),
             referrer: String::new(),
             referring_domain: String::new(),
             referrer_current: String::new(),
@@ -39,8 +59,35 @@ impl Default for SuperProperties {
             release_channel: "stable".to_string(),
             client_build_number: DEFAULT_BUILD_NUMBER,
             client_event_source: None,
+            client_version: CLIENT_VERSION.to_string(),
+            os_arch: "x64".to_string(),
+            app_arch: "x64".to_string(),
+            has_client_mods: false,
+            client_launch_id: Uuid::new_v4().to_string(),
+            launch_signature: generate_launch_signature(),
+            client_heartbeat_session_id: Uuid::new_v4().to_string(),
+            native_build_number: None,
+            window_manager: Some("gnome".to_string()),
+            distro: Some("Ubuntu 24.04 LTS".to_string()),
         }
     }
+}
+
+fn generate_launch_signature() -> String {
+    // Discord uses specific UUID bits to detect client modifications.
+    // This mask clears detection bits to avoid identification.
+    let mask: [u8; 16] = [
+        0b11111111, 0b01111111, 0b11101111, 0b11101111, 0b11110111, 0b11101111, 0b11110111,
+        0b11111111, 0b11011111, 0b01111110, 0b11111111, 0b10111111, 0b11111110, 0b11111111,
+        0b11110111, 0b11111111,
+    ];
+
+    let mut uuid_bytes = *Uuid::new_v4().as_bytes();
+    for i in 0..16 {
+        uuid_bytes[i] &= mask[i];
+    }
+
+    Uuid::from_bytes(uuid_bytes).to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -120,9 +167,11 @@ mod tests {
         let props = identity.get_props();
 
         assert_eq!(props.os, "Linux");
-        assert_eq!(props.browser, "Chrome");
+        assert_eq!(props.browser, "Discord Client");
         assert_eq!(props.release_channel, "stable");
         assert_eq!(props.client_build_number, DEFAULT_BUILD_NUMBER);
+        assert!(!props.client_launch_id.is_empty());
+        assert!(!props.launch_signature.is_empty());
     }
 
     #[test]
@@ -159,6 +208,8 @@ mod tests {
 
         assert!(decoded_str.contains(r#""client_build_number":123456"#));
         assert!(decoded_str.contains(r#""os":"Linux""#));
-        assert!(decoded_str.contains(r#""browser":"Chrome""#));
+        assert!(decoded_str.contains(r#""browser":"Discord Client""#));
+        assert!(decoded_str.contains(r#""client_launch_id":""#));
+        assert!(decoded_str.contains(r#""launch_signature":""#));
     }
 }

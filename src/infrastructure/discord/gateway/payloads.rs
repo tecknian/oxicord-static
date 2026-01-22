@@ -42,6 +42,16 @@ impl GatewayPayload {
             release_channel: props.release_channel.clone(),
             client_build_number: props.client_build_number,
             client_event_source: props.client_event_source.clone(),
+            client_version: props.client_version.clone(),
+            os_arch: props.os_arch.clone(),
+            app_arch: props.app_arch.clone(),
+            has_client_mods: props.has_client_mods,
+            client_launch_id: props.client_launch_id.clone(),
+            launch_signature: props.launch_signature.clone(),
+            client_heartbeat_session_id: props.client_heartbeat_session_id.clone(),
+            native_build_number: props.native_build_number,
+            window_manager: props.window_manager.clone(),
+            distro: props.distro.clone(),
         };
 
         let identify = IdentifyData {
@@ -143,6 +153,29 @@ struct IdentifyProperties {
         skip_serializing_if = "Option::is_none"
     )]
     client_event_source: Option<String>,
+    #[serde(rename = "$client_version")]
+    client_version: String,
+    #[serde(rename = "$os_arch")]
+    os_arch: String,
+    #[serde(rename = "$app_arch")]
+    app_arch: String,
+    #[serde(rename = "$has_client_mods")]
+    has_client_mods: bool,
+    #[serde(rename = "$client_launch_id")]
+    client_launch_id: String,
+    #[serde(rename = "$launch_signature")]
+    launch_signature: String,
+    #[serde(rename = "$client_heartbeat_session_id")]
+    client_heartbeat_session_id: String,
+    #[serde(
+        rename = "$native_build_number",
+        skip_serializing_if = "Option::is_none"
+    )]
+    native_build_number: Option<u32>,
+    #[serde(rename = "$window_manager", skip_serializing_if = "Option::is_none")]
+    window_manager: Option<String>,
+    #[serde(rename = "$distro", skip_serializing_if = "Option::is_none")]
+    distro: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

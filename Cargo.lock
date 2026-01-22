@@ -2261,6 +2261,7 @@ dependencies = [
  "tui-scrollbar",
  "tui-textarea",
  "unicode-width 0.2.0",
+ "uuid",
  "zeroize",
 ]
 
@@ -4195,6 +4196,7 @@ dependencies = [
  "atomic",
  "getrandom 0.3.4",
  "js-sys",
+ "rand 0.9.2",
  "wasm-bindgen",
 ]
 
