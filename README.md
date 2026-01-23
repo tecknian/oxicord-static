@@ -16,6 +16,12 @@ Oxicord distinguishes itself through a commitment to modern engineering principl
 
 Oxicord implements a focused set of "real" features designed for daily drivers, prioritizing stability over bloat:
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/4cd1909c-fc0f-419b-8e1f-ec2c0322d1d6" alt="final_showcase">
+  <br>
+  <sub><b>small showcase</b></sub>
+</p>
+
 ### Core Experience
 
 - **Vim-like Navigation:** Native `j`/`k` navigation, `g`/`G` scrolling, and intuitive focus management.
