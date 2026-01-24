@@ -15,6 +15,7 @@ use crate::domain::entities::{
     Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, ReadState,
 };
 use crate::domain::keybinding::Action;
+use crate::domain::ports::DirectMessageChannel;
 use crate::presentation::commands::CommandRegistry;
 use crate::presentation::theme::Theme;
 use crate::presentation::ui::utils::clean_text;
@@ -368,7 +369,7 @@ pub struct GuildsTreeData {
     folders: Vec<GuildFolder>,
     group_guilds: bool,
     channels_by_guild: std::collections::HashMap<GuildId, Vec<Channel>>,
-    dm_users: Vec<(String, String)>,
+    dm_users: Vec<DirectMessageChannel>,
     active_guild_id: Option<GuildId>,
     active_channel_id: Option<ChannelId>,
     active_dm_user_id: Option<String>,
@@ -391,10 +392,36 @@ impl GuildsTreeData {
 
     pub fn set_guilds(&mut self, guilds: Vec<Guild>) {
         self.guilds = guilds;
+        self.sort_guilds();
     }
 
     pub fn set_folders(&mut self, folders: Vec<GuildFolder>) {
         self.folders = folders;
+        self.sort_guilds();
+    }
+
+    fn sort_guilds(&mut self) {
+        if self.folders.is_empty() {
+            return;
+        }
+
+        let mut positions = std::collections::HashMap::new();
+        let mut index = 0;
+
+        for folder in &self.folders {
+            for guild_id in &folder.guild_ids {
+                positions.insert(*guild_id, index);
+                index += 1;
+            }
+        }
+
+        for guild in &mut self.guilds {
+            if let Some(pos) = positions.get(&guild.id()) {
+                guild.set_position(*pos);
+            }
+        }
+
+        self.guilds.sort_by_key(crate::domain::entities::Guild::position);
     }
 
     pub fn set_group_guilds(&mut self, group: bool) {
@@ -411,7 +438,12 @@ impl GuildsTreeData {
         self.channels_by_guild.insert(guild_id, channels);
     }
 
-    pub fn set_dm_users(&mut self, users: Vec<(String, String)>) {
+    pub fn set_dm_users(&mut self, mut users: Vec<DirectMessageChannel>) {
+        users.sort_by(|a, b| {
+            b.last_message_id
+                .map_or(0, crate::domain::entities::MessageId::as_u64)
+                .cmp(&a.last_message_id.map_or(0, crate::domain::entities::MessageId::as_u64))
+        });
         self.dm_users = users;
     }
 
@@ -426,7 +458,7 @@ impl GuildsTreeData {
     }
 
     #[must_use]
-    pub fn dm_users(&self) -> &[(String, String)] {
+    pub fn dm_users(&self) -> &[DirectMessageChannel] {
         &self.dm_users
     }
 
@@ -523,11 +555,21 @@ impl GuildsTreeData {
         if self.group_guilds {
             let mut processed_guilds = std::collections::HashSet::new();
             for folder in &self.folders {
-                items.push(RootItem::Folder(folder));
-                for gid in &folder.guild_ids {
-                    processed_guilds.insert(*gid);
+                if folder.id.is_none() {
+                    for gid in &folder.guild_ids {
+                        if let Some(guild) = self.guilds.iter().find(|g| g.id() == *gid) {
+                            items.push(RootItem::Guild(guild));
+                            processed_guilds.insert(*gid);
+                        }
+                    }
+                } else {
+                    items.push(RootItem::Folder(folder));
+                    for gid in &folder.guild_ids {
+                        processed_guilds.insert(*gid);
+                    }
                 }
             }
+            // Add any guilds not in folders (fallback)
             for guild in &self.guilds {
                 if !processed_guilds.contains(&guild.id()) {
                     items.push(RootItem::Guild(guild));
@@ -593,11 +635,11 @@ impl GuildsTreeData {
         });
 
         if expanded {
-            for (i, (id, name)) in self.dm_users.iter().enumerate() {
+            for (i, dm) in self.dm_users.iter().enumerate() {
                 let is_last = i == self.dm_users.len() - 1;
                 let prefix = if is_last { "└── " } else { "├── " };
 
-                let is_active = self.active_dm_user_id() == Some(id);
+                let is_active = self.active_dm_user_id() == Some(&dm.channel_id);
                 let current_style = if is_active {
                     Style::default()
                         .fg(Color::Cyan)
@@ -606,10 +648,10 @@ impl GuildsTreeData {
                     style.dm_style
                 };
 
-                let clean_name = clean_text(name);
+                let clean_name = clean_text(&dm.recipient_name);
 
                 nodes.push(FlattenedNode {
-                    id: TreeNodeId::DirectMessageUser(id.clone()),
+                    id: TreeNodeId::DirectMessageUser(dm.channel_id.clone()),
                     label: Line::from(vec![
                         Span::styled(children_base_indent, style.tree_guide_style),
                         Span::styled(prefix, style.tree_guide_style),
@@ -824,8 +866,33 @@ impl GuildsTreeData {
             }
         }
 
-        orphan_channels.sort_by_key(|c| c.position());
-        category_channels.sort_by_key(|c| c.position());
+        let sort_channels = |channels: &mut Vec<&Channel>| {
+            channels.sort_by(|a, b| {
+                match a.position().cmp(&b.position()) {
+                    std::cmp::Ordering::Equal => {
+                        // If positions are equal, prioritize Text/Forum over Voice
+                        let a_is_text = a.kind().is_text_based() || a.kind() == ChannelKind::Forum;
+                        let b_is_text = b.kind().is_text_based() || b.kind() == ChannelKind::Forum;
+                        
+                        match (a_is_text, b_is_text) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => {
+                                // Secondary sort by kind
+                                match (a.kind() as u8).cmp(&(b.kind() as u8)) {
+                                    std::cmp::Ordering::Equal => a.id().as_u64().cmp(&b.id().as_u64()),
+                                    other => other,
+                                }
+                            }
+                        }
+                    }
+                    other => other,
+                }
+            });
+        };
+
+        sort_channels(&mut orphan_channels);
+        sort_channels(&mut category_channels);
 
         for (i, channel) in orphan_channels.iter().enumerate() {
             let is_last = i == orphan_channels.len() - 1 && category_channels.is_empty();
@@ -859,7 +926,7 @@ impl GuildsTreeData {
 
             if expanded && let Some(children) = categories.get(&category.id()) {
                 let mut sorted_children = children.clone();
-                sorted_children.sort_by_key(|c| c.position());
+                sort_channels(&mut sorted_children);
 
                 for (j, child) in sorted_children.iter().enumerate() {
                     let is_last_child = j == sorted_children.len() - 1;

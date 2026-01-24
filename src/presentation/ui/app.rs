@@ -1125,11 +1125,7 @@ impl App {
                         .insert_basic(&dm.recipient_id, &dm.recipient_name);
                 }
 
-                let dm_users: Vec<(String, String)> = dms
-                    .into_iter()
-                    .map(|dm| (dm.channel_id, dm.recipient_name))
-                    .collect();
-                chat_state.set_dm_users(dm_users);
+                chat_state.set_dm_users(dms);
                 chat_state.set_guilds(guilds);
 
                 if let Some(folders) = self.pending_guild_folders.take() {

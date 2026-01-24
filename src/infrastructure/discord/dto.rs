@@ -143,6 +143,7 @@ pub struct DmChannelResponse {
     pub kind: u8,
     #[serde(default)]
     pub recipients: Vec<DmRecipient>,
+    pub last_message_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

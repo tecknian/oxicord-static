@@ -16,6 +16,7 @@ use crate::domain::entities::{
     User, UserCache,
 };
 use crate::domain::keybinding::{Action, Keybind};
+use crate::domain::ports::DirectMessageChannel;
 use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::theme::Theme;
 use crate::presentation::widgets::{
@@ -283,12 +284,12 @@ impl ChatScreenState {
         self.recalculate_all_unread();
     }
 
-    pub fn set_dm_users(&mut self, users: Vec<(String, String)>) {
+    pub fn set_dm_users(&mut self, users: Vec<DirectMessageChannel>) {
         self.dm_channels.clear();
-        for (channel_id_str, recipient_name) in &users {
-            if let Ok(channel_id) = channel_id_str.parse::<u64>() {
-                let info = DmChannelInfo::new(ChannelId(channel_id), recipient_name.clone());
-                self.dm_channels.insert(channel_id_str.clone(), info);
+        for dm in &users {
+            if let Ok(channel_id) = dm.channel_id.parse::<u64>() {
+                let info = DmChannelInfo::new(ChannelId(channel_id), dm.recipient_name.clone());
+                self.dm_channels.insert(dm.channel_id.clone(), info);
             }
         }
         self.guilds_tree_data.set_dm_users(users);
@@ -320,6 +321,7 @@ impl ChatScreenState {
     }
 
     pub fn on_message_received(&mut self, message: &Message) {
+        // Handle guild channels
         if let Some(channel) = self.guilds_tree_data.get_channel_mut(message.channel_id()) {
             channel.set_last_message_id(Some(message.id()));
 
@@ -335,6 +337,19 @@ impl ChatScreenState {
             } else {
                 self.recalculate_all_unread();
             }
+        }
+
+        // Handle DM channels
+        if let Some(dm_info) = self.dm_channels.get(message.channel_id().to_string().as_str()) {
+            let mut current_dms = self.guilds_tree_data.dm_users().to_vec();
+            if let Some(dm) = current_dms
+                .iter_mut()
+                .find(|d| d.channel_id == dm_info.channel_id().to_string())
+            {
+                dm.last_message_id = Some(message.id());
+            }
+            // This will trigger the re-sort inside set_dm_users
+            self.guilds_tree_data.set_dm_users(current_dms);
         }
     }
 

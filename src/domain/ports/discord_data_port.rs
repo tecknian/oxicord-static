@@ -16,6 +16,8 @@ pub struct DirectMessageChannel {
     pub recipient_id: String,
     /// The recipient's display name.
     pub recipient_name: String,
+    /// The ID of the last message sent in this channel.
+    pub last_message_id: Option<MessageId>,
 }
 
 /// Options for fetching messages from a channel.

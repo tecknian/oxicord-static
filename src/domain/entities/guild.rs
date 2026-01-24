@@ -128,6 +128,8 @@ pub struct Guild {
     approximate_member_count: Option<u32>,
     #[serde(default)]
     approximate_presence_count: Option<u32>,
+    #[serde(default, skip)]
+    position: i32,
 }
 
 impl Guild {
@@ -151,7 +153,14 @@ impl Guild {
             preferred_locale: None,
             approximate_member_count: None,
             approximate_presence_count: None,
+            position: 0,
         }
+    }
+
+    #[must_use]
+    pub const fn with_position(mut self, position: i32) -> Self {
+        self.position = position;
+        self
     }
 
     #[must_use]
@@ -336,6 +345,15 @@ impl Guild {
     #[must_use]
     pub const fn approximate_presence_count(&self) -> Option<u32> {
         self.approximate_presence_count
+    }
+
+    #[must_use]
+    pub const fn position(&self) -> i32 {
+        self.position
+    }
+
+    pub fn set_position(&mut self, position: i32) {
+        self.position = position;
     }
 
     #[must_use]

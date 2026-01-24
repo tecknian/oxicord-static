@@ -596,6 +596,9 @@ impl DiscordDataPort for DiscordClient {
                     channel_id: dm.id,
                     recipient_id: recipient.id.clone(),
                     recipient_name: display_name,
+                    last_message_id: dm
+                        .last_message_id
+                        .and_then(|id| id.parse::<u64>().ok().map(Into::into)),
                 })
             })
             .collect();
