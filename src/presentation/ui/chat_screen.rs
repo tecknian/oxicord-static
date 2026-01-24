@@ -19,10 +19,10 @@ use crate::domain::keybinding::{Action, Keybind};
 use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::theme::Theme;
 use crate::presentation::widgets::{
-    FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar, GuildsTree,
-    GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar, ImageManager, MentionPopup,
-    MessageInput, MessageInputAction, MessageInputMode, MessageInputState, MessagePane,
-    MessagePaneAction, MessagePaneData, MessagePaneState, ViewMode, ForumState, ConfirmationModal,
+    ConfirmationModal, FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar,
+    ForumState, GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar,
+    ImageManager, MentionPopup, MessageInput, MessageInputAction, MessageInputMode,
+    MessageInputState, MessagePane, MessagePaneAction, MessagePaneData, MessagePaneState, ViewMode,
 };
 use crate::{NAME, VERSION};
 
@@ -48,7 +48,9 @@ impl ChatFocus {
         } else {
             match self {
                 Self::MessagesList => Self::MessageInput,
-                Self::MessageInput | Self::GuildsTree | Self::ConfirmationModal => Self::MessagesList,
+                Self::MessageInput | Self::GuildsTree | Self::ConfirmationModal => {
+                    Self::MessagesList
+                }
             }
         }
     }
@@ -63,7 +65,9 @@ impl ChatFocus {
         } else {
             match self {
                 Self::MessagesList => Self::MessageInput,
-                Self::MessageInput | Self::GuildsTree | Self::ConfirmationModal => Self::MessagesList,
+                Self::MessageInput | Self::GuildsTree | Self::ConfirmationModal => {
+                    Self::MessagesList
+                }
             }
         }
     }
@@ -180,6 +184,41 @@ impl ChatScreenState {
             forum_states: std::collections::HashMap::new(),
             pending_deletion_id: None,
         }
+    }
+
+    pub fn restore_state(
+        &mut self,
+        guild_id: Option<GuildId>,
+        channel_id: Option<ChannelId>,
+        channels: Option<Vec<Channel>>,
+        messages: Option<Vec<Message>>,
+    ) -> Option<ChatKeyResult> {
+        if let Some(gid) = guild_id
+            && let Some(chans) = channels
+        {
+            self.set_channels(gid, chans);
+        }
+
+        let mut restored = false;
+        if let Some(cid) = channel_id
+            && self.on_channel_selected(cid).is_some()
+        {
+            if let Some(msgs) = messages {
+                self.set_messages(msgs);
+                if let Some(last_msg) = self.message_pane_data.messages().back().map(|m| &m.message)
+                {
+                    self.mark_channel_read(cid, last_msg.id());
+                }
+            }
+            restored = true;
+        }
+
+        if !restored && let Some(first_guild) = self.guilds_tree_data.guilds().first() {
+            let guild_id = first_guild.id();
+            return self.on_guild_selected(guild_id);
+        }
+
+        None
     }
 
     pub fn tick(&mut self, duration: Duration) {
@@ -476,7 +515,7 @@ impl ChatScreenState {
         ChatKeyResult::Consumed
     }
 
-#[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     fn handle_messages_list_key(&mut self, key: KeyEvent) -> ChatKeyResult {
         if let Some(action) =
             self.message_pane_state
@@ -547,60 +586,62 @@ impl ChatScreenState {
                     if let Some(result) = self.on_channel_selected(channel_id) {
                         return result;
                     }
-                    
+
                     if let ViewMode::Forum(state) = &self.message_pane_state.view_mode
-                        && let Some(thread) = state.threads.iter().find(|t| t.id == channel_id) {
-                             let parent_id = self.selected_channel.as_ref().map(Channel::id);
-                             
-                             let mut channel = Channel::new(
-                                 thread.id,
-                                 thread.name.clone(),
-                                 ChannelKind::PublicThread
-                             ).with_guild(thread.guild_id.unwrap_or(GuildId(0)).as_u64());
-                             
-                             if let Some(pid) = parent_id {
-                                 channel = channel.with_parent(pid);
-                             }
-                             
-                             if let Some(guild_id) = thread.guild_id {
-                                 self.selected_channel = Some(channel.clone());
-                                 self.message_pane_data.set_channel(channel_id, channel.display_name());
-                                 self.message_pane_state.on_channel_change();
-                                 self.message_input_state.set_has_channel(true);
-                                 self.message_input_state.clear();
-                                 self.focus_messages_list();
-                                 
-                                 return ChatKeyResult::LoadChannelMessages {
-                                     channel_id,
-                                     guild_id: Some(guild_id),
-                                 };
-                             }
+                        && let Some(thread) = state.threads.iter().find(|t| t.id == channel_id)
+                    {
+                        let parent_id = self.selected_channel.as_ref().map(Channel::id);
+
+                        let mut channel =
+                            Channel::new(thread.id, thread.name.clone(), ChannelKind::PublicThread)
+                                .with_guild(thread.guild_id.unwrap_or(GuildId(0)).as_u64());
+
+                        if let Some(pid) = parent_id {
+                            channel = channel.with_parent(pid);
                         }
+
+                        if let Some(guild_id) = thread.guild_id {
+                            self.selected_channel = Some(channel.clone());
+                            self.message_pane_data
+                                .set_channel(channel_id, channel.display_name());
+                            self.message_pane_state.on_channel_change();
+                            self.message_input_state.set_has_channel(true);
+                            self.message_input_state.clear();
+                            self.focus_messages_list();
+
+                            return ChatKeyResult::LoadChannelMessages {
+                                channel_id,
+                                guild_id: Some(guild_id),
+                            };
+                        }
+                    }
                 }
                 MessagePaneAction::CloseThread => {
                     if let ViewMode::Forum(_) = &self.message_pane_state.view_mode {
                         self.focus_guilds_tree();
                         return ChatKeyResult::Consumed;
                     }
-                    if let Some(current_channel) = &self.selected_channel 
-                       && let Some(parent_id) = current_channel.parent_id()
-                       && let Some(result) = self.on_channel_selected(parent_id) {
-                           return result;
+                    if let Some(current_channel) = &self.selected_channel
+                        && let Some(parent_id) = current_channel.parent_id()
+                        && let Some(result) = self.on_channel_selected(parent_id)
+                    {
+                        return result;
                     }
                     self.focus_guilds_tree();
                 }
                 MessagePaneAction::LoadHistory => {
                     if let ViewMode::Forum(forum_state) = &self.message_pane_state.view_mode
-                        && let Some(channel_id) = self.message_pane_data.channel_id() {
-                            let offset = u32::try_from(forum_state.threads.len()).unwrap_or(0);
-                            let guild_id = self.selected_guild;
+                        && let Some(channel_id) = self.message_pane_data.channel_id()
+                    {
+                        let offset = u32::try_from(forum_state.threads.len()).unwrap_or(0);
+                        let guild_id = self.selected_guild;
 
-                            return ChatKeyResult::LoadForumThreads {
-                                channel_id,
-                                guild_id,
-                                offset,
-                            };
-                        }
+                        return ChatKeyResult::LoadForumThreads {
+                            channel_id,
+                            guild_id,
+                            offset,
+                        };
+                    }
 
                     if let Some(channel_id) = self.message_pane_data.channel_id()
                         && let Some(first_msg) = self.message_pane_data.messages().iter().next()
@@ -790,15 +831,16 @@ impl ChatScreenState {
             self.guilds_tree_data.set_active_dm_user(None);
 
             let channel_name = channel.display_name();
-            
+
             if let Some(current_channel_id) = self.message_pane_data.channel_id()
-                && let ViewMode::Forum(state) = &self.message_pane_state.view_mode {
+                && let ViewMode::Forum(state) = &self.message_pane_state.view_mode
+            {
                 self.forum_states.insert(current_channel_id, state.clone());
             }
 
             self.message_pane_data.set_channel(channel_id, channel_name);
             self.message_pane_state.on_channel_change();
-            
+
             if channel.kind() == ChannelKind::Forum {
                 if let Some(saved_state) = self.forum_states.get(&channel_id) {
                     self.message_pane_state.view_mode = ViewMode::Forum(saved_state.clone());
@@ -806,16 +848,17 @@ impl ChatScreenState {
                     self.message_pane_state.view_mode = ViewMode::Forum(ForumState::default());
                 }
             }
-            
+
             self.message_pane_data.set_channel_topic(topic);
             self.message_input_state.set_has_channel(true);
             self.message_input_state.clear();
             self.focus_messages_list();
 
             if channel.kind() == ChannelKind::Forum {
-                if let ViewMode::Forum(ref state) = self.message_pane_state.view_mode 
-                    && !state.threads.is_empty() {
-                        return None;
+                if let ViewMode::Forum(ref state) = self.message_pane_state.view_mode
+                    && !state.threads.is_empty()
+                {
+                    return None;
                 }
 
                 return Some(ChatKeyResult::LoadForumThreads {
@@ -895,39 +938,46 @@ impl ChatScreenState {
         self.message_pane_data.set_messages(messages);
     }
 
-    pub fn set_forum_threads(&mut self, mut threads: Vec<crate::domain::entities::ForumThread>, offset: u32) {
+    pub fn set_forum_threads(
+        &mut self,
+        mut threads: Vec<crate::domain::entities::ForumThread>,
+        offset: u32,
+    ) {
         for thread in &mut threads {
-             let read_state = self.read_states.get(&thread.id);
-             thread.new = match (read_state, thread.last_message_id) {
-                 (Some(rs), Some(last_msg_id)) => rs.last_read_message_id != Some(last_msg_id),
-                 (Some(_), None) => false,
-                 (None, _) => true, 
-             };
+            let read_state = self.read_states.get(&thread.id);
+            thread.new = match (read_state, thread.last_message_id) {
+                (Some(rs), Some(last_msg_id)) => rs.last_read_message_id != Some(last_msg_id),
+                (Some(_), None) => false,
+                (None, _) => true,
+            };
         }
 
         if let ViewMode::Forum(state) = &mut self.message_pane_state.view_mode {
             if offset > 0 {
                 let old_selection_id = state.threads.get(state.selected_idx).map(|t| t.id);
                 let added_count = threads.len();
-                
+
                 let mut new_list = threads;
                 new_list.append(&mut state.threads);
                 state.threads = new_list;
-                
-                if let Some(id) = old_selection_id 
-                    && let Some(new_idx) = state.threads.iter().position(|t| t.id == id) {
-                        state.selected_idx = new_idx;
-                        state.scroll_offset = state.scroll_offset.saturating_add(u16::try_from(added_count).unwrap_or(0));
-                    }
+
+                if let Some(id) = old_selection_id
+                    && let Some(new_idx) = state.threads.iter().position(|t| t.id == id)
+                {
+                    state.selected_idx = new_idx;
+                    state.scroll_offset = state
+                        .scroll_offset
+                        .saturating_add(u16::try_from(added_count).unwrap_or(0));
+                }
                 return;
             }
 
             let was_empty = state.threads.is_empty();
             let was_at_bottom = state.selected_idx + 1 >= state.threads.len();
             let invalid_selection = state.selected_idx >= state.threads.len();
-            
+
             state.threads = threads;
-            
+
             if (was_empty || was_at_bottom || invalid_selection) && !state.threads.is_empty() {
                 state.selected_idx = state.threads.len().saturating_sub(1);
                 state.needs_scroll_to_selection = true;
@@ -938,8 +988,8 @@ impl ChatScreenState {
                 ..Default::default()
             };
             if !state.threads.is_empty() {
-                 state.selected_idx = state.threads.len().saturating_sub(1);
-                 state.needs_scroll_to_selection = true;
+                state.selected_idx = state.threads.len().saturating_sub(1);
+                state.needs_scroll_to_selection = true;
             }
             self.message_pane_state.view_mode = ViewMode::Forum(state);
         }
@@ -1284,8 +1334,16 @@ impl HasCommands for ChatScreenState {
                     }
                 }
                 ChatFocus::ConfirmationModal => {
-                    commands.push(Keybind::new(KeyEvent::from(KeyCode::Enter), Action::Select, "Confirm"));
-                    commands.push(Keybind::new(KeyEvent::from(KeyCode::Esc), Action::Cancel, "Cancel"));
+                    commands.push(Keybind::new(
+                        KeyEvent::from(KeyCode::Enter),
+                        Action::Select,
+                        "Confirm",
+                    ));
+                    commands.push(Keybind::new(
+                        KeyEvent::from(KeyCode::Esc),
+                        Action::Cancel,
+                        "Cancel",
+                    ));
                 }
             }
 
@@ -1826,7 +1884,9 @@ mod tests {
 
         state.on_channel_selected(channel_a1.id());
         assert_eq!(
-            state.selected_channel().map(|c| c.id()),
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
             Some(channel_a1.id())
         );
         assert_eq!(
@@ -1870,7 +1930,9 @@ mod tests {
 
         assert_eq!(state.selected_guild(), Some(guild_a.id()));
         assert_eq!(
-            state.selected_channel().map(|c| c.id()),
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
             Some(channel_a1.id())
         );
 
@@ -1878,13 +1940,16 @@ mod tests {
 
         assert_eq!(state.selected_guild(), Some(guild_a.id()));
         assert_eq!(
-            state.selected_channel().map(|c| c.id()),
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
             Some(channel_a1.id()),
             "Reselecting the same guild should not clear the active channel"
         );
     }
 
     #[test]
+    #[allow(clippy::similar_names)]
     fn test_cross_guild_channel_selection() {
         let mut state = ChatScreenState::new(
             create_test_user(),
@@ -1908,7 +1973,9 @@ mod tests {
 
         assert_eq!(state.selected_guild(), Some(guild_a.id()));
         assert_eq!(
-            state.selected_channel().map(|c| c.id()),
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
             Some(channel_a1.id())
         );
 
@@ -1924,7 +1991,9 @@ mod tests {
             "Should switch to Guild B"
         );
         assert_eq!(
-            state.selected_channel().map(|c| c.id()),
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
             Some(channel_b1.id()),
             "Should switch to Channel B1"
         );

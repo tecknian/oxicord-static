@@ -24,6 +24,7 @@ use crate::infrastructure::discord::{
     GatewayIntents, TypingIndicatorManager, identity::ClientIdentity,
 };
 use crate::infrastructure::image::{ImageLoadedEvent, ImageLoader};
+use crate::infrastructure::state_store::StateStore;
 use crate::presentation::events::{EventHandler, EventResult};
 use crate::presentation::theme::Theme;
 use crate::presentation::ui::{
@@ -82,9 +83,14 @@ pub struct App {
     disable_user_colors: bool,
     theme: Theme,
     identity: Arc<ClientIdentity>,
+    state_store: StateStore,
+    state_save_tx: mpsc::UnboundedSender<(Option<GuildId>, Option<ChannelId>)>,
 }
 
 impl App {
+    /// # Panics
+    ///
+    /// Panics if the application state persistence cannot be initialized.
     #[must_use]
     pub fn new(
         auth_port: Arc<dyn AuthPort>,
@@ -102,6 +108,37 @@ impl App {
 
         let backend = Backend::new(discord_data, command_rx, action_tx.clone());
         tokio::spawn(backend.run());
+
+        let state_store = StateStore::new();
+        let (state_save_tx, mut state_save_rx) =
+            mpsc::unbounded_channel::<(Option<GuildId>, Option<ChannelId>)>();
+        let store = state_store.clone();
+
+        tokio::spawn(async move {
+            const DEBOUNCE_DURATION: Duration = Duration::from_secs(1);
+            let mut pending_state: Option<(Option<GuildId>, Option<ChannelId>)> = None;
+            let mut timer = Box::pin(tokio::time::sleep(Duration::MAX));
+
+            loop {
+                tokio::select! {
+                    Some(state) = state_save_rx.recv() => {
+                        pending_state = Some(state);
+                        timer = Box::pin(tokio::time::sleep(DEBOUNCE_DURATION));
+                    }
+                    () = &mut timer, if pending_state.is_some() => {
+                        if let Some((guild_id, channel_id)) = pending_state.take() {
+                            let gid = guild_id.map(|g| g.as_u64().to_string());
+                            let cid = channel_id.map(|c| c.as_u64().to_string());
+                            if let Err(e) = store.save(gid, cid).await {
+                                tracing::warn!("Failed to save state: {e}");
+                            }
+                        }
+                        timer = Box::pin(tokio::time::sleep(Duration::MAX));
+                    }
+                    else => break,
+                }
+            }
+        });
 
         Self {
             state: AppState::Login,
@@ -132,6 +169,8 @@ impl App {
             disable_user_colors,
             theme,
             identity,
+            state_store,
+            state_save_tx,
         }
     }
 
@@ -261,6 +300,10 @@ impl App {
         }
     }
 
+    fn save_state(&self, guild_id: Option<GuildId>, channel_id: Option<ChannelId>) {
+        let _ = self.state_save_tx.send((guild_id, channel_id));
+    }
+
     async fn attempt_auto_login(&mut self, token: String, source: TokenSource) {
         debug!("Attempting automatic login");
 
@@ -302,7 +345,7 @@ impl App {
         }
     }
 
-#[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     fn handle_key(&mut self, key: KeyEvent) -> EventResult {
         if EventHandler::is_quit_event(&key) && self.state == AppState::Login {
             return EventResult::Exit;
@@ -321,6 +364,11 @@ impl App {
             CurrentScreen::Chat(state) => state.handle_key(key),
         };
 
+        self.process_chat_key_result(result)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn process_chat_key_result(&mut self, result: ChatKeyResult) -> EventResult {
         match result {
             ChatKeyResult::Quit => return EventResult::Exit,
             ChatKeyResult::Logout => {
@@ -336,6 +384,7 @@ impl App {
                 channel_id,
                 guild_id,
             } => {
+                self.save_state(guild_id, Some(channel_id));
                 if let Some(guild_id) = guild_id {
                     self.subscribe_to_channel(guild_id, channel_id);
                 }
@@ -346,6 +395,7 @@ impl App {
                 guild_id,
                 offset,
             } => {
+                self.save_state(guild_id, Some(channel_id));
                 if let Some(guild_id) = guild_id {
                     self.subscribe_to_channel(guild_id, channel_id);
                 }
@@ -355,6 +405,7 @@ impl App {
                 channel_id,
                 recipient_name,
             } => {
+                self.save_state(None, Some(channel_id));
                 debug!(channel_id = %channel_id, recipient = %recipient_name, "Loading DM messages");
                 self.load_channel_messages(channel_id);
             }
@@ -498,9 +549,31 @@ impl App {
 
         self.connect_gateway(&token);
 
-        let _ = self
-            .command_tx
-            .send(BackendCommand::LoadInitialData { token, user });
+        let state_store = self.state_store.clone();
+        let command_tx = self.command_tx.clone();
+
+        tokio::spawn(async move {
+            let state: crate::infrastructure::state_store::AppState =
+                state_store.load().await.unwrap_or_default();
+            debug!(
+                guild_id = ?state.last_guild_id,
+                channel_id = ?state.last_channel_id,
+                "Loaded persisted state"
+            );
+
+            let _ = command_tx.send(BackendCommand::LoadInitialData {
+                token,
+                user,
+                initial_guild_id: state
+                    .last_guild_id
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .map(GuildId),
+                initial_channel_id: state
+                    .last_channel_id
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .map(ChannelId),
+            });
+        });
     }
 
     fn set_connection_status(&mut self, status: ConnectionStatus) {
@@ -833,7 +906,12 @@ impl App {
         }
     }
 
-    fn load_forum_threads(&mut self, channel_id: ChannelId, guild_id: Option<GuildId>, offset: u32) {
+    fn load_forum_threads(
+        &mut self,
+        channel_id: ChannelId,
+        guild_id: Option<GuildId>,
+        offset: u32,
+    ) {
         self.typing_manager.clear_channel(channel_id);
 
         if let Some(ref token) = self.current_token {
@@ -894,6 +972,10 @@ impl App {
                 guilds,
                 dms,
                 read_states,
+                initial_guild_id,
+                initial_channel_id,
+                initial_channels,
+                initial_messages,
             } => {
                 info!("Data loaded, preparing chat state");
                 self.current_user_id = Some(user.id().to_string());
@@ -928,7 +1010,18 @@ impl App {
                 }
                 chat_state.set_read_states(final_read_states);
 
+                let restore_result = chat_state.restore_state(
+                    initial_guild_id,
+                    initial_channel_id,
+                    initial_channels,
+                    initial_messages,
+                );
+
                 self.pending_chat_state = Some(Box::new(chat_state));
+
+                if let Some(result) = restore_result {
+                    self.process_chat_key_result(result);
+                }
 
                 if self.gateway_ready
                     && let CurrentScreen::Splash(splash) = &mut self.screen
@@ -1001,7 +1094,11 @@ impl App {
                     state.focus_guilds_tree();
                 }
             }
-            Action::ForumThreadsLoaded { channel_id, threads, offset } => {
+            Action::ForumThreadsLoaded {
+                channel_id,
+                threads,
+                offset,
+            } => {
                 if let CurrentScreen::Chat(state) = &mut self.screen
                     && state.message_pane_data().channel_id() == Some(channel_id)
                 {

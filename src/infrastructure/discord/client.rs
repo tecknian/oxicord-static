@@ -15,8 +15,7 @@ use super::identity::ClientIdentity;
 use super::scraper;
 use crate::domain::entities::{
     Attachment, AuthToken, Channel, ChannelId, ChannelKind, Embed, EmbedProvider, EmbedThumbnail,
-    ForumThread, Guild, GuildId, Message, MessageAuthor, MessageId, ReadState,
-    User,
+    ForumThread, Guild, GuildId, Message, MessageAuthor, MessageId, ReadState, User,
 };
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
@@ -57,7 +56,10 @@ impl DiscordClient {
     ///
     /// # Errors
     /// Returns error if HTTP client creation fails.
-    pub fn with_base_url(base_url: impl Into<String>, identity: Arc<ClientIdentity>) -> Result<Self, AuthError> {
+    pub fn with_base_url(
+        base_url: impl Into<String>,
+        identity: Arc<ClientIdentity>,
+    ) -> Result<Self, AuthError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .pool_max_idle_per_host(MAX_IDLE_CONNECTIONS)
@@ -72,8 +74,12 @@ impl DiscordClient {
     }
 
     fn build_request(&self, method: Method, url: &str) -> reqwest::RequestBuilder {
-        self.client.request(method, url)
-            .header(header::USER_AGENT, &self.identity.get_props().browser_user_agent)
+        self.client
+            .request(method, url)
+            .header(
+                header::USER_AGENT,
+                &self.identity.get_props().browser_user_agent,
+            )
             .header(header::ACCEPT_LANGUAGE, "en-US")
             .header("X-Discord-Locale", "en-US")
             .header(header::REFERER, "https://discord.com/channels/@me")
@@ -147,7 +153,9 @@ impl DiscordClient {
                 }
 
                 if let Some(flags) = c.flags {
-                    channel = channel.with_flags(crate::domain::entities::ChannelFlags::from_bits_truncate(flags));
+                    channel = channel.with_flags(
+                        crate::domain::entities::ChannelFlags::from_bits_truncate(flags),
+                    );
                 }
 
                 if let Some(rtc_region) = c.rtc_region {
@@ -275,24 +283,31 @@ impl DiscordClient {
         .with_pinned(pinned);
 
         if let Some(r) = message_reference {
-             let mr = crate::domain::entities::MessageReference {
-                 message_id: r.message_id.and_then(|id| id.parse::<u64>().ok().map(Into::into)),
-                 channel_id: r.channel_id.and_then(|id| id.parse::<u64>().ok().map(Into::into)),
-                 guild_id: r.guild_id.and_then(|id| id.parse::<u64>().ok()),
-             };
-             message = message.with_reference(mr);
+            let mr = crate::domain::entities::MessageReference {
+                message_id: r
+                    .message_id
+                    .and_then(|id| id.parse::<u64>().ok().map(Into::into)),
+                channel_id: r
+                    .channel_id
+                    .and_then(|id| id.parse::<u64>().ok().map(Into::into)),
+                guild_id: r.guild_id.and_then(|id| id.parse::<u64>().ok()),
+            };
+            message = message.with_reference(mr);
         }
 
         if let Some(ref_msg) = referenced_message {
-             // referenced_message is Box<MessageResponse>
-             let ref_cid = ref_msg.channel_id.parse().unwrap_or(channel_id);
-             if let Some(parsed_ref) = Self::parse_message_response(*ref_msg, ref_cid) {
-                 message = message.with_referenced_message(Some(parsed_ref));
-             }
+            // referenced_message is Box<MessageResponse>
+            let ref_cid = ref_msg.channel_id.parse().unwrap_or(channel_id);
+            if let Some(parsed_ref) = Self::parse_message_response(*ref_msg, ref_cid) {
+                message = message.with_referenced_message(Some(parsed_ref));
+            }
         }
 
         if !attachments.is_empty() {
-            let attachments = attachments.into_iter().map(Self::parse_attachment).collect();
+            let attachments = attachments
+                .into_iter()
+                .map(Self::parse_attachment)
+                .collect();
             message = message.with_attachments(attachments);
         }
 
@@ -302,36 +317,41 @@ impl DiscordClient {
         }
 
         if !mentions.is_empty() {
-             let mentions = mentions.into_iter().map(|m| {
-                 crate::domain::entities::User::new(
-                    m.id,
-                    m.username,
-                    m.discriminator,
-                    m.avatar,
-                    m.bot,
-                    m.member.and_then(|mb| mb.color),
-                 )
-            }).collect();
+            let mentions = mentions
+                .into_iter()
+                .map(|m| {
+                    crate::domain::entities::User::new(
+                        m.id,
+                        m.username,
+                        m.discriminator,
+                        m.avatar,
+                        m.bot,
+                        m.member.and_then(|mb| mb.color),
+                    )
+                })
+                .collect();
             message = message.with_mentions(mentions);
         }
 
         if !reactions.is_empty() {
-             let reactions = reactions.into_iter().map(|r| {
-                 crate::domain::entities::Reaction {
-                     count: r.count,
-                     me: r.me,
-                     emoji: crate::domain::entities::ReactionEmoji {
-                         id: r.emoji.id,
-                         name: r.emoji.name,
-                     }
-                 }
-            }).collect();
+            let reactions = reactions
+                .into_iter()
+                .map(|r| crate::domain::entities::Reaction {
+                    count: r.count,
+                    me: r.me,
+                    emoji: crate::domain::entities::ReactionEmoji {
+                        id: r.emoji.id,
+                        name: r.emoji.name,
+                    },
+                })
+                .collect();
             message = message.with_reactions(reactions);
         }
 
-        if let Some(f) = flags 
-            && let Some(message_flags) = crate::domain::entities::MessageFlags::from_bits(f) {
-                message = message.with_flags(message_flags);
+        if let Some(f) = flags
+            && let Some(message_flags) = crate::domain::entities::MessageFlags::from_bits(f)
+        {
+            message = message.with_flags(message_flags);
         }
 
         if let Some(edited) = edited_timestamp
@@ -339,8 +359,6 @@ impl DiscordClient {
         {
             message = message.with_edited_timestamp(edited_ts.with_timezone(&Local));
         }
-
-
 
         Some(message)
     }
@@ -401,15 +419,19 @@ impl AuthPort for DiscordClient {
 
         debug!("Performing Discord API health check");
 
-        let response = self.build_request(Method::GET, &url).send().await.map_err(|e| {
-            if e.is_timeout() {
-                AuthError::network("request timed out")
-            } else if e.is_connect() {
-                AuthError::network("failed to connect to Discord")
-            } else {
-                AuthError::network(e.to_string())
-            }
-        })?;
+        let response = self
+            .build_request(Method::GET, &url)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    AuthError::network("request timed out")
+                } else if e.is_connect() {
+                    AuthError::network("failed to connect to Discord")
+                } else {
+                    AuthError::network(e.to_string())
+                }
+            })?;
 
         if response.status().is_success() {
             Ok(())
@@ -944,28 +966,39 @@ impl DiscordDataPort for DiscordClient {
 
         let status = response.status();
         if !status.is_success() {
-             let error_text = response.text().await.unwrap_or_default();
-             warn!("Fetch forum threads failed: Status={} Body={}", status, error_text);
-             return Err(AuthError::unexpected(format!("Fetch threads failed: {status} - {error_text}")));
+            let error_text = response.text().await.unwrap_or_default();
+            warn!(
+                "Fetch forum threads failed: Status={} Body={}",
+                status, error_text
+            );
+            return Err(AuthError::unexpected(format!(
+                "Fetch threads failed: {status} - {error_text}"
+            )));
         }
 
-        let threads_response: super::dto::ThreadsResponse = serde_json::from_str(&response.text().await.unwrap_or_default()).map_err(|e| {
-            warn!(error = %e, "Failed to parse threads response");
-            AuthError::unexpected(format!("failed to parse threads: {e}"))
-        })?;
-        
+        let threads_response: super::dto::ThreadsResponse =
+            serde_json::from_str(&response.text().await.unwrap_or_default()).map_err(|e| {
+                warn!(error = %e, "Failed to parse threads response");
+                AuthError::unexpected(format!("failed to parse threads: {e}"))
+            })?;
+
         let threads = Self::process_threads_response(threads_response, None);
         Ok(threads)
     }
 }
 
 impl DiscordClient {
-    fn process_threads_response(response: super::dto::ThreadsResponse, parent_id: Option<ChannelId>) -> Vec<ForumThread> {
-        let threads_to_process: Vec<_> = response.threads
+    fn process_threads_response(
+        response: super::dto::ThreadsResponse,
+        parent_id: Option<ChannelId>,
+    ) -> Vec<ForumThread> {
+        let threads_to_process: Vec<_> = response
+            .threads
             .into_iter()
             .filter(|t| {
                 if let Some(target_parent) = parent_id {
-                    t.parent_id.as_deref().and_then(|p| p.parse::<u64>().ok()) == Some(target_parent.as_u64())
+                    t.parent_id.as_deref().and_then(|p| p.parse::<u64>().ok())
+                        == Some(target_parent.as_u64())
                 } else {
                     true
                 }
@@ -976,9 +1009,10 @@ impl DiscordClient {
         if let Some(msgs) = response.first_messages {
             for msg_dto in msgs {
                 if let Ok(thread_id) = msg_dto.channel_id.parse::<u64>()
-                     && let Some(message) = Self::parse_message_response(msg_dto, thread_id) {
-                         starter_messages.insert(ChannelId(thread_id), message);
-                     }
+                    && let Some(message) = Self::parse_message_response(msg_dto, thread_id)
+                {
+                    starter_messages.insert(ChannelId(thread_id), message);
+                }
             }
         }
 
@@ -986,12 +1020,12 @@ impl DiscordClient {
             .into_iter()
             .filter_map(|thread_dto| {
                 let thread_id = thread_dto.id.parse::<u64>().ok()?;
-                
+
                 let starter_message = starter_messages.remove(&ChannelId(thread_id));
-                
-                let reaction_count = starter_message.as_ref().map_or(0, |m| {
-                    m.reactions().iter().map(|r| r.count).sum()
-                });
+
+                let reaction_count = starter_message
+                    .as_ref()
+                    .map_or(0, |m| m.reactions().iter().map(|r| r.count).sum());
 
                 Some(ForumThread {
                     id: ChannelId(thread_id),
@@ -1030,7 +1064,6 @@ impl DiscordClient {
 }
 
 impl Default for DiscordClient {
-
     fn default() -> Self {
         Self::new().expect("failed to create default Discord client")
     }
@@ -1109,7 +1142,7 @@ mod tests {
     #[test]
     fn test_message_response_parsing_with_reactions() {
         use super::MessageResponse;
-        
+
         let json = r#"{
             "id": "123456789",
             "channel_id": "987654321",
@@ -1136,17 +1169,19 @@ mod tests {
                 }
             ]
         }"#;
-        
-        let response: MessageResponse = serde_json::from_str(json).expect("Should parse message JSON");
-        let message = DiscordClient::parse_message_response(response, 987654321).expect("Should convert to Message");
-        
+
+        let response: MessageResponse =
+            serde_json::from_str(json).expect("Should parse message JSON");
+        let message = DiscordClient::parse_message_response(response, 987_654_321)
+            .expect("Should convert to Message");
+
         assert_eq!(message.reactions().len(), 2);
-        
+
         let r1 = &message.reactions()[0];
         assert_eq!(r1.count, 5);
         assert!(r1.me);
         assert_eq!(r1.emoji.name.as_deref(), Some("👍"));
-        
+
         let r2 = &message.reactions()[1];
         assert_eq!(r2.count, 2);
         assert!(!r2.me);

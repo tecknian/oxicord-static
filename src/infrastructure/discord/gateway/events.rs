@@ -228,8 +228,11 @@ impl DispatchEvent {
             | Self::TypingStart { channel_id, .. }
             | Self::ChannelCreate { channel_id, .. }
             | Self::ChannelUpdate { channel_id, .. }
-            | Self::ChannelDelete { channel_id, .. } 
-            | Self::VoiceStateUpdate { channel_id: Some(channel_id), .. } => Some(*channel_id),
+            | Self::ChannelDelete { channel_id, .. }
+            | Self::VoiceStateUpdate {
+                channel_id: Some(channel_id),
+                ..
+            } => Some(*channel_id),
             _ => None,
         }
     }

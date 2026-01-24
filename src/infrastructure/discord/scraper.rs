@@ -45,7 +45,8 @@ use std::sync::OnceLock;
 
 fn extract_assets(html: &str) -> Vec<String> {
     static SCRIPT_REGEX: OnceLock<Regex> = OnceLock::new();
-    let script_regex = SCRIPT_REGEX.get_or_init(|| Regex::new(r#"src="/assets/([^"]+)""#).expect("Invalid regex"));
+    let script_regex =
+        SCRIPT_REGEX.get_or_init(|| Regex::new(r#"src="/assets/([^"]+)""#).expect("Invalid regex"));
 
     script_regex
         .captures_iter(html)
@@ -55,12 +56,14 @@ fn extract_assets(html: &str) -> Vec<String> {
 
 fn extract_build_number(js: &str) -> Option<u32> {
     static BUILD_REGEX: OnceLock<Regex> = OnceLock::new();
-    let build_regex = BUILD_REGEX.get_or_init(|| Regex::new(r#"build_number:"(\d+)""#).expect("Invalid regex"));
+    let build_regex =
+        BUILD_REGEX.get_or_init(|| Regex::new(r#"build_number:"(\d+)""#).expect("Invalid regex"));
 
-    if let Some(caps) = build_regex.captures(js) 
-        && let Some(m) = caps.get(1) 
-        && let Ok(num) = m.as_str().parse::<u32>() {
-            return Some(num);
+    if let Some(caps) = build_regex.captures(js)
+        && let Some(m) = caps.get(1)
+        && let Ok(num) = m.as_str().parse::<u32>()
+    {
+        return Some(num);
     }
     None
 }
@@ -121,9 +124,9 @@ mod tests {
             // ... build_number:"307749" ...
             const x = { build_number:"307749", other: "stuff" };
         "#;
-        
+
         let build_number = extract_build_number(js);
-        assert_eq!(build_number, Some(307749));
+        assert_eq!(build_number, Some(307_749));
     }
 
     #[test]

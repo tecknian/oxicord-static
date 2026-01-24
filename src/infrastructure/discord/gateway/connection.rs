@@ -244,7 +244,11 @@ impl GatewayConnectionHandler {
     async fn identify(&mut self) -> GatewayResult<()> {
         self.state.transition_to_identifying();
 
-        let payload = GatewayPayload::identify(&self.token, self.intents.as_u32(), &self.identity.get_props());
+        let payload = GatewayPayload::identify(
+            &self.token,
+            self.intents.as_u32(),
+            &self.identity.get_props(),
+        );
         self.connection.send(&payload).await?;
 
         self.await_ready().await

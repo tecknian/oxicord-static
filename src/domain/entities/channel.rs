@@ -92,7 +92,10 @@ impl ChannelKind {
 
     #[must_use]
     pub const fn is_dm(self) -> bool {
-        matches!(self, Self::Dm | Self::GroupDm | Self::LfgGroupDm | Self::EphemeralDm)
+        matches!(
+            self,
+            Self::Dm | Self::GroupDm | Self::LfgGroupDm | Self::EphemeralDm
+        )
     }
 
     #[must_use]

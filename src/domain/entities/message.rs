@@ -251,7 +251,12 @@ pub struct Attachment {
 
 impl Attachment {
     #[must_use]
-    pub fn new(id: impl Into<String>, filename: impl Into<String>, size: u64, url: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        filename: impl Into<String>,
+        size: u64,
+        url: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             filename: filename.into(),
@@ -307,12 +312,12 @@ impl MessageAuthor {
             format!("{}#{}", self.username, self.discriminator)
         }
     }
-    
+
     // Add color logic here or remove dependency on it for strict DTO separation
     // For now we assume no color directly on author, it might come from member
     #[must_use]
     pub fn color(&self) -> Option<u32> {
-        None 
+        None
     }
 
     #[must_use]
@@ -413,7 +418,7 @@ impl Message {
     pub fn reactions(&self) -> &[Reaction] {
         &self.reactions
     }
-    
+
     #[must_use]
     pub const fn flags(&self) -> MessageFlags {
         self.flags
@@ -561,7 +566,7 @@ impl Message {
         self.reactions = reactions;
         self
     }
-    
+
     #[must_use]
     pub fn with_reference(mut self, reference: MessageReference) -> Self {
         self.message_reference = Some(reference);
@@ -573,7 +578,7 @@ impl Message {
         self.referenced_message = message.map(Box::new);
         self
     }
-    
+
     #[must_use]
     pub fn with_flags(mut self, flags: MessageFlags) -> Self {
         self.flags = flags;

@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use serde::Serialize;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
@@ -76,9 +76,22 @@ fn generate_launch_signature() -> String {
     // Discord uses specific UUID bits to detect client modifications.
     // This mask clears detection bits to avoid identification.
     let mask: [u8; 16] = [
-        0b1111_1111, 0b0111_1111, 0b1110_1111, 0b1110_1111, 0b1111_0111, 0b1110_1111, 0b1111_0111,
-        0b1111_1111, 0b1101_1111, 0b0111_1110, 0b1111_1111, 0b1011_1111, 0b1111_1110, 0b1111_1111,
-        0b1111_0111, 0b1111_1111,
+        0b1111_1111,
+        0b0111_1111,
+        0b1110_1111,
+        0b1110_1111,
+        0b1111_0111,
+        0b1110_1111,
+        0b1111_0111,
+        0b1111_1111,
+        0b1101_1111,
+        0b0111_1110,
+        0b1111_1111,
+        0b1011_1111,
+        0b1111_1110,
+        0b1111_1111,
+        0b1111_0111,
+        0b1111_1111,
     ];
 
     let mut uuid_bytes = *Uuid::new_v4().as_bytes();
@@ -176,9 +189,9 @@ mod tests {
     #[test]
     fn test_update_build_number() {
         let identity = ClientIdentity::new();
-        identity.update_build_number(123456);
+        identity.update_build_number(123_456);
         let props = identity.get_props();
-        assert_eq!(props.client_build_number, 123456);
+        assert_eq!(props.client_build_number, 123_456);
 
         // Verify cache updated
         let header = identity.get_header_value();
@@ -193,7 +206,7 @@ mod tests {
     fn test_header_value_encoding() {
         let identity = ClientIdentity::new();
         // Override with known values for deterministic output test
-        identity.update_build_number(123456);
+        identity.update_build_number(123_456);
         // Note: we can't easily override other private fields without creating a new method
         // but checking build number update verifies the cache mechanism works
 

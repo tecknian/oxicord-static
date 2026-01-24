@@ -6,6 +6,8 @@ pub mod config;
 pub mod discord;
 /// Image handling (caching, loading, CDN optimization).
 pub mod image;
+/// Application state persistence.
+pub mod state_store;
 /// Token storage adapters.
 pub mod storage;
 
@@ -19,4 +21,5 @@ pub use image::{
     CacheStats, DiskImageCache, ImageLoadedEvent, ImageLoader, ImageLoaderConfig, MemoryImageCache,
     extract_attachment_id, is_discord_cdn_url, optimize_cdn_url, optimize_cdn_url_default,
 };
+pub use state_store::StateStore;
 pub use storage::KeyringTokenStorage;

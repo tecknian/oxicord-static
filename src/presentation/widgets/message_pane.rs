@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Padding, Paragraph, StatefulWidget, Widget, Clear},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, StatefulWidget, Widget},
 };
 use tui_scrollbar::{GlyphSet, ScrollBar, ScrollLengths};
 use unicode_width::UnicodeWidthStr;
@@ -765,7 +765,7 @@ impl MessagePaneState {
         }
     }
 
-#[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     pub fn handle_key(
         &mut self,
         key: KeyEvent,
@@ -778,13 +778,14 @@ impl MessagePaneState {
                     let count = forum_state.threads.len();
                     if count > 0 {
                         forum_state.selected_idx = (forum_state.selected_idx + 1).min(count - 1);
-                        
+
                         let visible_items = self.viewport_height / THREAD_CARD_HEIGHT;
                         let selected = u16::try_from(forum_state.selected_idx).unwrap_or(u16::MAX);
                         let offset = forum_state.scroll_offset;
-                        
+
                         if selected >= offset + visible_items {
-                             forum_state.scroll_offset = (selected + 1).saturating_sub(visible_items);
+                            forum_state.scroll_offset =
+                                (selected + 1).saturating_sub(visible_items);
                         }
                     }
                     return None;
@@ -794,7 +795,7 @@ impl MessagePaneState {
                         return Some(MessagePaneAction::LoadHistory);
                     }
                     forum_state.selected_idx = forum_state.selected_idx.saturating_sub(1);
-                    
+
                     let selected = u16::try_from(forum_state.selected_idx).unwrap_or(0);
                     if selected < forum_state.scroll_offset {
                         forum_state.scroll_offset = selected;
@@ -1121,6 +1122,7 @@ impl<'a> MessagePane<'a> {
         block
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render_messages(&mut self, area: Rect, buf: &mut Buffer, state: &mut MessagePaneState) {
         let block = self.build_block(state);
         let inner_area = block.inner(area);
@@ -1163,21 +1165,21 @@ impl<'a> MessagePane<'a> {
             // Render error as a red message at the bottom if not loading/empty
             // If loading state is Error, it's handled above. This handles transient errors
             // while messages are still visible.
-             if matches!(data.loading_state(), LoadingState::Loaded) {
-                 let error_para = Paragraph::new(format!("Error: {error_msg}"))
+            if matches!(data.loading_state(), LoadingState::Loaded) {
+                let error_para = Paragraph::new(format!("Error: {error_msg}"))
                     .style(style.error_style)
                     .alignment(Alignment::Center);
-                 
-                 let error_area = Rect::new(
-                     inner_area.x, 
-                     inner_area.bottom().saturating_sub(1), 
-                     inner_area.width, 
-                     1
-                 );
-                 // Clear the area first to ensure legibility
-                 Clear.render(error_area, buf);
-                 error_para.render(error_area, buf);
-             }
+
+                let error_area = Rect::new(
+                    inner_area.x,
+                    inner_area.bottom().saturating_sub(1),
+                    inner_area.width,
+                    1,
+                );
+                // Clear the area first to ensure legibility
+                Clear.render(error_area, buf);
+                error_para.render(error_area, buf);
+            }
         }
 
         let content_height: usize = data
@@ -1261,17 +1263,12 @@ impl<'a> MessagePane<'a> {
         scrollbar.render(scrollbar_area, buf);
     }
 
-    fn render_forum(
-        &self,
-        area: Rect,
-        buf: &mut Buffer,
-        state: &mut MessagePaneState,
-    ) {
+    fn render_forum(&self, area: Rect, buf: &mut Buffer, state: &mut MessagePaneState) {
         let focused = state.is_focused();
         let block = self.build_block(state);
         let inner_area = block.inner(area);
         block.render(area, buf);
-        
+
         state.update_dimensions(0, inner_area.height);
 
         let ViewMode::Forum(forum_state) = &mut state.view_mode else {
@@ -1286,15 +1283,15 @@ impl<'a> MessagePane<'a> {
 
         let visible_count = inner_area.height / THREAD_CARD_HEIGHT;
         let visible_count_usize = usize::from(visible_count);
-        
+
         if forum_state.needs_scroll_to_selection && visible_count > 0 {
             let selected = u16::try_from(forum_state.selected_idx).unwrap_or(u16::MAX);
             forum_state.scroll_offset = (selected + 1).saturating_sub(visible_count);
             forum_state.needs_scroll_to_selection = false;
         }
-        
+
         let mut start_idx = forum_state.scroll_offset as usize;
-        
+
         if start_idx >= forum_state.threads.len() {
             start_idx = forum_state.threads.len().saturating_sub(1);
             forum_state.scroll_offset = u16::try_from(start_idx).unwrap_or(0);
@@ -1302,26 +1299,40 @@ impl<'a> MessagePane<'a> {
 
         let count_to_render = visible_count_usize.min(forum_state.threads.len() - start_idx);
         let end_idx = start_idx + count_to_render;
-        
-        let mut current_y = inner_area.y;
-        
-        for (i, thread) in forum_state.threads.iter().enumerate().skip(start_idx).take(count_to_render) {
-             let is_last = i == end_idx - 1;
-             
-             let height = if is_last {
-                 inner_area.bottom().saturating_sub(current_y)
-             } else {
-                 THREAD_CARD_HEIGHT
-             };
-             
-             if height == 0 { break; }
 
-             let card_area = Rect::new(inner_area.x, current_y, inner_area.width - 1, height);
-             self.render_thread_card(card_area, buf, thread, i == forum_state.selected_idx, focused);
-             
-             current_y += height;
+        let mut current_y = inner_area.y;
+
+        for (i, thread) in forum_state
+            .threads
+            .iter()
+            .enumerate()
+            .skip(start_idx)
+            .take(count_to_render)
+        {
+            let is_last = i == end_idx - 1;
+
+            let height = if is_last {
+                inner_area.bottom().saturating_sub(current_y)
+            } else {
+                THREAD_CARD_HEIGHT
+            };
+
+            if height == 0 {
+                break;
+            }
+
+            let card_area = Rect::new(inner_area.x, current_y, inner_area.width - 1, height);
+            self.render_thread_card(
+                card_area,
+                buf,
+                thread,
+                i == forum_state.selected_idx,
+                focused,
+            );
+
+            current_y += height;
         }
-        
+
         let scroll_lengths = ScrollLengths {
             content_len: forum_state.threads.len(),
             viewport_len: visible_count_usize,
@@ -1331,7 +1342,7 @@ impl<'a> MessagePane<'a> {
             .glyph_set(GlyphSet::unicode())
             .track_style(self.style.scrollbar_track_style)
             .thumb_style(self.style.scrollbar_thumb_style);
-            
+
         let scrollbar_area = Rect {
             x: inner_area.x + inner_area.width.saturating_sub(1),
             y: inner_area.y,
@@ -1349,88 +1360,115 @@ impl<'a> MessagePane<'a> {
         selected: bool,
         focused: bool,
     ) {
-         let card_style = if selected {
-             Style::default().bg(Color::Rgb(30, 30, 30))
-         } else {
-             Style::default()
-         };
-         
-         for y in area.top()..area.bottom() {
-             for x in area.left()..area.right() {
-                 if let Some(cell) = buf.cell_mut((x, y)) {
-                     cell.reset();
-                     cell.set_style(card_style);
-                 }
-             }
-         }
-         
-         if selected && focused {
-             for y in area.top()..area.bottom() {
-                 if let Some(cell) = buf.cell_mut((area.left(), y)) {
-                     cell.set_symbol("│");
-                     cell.set_style(self.style.border_style_focused);
-                 }
-             }
-         }
+        let card_style = if selected {
+            Style::default().bg(Color::Rgb(30, 30, 30))
+        } else {
+            Style::default()
+        };
 
-         let content_area = Rect::new(area.x + 2, area.y + 1, area.width.saturating_sub(4), area.height.saturating_sub(2));
-         
-         let title_style = self.style.title_style;
-         let mut line1_spans = vec![
-             Span::styled(&thread.name, title_style),
-             Span::raw(" "),
-         ];
-         if thread.new {
-              line1_spans.push(Span::styled(" NEW ", Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)));
-         }
-         let line1 = Line::from(line1_spans);
-         buf.set_line(content_area.x, content_area.y, &line1, content_area.width);
-         
-         let author_name = thread.starter_message
-             .as_ref()
-             .map(|m| m.author().display_name())
-             .or_else(|| self.data.get_author_name(&thread.author_id).map(String::from))
-             .unwrap_or_else(|| thread.author_id.clone());
-         
-         let time_str = thread.last_activity_at
-             .as_deref()
-             .map_or_else(|| "?".to_string(), crate::presentation::ui::utils::format_iso_timestamp);
-         
-         let mut meta_spans = vec![
-             Span::styled(format!("@{author_name}"), self.style.author_style),
-             Span::styled(" • ", Style::default().fg(Color::Gray)),
-             Span::styled(time_str, Style::default().fg(Color::Gray)),
-             Span::styled(" | ", Style::default().fg(Color::Gray)),
-         ];
-         
-         for tag_id in &thread.applied_tags {
-             meta_spans.push(Span::styled(format!("[{tag_id}] "), Style::default().fg(Color::Blue)));
-         }
-         
-         let line2 = Line::from(meta_spans);
-         buf.set_line(content_area.x, content_area.y + 1, &line2, content_area.width);
-         
-         if let Some(starter) = &thread.starter_message {
-             let content = starter.content();
-             let wrapped = wrap_text(content, content_area.width as usize);
-             for i in 0..2 {
-                 if let Some(line) = wrapped.get(i) {
-                     buf.set_string(content_area.x, content_area.y + 2 + u16::try_from(i).unwrap_or(0), line, self.style.content_style);
-                 }
-             }
-         }
-         
-         let upvotes = thread.reaction_count;
-         
-         let replies = thread.message_count;
-         
-         let footer_text = format!("▲ {upvotes}  💬 {replies}");
-         let footer_span = Span::styled(footer_text, Style::default().fg(Color::Green));
-         let footer_line = Line::from(footer_span).alignment(Alignment::Right);
-         
-         let footer_para = Paragraph::new(footer_line);
-         let footer_area = Rect::new(content_area.x, area.bottom() - 2, content_area.width, 1);
-         footer_para.render(footer_area, buf);
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_style(card_style);
+                }
+            }
+        }
+
+        if selected && focused {
+            for y in area.top()..area.bottom() {
+                if let Some(cell) = buf.cell_mut((area.left(), y)) {
+                    cell.set_symbol("│");
+                    cell.set_style(self.style.border_style_focused);
+                }
+            }
+        }
+
+        let content_area = Rect::new(
+            area.x + 2,
+            area.y + 1,
+            area.width.saturating_sub(4),
+            area.height.saturating_sub(2),
+        );
+
+        let title_style = self.style.title_style;
+        let mut line1_spans = vec![Span::styled(&thread.name, title_style), Span::raw(" ")];
+        if thread.new {
+            line1_spans.push(Span::styled(
+                " NEW ",
+                Style::default()
+                    .bg(Color::Yellow)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        let line1 = Line::from(line1_spans);
+        buf.set_line(content_area.x, content_area.y, &line1, content_area.width);
+
+        let author_name = thread
+            .starter_message
+            .as_ref()
+            .map(|m| m.author().display_name())
+            .or_else(|| {
+                self.data
+                    .get_author_name(&thread.author_id)
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| thread.author_id.clone());
+
+        let time_str = thread.last_activity_at.as_deref().map_or_else(
+            || "?".to_string(),
+            crate::presentation::ui::utils::format_iso_timestamp,
+        );
+
+        let mut meta_spans = vec![
+            Span::styled(format!("@{author_name}"), self.style.author_style),
+            Span::styled(" • ", Style::default().fg(Color::Gray)),
+            Span::styled(time_str, Style::default().fg(Color::Gray)),
+            Span::styled(" | ", Style::default().fg(Color::Gray)),
+        ];
+
+        for tag_id in &thread.applied_tags {
+            meta_spans.push(Span::styled(
+                format!("[{tag_id}] "),
+                Style::default().fg(Color::Blue),
+            ));
+        }
+
+        let line2 = Line::from(meta_spans);
+        buf.set_line(
+            content_area.x,
+            content_area.y + 1,
+            &line2,
+            content_area.width,
+        );
+
+        if let Some(starter) = &thread.starter_message {
+            let content = starter.content();
+            let wrapped = wrap_text(content, content_area.width as usize);
+            for i in 0..2 {
+                if let Some(line) = wrapped.get(i) {
+                    buf.set_string(
+                        content_area.x,
+                        content_area.y + 2 + u16::try_from(i).unwrap_or(0),
+                        line,
+                        self.style.content_style,
+                    );
+                }
+            }
+        }
+
+        let upvotes = thread.reaction_count;
+
+        let replies = thread.message_count;
+
+        let footer_text = format!("▲ {upvotes}  💬 {replies}");
+        let footer_span = Span::styled(footer_text, Style::default().fg(Color::Green));
+        let footer_line = Line::from(footer_span).alignment(Alignment::Right);
+
+        let footer_para = Paragraph::new(footer_line);
+        let footer_area = Rect::new(content_area.x, area.bottom() - 2, content_area.width, 1);
+        footer_para.render(footer_area, buf);
     }
 }
 
@@ -1989,12 +2027,12 @@ mod tests {
             global_name: None,
         };
         Message::new(
-            id.into(), 
-            ChannelId(100), 
-            author, 
-            content.to_string(), 
+            id.into(),
+            ChannelId(100),
+            author,
+            content.to_string(),
             Local::now(),
-            crate::domain::entities::MessageKind::Default
+            crate::domain::entities::MessageKind::Default,
         )
     }
 

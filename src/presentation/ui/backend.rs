@@ -18,6 +18,10 @@ pub enum Action {
         guilds: Vec<crate::domain::entities::Guild>,
         dms: Vec<DirectMessageChannel>,
         read_states: std::collections::HashMap<ChannelId, crate::domain::entities::ReadState>,
+        initial_guild_id: Option<GuildId>,
+        initial_channel_id: Option<ChannelId>,
+        initial_channels: Option<Vec<crate::domain::entities::Channel>>,
+        initial_messages: Option<Vec<Message>>,
     },
     GuildChannelsLoaded {
         guild_id: GuildId,
@@ -107,6 +111,8 @@ pub enum BackendCommand {
     LoadInitialData {
         token: AuthToken,
         user: crate::domain::entities::User,
+        initial_guild_id: Option<GuildId>,
+        initial_channel_id: Option<ChannelId>,
     },
 }
 
@@ -184,12 +190,21 @@ impl Backend {
                     }
                 }
             }
-            BackendCommand::LoadForumThreads { channel_id, guild_id, token, offset } => {
-                match self.discord_data.fetch_forum_threads(&token, channel_id, guild_id, offset, Some(50)).await {
+            BackendCommand::LoadForumThreads {
+                channel_id,
+                guild_id,
+                token,
+                offset,
+            } => {
+                match self
+                    .discord_data
+                    .fetch_forum_threads(&token, channel_id, guild_id, offset, Some(50))
+                    .await
+                {
                     Ok(mut threads) => {
                         debug!(channel_id = %channel_id, count = threads.len(), "Loaded forum threads");
                         threads.reverse();
-                        
+
                         let _ = self.action_tx.send(Action::ForumThreadsLoaded {
                             channel_id,
                             threads,
@@ -270,7 +285,9 @@ impl Backend {
                     }
                     Err(e) => {
                         error!(error = %e, "Failed to delete message");
-                        let _ = self.action_tx.send(Action::MessageDeleteError(e.to_string()));
+                        let _ = self
+                            .action_tx
+                            .send(Action::MessageDeleteError(e.to_string()));
                     }
                 }
             }
@@ -298,13 +315,52 @@ impl Backend {
                     warn!(error = %e, "Failed to ack message");
                 }
             }
-            BackendCommand::LoadInitialData { token, user } => {
+            BackendCommand::LoadInitialData {
+                token,
+                user,
+                initial_guild_id,
+                initial_channel_id,
+            } => {
                 let guilds_future = self.discord_data.fetch_guilds(&token);
                 let dms_future = self.discord_data.fetch_dm_channels(&token);
                 let read_states_future = self.discord_data.fetch_read_states(&token);
 
-                let (guilds_result, dms_result, read_states_result) =
-                    tokio::join!(guilds_future, dms_future, read_states_future);
+                let channels_future = async {
+                    if let Some(gid) = initial_guild_id {
+                        self.discord_data
+                            .fetch_channels(&token, gid.as_u64())
+                            .await
+                            .ok()
+                    } else {
+                        None
+                    }
+                };
+
+                let messages_future = async {
+                    if let Some(cid) = initial_channel_id {
+                        let options = FetchMessagesOptions::default().with_limit(50);
+                        self.discord_data
+                            .fetch_messages(&token, cid.as_u64(), options)
+                            .await
+                            .ok()
+                    } else {
+                        None
+                    }
+                };
+
+                let (
+                    guilds_result,
+                    dms_result,
+                    read_states_result,
+                    initial_channels,
+                    initial_messages,
+                ) = tokio::join!(
+                    guilds_future,
+                    dms_future,
+                    read_states_future,
+                    channels_future,
+                    messages_future
+                );
 
                 let guilds = match guilds_result {
                     Ok(g) => g,
@@ -335,6 +391,10 @@ impl Backend {
                     guilds,
                     dms,
                     read_states,
+                    initial_guild_id,
+                    initial_channel_id,
+                    initial_channels,
+                    initial_messages,
                 });
             }
         }

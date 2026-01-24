@@ -298,8 +298,8 @@ mod tests {
 
     #[test]
     fn test_display_name_with_global_name() {
-        let user = User::new(123_u64, "handle", "0", None, false, None)
-            .with_global_name("Display Name");
+        let user =
+            User::new(123_u64, "handle", "0", None, false, None).with_global_name("Display Name");
         assert_eq!(user.display_name(), "Display Name");
     }
 

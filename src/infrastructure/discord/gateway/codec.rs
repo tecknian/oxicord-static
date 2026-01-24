@@ -605,10 +605,18 @@ impl EventParser {
 
     fn parse_voice_state_update(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
         let payload: super::payloads::VoiceStateUpdatePayload = serde_json::from_value(data)
-            .map_err(|e| GatewayError::serialization(format!("Failed to parse VoiceStateUpdate: {e}")))?;
+            .map_err(|e| {
+                GatewayError::serialization(format!("Failed to parse VoiceStateUpdate: {e}"))
+            })?;
 
-        let guild_id = payload.guild_id.and_then(|id| id.parse::<u64>().ok()).map(GuildId);
-        let channel_id = payload.channel_id.and_then(|id| id.parse::<u64>().ok()).map(ChannelId);
+        let guild_id = payload
+            .guild_id
+            .and_then(|id| id.parse::<u64>().ok())
+            .map(GuildId);
+        let channel_id = payload
+            .channel_id
+            .and_then(|id| id.parse::<u64>().ok())
+            .map(ChannelId);
 
         Ok(DispatchEvent::VoiceStateUpdate {
             guild_id,
@@ -626,9 +634,14 @@ impl EventParser {
 
     fn parse_voice_server_update(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
         let payload: super::payloads::VoiceServerUpdatePayload = serde_json::from_value(data)
-            .map_err(|e| GatewayError::serialization(format!("Failed to parse VoiceServerUpdate: {e}")))?;
+            .map_err(|e| {
+                GatewayError::serialization(format!("Failed to parse VoiceServerUpdate: {e}"))
+            })?;
 
-        let guild_id = payload.guild_id.parse::<u64>().map(GuildId)
+        let guild_id = payload
+            .guild_id
+            .parse::<u64>()
+            .map(GuildId)
             .map_err(|_| GatewayError::protocol("Invalid guild ID"))?;
 
         Ok(DispatchEvent::VoiceServerUpdate {
@@ -697,7 +710,7 @@ impl EventParser {
         if let Some(reference) = payload.message_reference {
             let ref_msg_id = reference.message_id.and_then(|id| id.parse::<u64>().ok());
             let ref_channel_id = reference.channel_id.and_then(|id| id.parse::<u64>().ok());
-            
+
             message = message.with_reference(MessageReference::new(
                 ref_msg_id.map(Into::into),
                 ref_channel_id.map(Into::into),
@@ -774,7 +787,7 @@ mod tests {
             "channel_id": "123456789",
             "guild_id": "987654321",
             "user_id": "111222333",
-            "timestamp": 1234567890,
+            "timestamp": 1_234_567_890,
             "member": {
                 "user": {
                     "username": "TestUser"
@@ -791,8 +804,8 @@ mod tests {
                 username,
                 ..
             } => {
-                assert_eq!(channel_id, ChannelId(123456789));
-                assert_eq!(guild_id, Some(GuildId(987654321)));
+                assert_eq!(channel_id, ChannelId(123_456_789));
+                assert_eq!(guild_id, Some(GuildId(987_654_321)));
                 assert_eq!(user_id, "111222333");
                 assert_eq!(username, Some("TestUser".to_string()));
             }
@@ -805,7 +818,7 @@ mod tests {
         let data = serde_json::json!({
             "channel_id": "123456789",
             "user_id": "111222333",
-            "timestamp": 1234567890
+            "timestamp": 1_234_567_890
         });
         let result = EventParser::parse_dispatch("TYPING_START", Some(data)).unwrap();
         match result {
@@ -816,7 +829,7 @@ mod tests {
                 username,
                 ..
             } => {
-                assert_eq!(channel_id, ChannelId(123456789));
+                assert_eq!(channel_id, ChannelId(123_456_789));
                 assert!(guild_id.is_none());
                 assert_eq!(user_id, "111222333");
                 assert!(username.is_none());
