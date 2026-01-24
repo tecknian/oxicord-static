@@ -9,9 +9,6 @@ use crate::domain::entities::AuthToken;
 use crate::domain::errors::AuthError;
 use crate::domain::ports::TokenStoragePort;
 
-/// Environment variable for Discord token.
-pub const TOKEN_ENV_VAR: &str = "DISCORDO_TOKEN";
-
 /// Resolved token with its source.
 #[derive(Debug, Clone)]
 pub struct ResolvedToken {
@@ -41,7 +38,11 @@ impl ResolveTokenUseCase {
         Self { storage_port }
     }
 
-    /// Resolves token from CLI, env, or keyring.
+    /// Resolves token from keyring or CLI/Env.
+    ///
+    /// Priority:
+    /// 1. Keyring
+    /// 2. CLI/Env (passed as argument)
     ///
     /// # Errors
     /// Returns error if storage access fails.
@@ -49,42 +50,31 @@ impl ResolveTokenUseCase {
         &self,
         cli_token: Option<String>,
     ) -> Result<Option<ResolvedToken>, AuthError> {
-        if let Some(token_str) = cli_token.filter(|s| !s.trim().is_empty()) {
-            debug!("Checking command-line token");
-            if let Some(token) = AuthToken::new(&token_str) {
-                info!("Using token from command line");
-                return Ok(Some(ResolvedToken::new(token, TokenSource::CommandLine)));
-            }
-            debug!("Command-line token has invalid format, trying other sources");
-        }
-
-        if let Ok(token_str) = std::env::var(TOKEN_ENV_VAR) {
-            let token_str = token_str.trim().to_string();
-            if !token_str.is_empty() {
-                debug!("Checking environment variable token");
-                if let Some(token) = AuthToken::new(&token_str) {
-                    info!("Using token from environment variable");
-                    return Ok(Some(ResolvedToken::new(token, TokenSource::Environment)));
-                }
-                debug!("Environment token has invalid format, trying keyring");
-            }
-        }
-
         debug!("Checking keyring for stored token");
         match self.storage_port.get_token().await {
             Ok(Some(token)) => {
                 info!("Using token from system keyring");
-                Ok(Some(ResolvedToken::new(token, TokenSource::Keyring)))
+                return Ok(Some(ResolvedToken::new(token, TokenSource::Keyring)));
             }
             Ok(None) => {
-                debug!("No token found in any source");
-                Ok(None)
+                debug!("No token found in keyring");
             }
             Err(e) => {
-                debug!(error = %e, "Failed to check keyring, treating as no token");
-                Ok(None)
+                debug!(error = %e, "Failed to check keyring");
             }
         }
+
+        if let Some(token_str) = cli_token.filter(|s| !s.trim().is_empty()) {
+            debug!("Checking command-line/env token");
+            if let Some(token) = AuthToken::new(&token_str) {
+                info!("Using token from command line / environment");
+                return Ok(Some(ResolvedToken::new(token, TokenSource::CommandLine)));
+            }
+            debug!("Command-line token has invalid format");
+        }
+
+        debug!("No token found in any source");
+        Ok(None)
     }
 }
 
@@ -92,17 +82,30 @@ impl ResolveTokenUseCase {
 mod tests {
     use super::*;
     use crate::domain::ports::mocks::MockTokenStorage;
-    use std::env;
 
     fn make_valid_token() -> String {
         "MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.XXXXXX.YYYYYYYYYYYYYYYYYYYYYYYYYYYY".to_string()
     }
 
     #[tokio::test]
-    async fn test_cli_token_priority() {
+    async fn test_keyring_priority() {
         let storage = Arc::new(MockTokenStorage::with_token(AuthToken::new_unchecked(
-            "keyring.token.here",
+            make_valid_token(),
         )));
+        let use_case = ResolveTokenUseCase::new(storage);
+
+        let result = use_case
+            .execute(Some("cli.token.here".to_string()))
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().source, TokenSource::Keyring);
+    }
+
+    #[tokio::test]
+    async fn test_cli_fallback() {
+        let storage = Arc::new(MockTokenStorage::new());
         let use_case = ResolveTokenUseCase::new(storage);
 
         let result = use_case.execute(Some(make_valid_token())).await.unwrap();
@@ -112,26 +115,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_keyring_fallback() {
-        let storage = Arc::new(MockTokenStorage::with_token(AuthToken::new_unchecked(
-            make_valid_token(),
-        )));
-        let use_case = ResolveTokenUseCase::new(storage);
-
-        unsafe { env::remove_var(TOKEN_ENV_VAR) };
-
-        let result = use_case.execute(None).await.unwrap();
-
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().source, TokenSource::Keyring);
-    }
-
-    #[tokio::test]
     async fn test_no_token_found() {
         let storage = Arc::new(MockTokenStorage::new());
         let use_case = ResolveTokenUseCase::new(storage);
-
-        unsafe { env::remove_var(TOKEN_ENV_VAR) };
 
         let result = use_case.execute(None).await.unwrap();
 

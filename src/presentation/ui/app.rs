@@ -3,12 +3,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, EventStream, KeyEvent};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent};
 use futures_util::StreamExt;
 use ratatui::{DefaultTerminal, Frame};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+use zeroize::Zeroize;
 
 use crate::application::dto::{LoginRequest, TokenSource};
 use crate::application::services::markdown_service::MarkdownService;
@@ -23,9 +24,9 @@ use crate::infrastructure::discord::{
     DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
     GatewayIntents, TypingIndicatorManager, identity::ClientIdentity,
 };
-use crate::infrastructure::{ClipboardService, StateStore};
 use crate::infrastructure::image::{ImageLoadedEvent, ImageLoader};
-use crate::presentation::events::{EventHandler, EventResult};
+use crate::infrastructure::{ClipboardService, StateStore};
+use crate::presentation::events::EventResult;
 use crate::presentation::theme::Theme;
 use crate::presentation::ui::{
     ChatKeyResult, ChatScreen, ChatScreenState, LoginAction, LoginScreen, SplashScreen,
@@ -59,6 +60,7 @@ pub struct App {
     command_tx: mpsc::UnboundedSender<BackendCommand>,
     pending_token: Option<(String, TokenSource)>,
     current_token: Option<AuthToken>,
+    token_source: Option<TokenSource>,
     gateway_client: Option<GatewayClient>,
     gateway_rx: Option<mpsc::UnboundedReceiver<GatewayEventKind>>,
     action_tx: mpsc::UnboundedSender<Action>,
@@ -150,6 +152,7 @@ impl App {
             command_tx,
             pending_token: None,
             current_token: None,
+            token_source: None,
             gateway_client: None,
             gateway_rx: None,
             action_tx,
@@ -201,6 +204,19 @@ impl App {
         Ok(())
     }
 
+    async fn validate_auth_status(&self) -> bool {
+        match self.token_source {
+            Some(TokenSource::Keyring) => match self.resolve_token_use_case.execute(None).await {
+                Ok(Some(_)) => true,
+                _ => false,
+            },
+            Some(TokenSource::CommandLine)
+            | Some(TokenSource::Environment)
+            | Some(TokenSource::UserInput) => true,
+            None => false,
+        }
+    }
+
     async fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         let mut terminal_events = EventStream::new();
         let mut typing_cleanup_interval = interval(TYPING_CLEANUP_INTERVAL);
@@ -245,9 +261,15 @@ impl App {
                         splash.tick(ANIMATION_TICK_RATE);
 
                         if splash.state.animation_complete && self.pending_chat_state.is_some() {
-                             self.state = AppState::Chat;
-                             self.screen = CurrentScreen::Chat(self.pending_chat_state.take().unwrap());
-                             self.should_render = true;
+                             if self.validate_auth_status().await {
+                                 self.state = AppState::Chat;
+                                 self.screen = CurrentScreen::Chat(self.pending_chat_state.take().unwrap());
+                                 self.should_render = true;
+                             } else {
+                                 warn!("Token verification failed after splash");
+                                 self.transition_to_login();
+                                 self.should_render = true;
+                             }
                         } else if !splash.state.intro_finished || (splash.state.data_ready && !splash.state.animation_complete) {
                              self.should_render = true;
                         }
@@ -322,6 +344,7 @@ impl App {
                 if let Some(auth_token) = AuthToken::new(&token) {
                     self.current_token = Some(auth_token);
                 }
+                self.token_source = Some(source);
                 self.start_app_loading(response.user);
             }
             Err(e) => {
@@ -352,11 +375,12 @@ impl App {
             }
         }
 
-        if let Some((message, time)) = &self.notification 
-            && time.elapsed() < std::time::Duration::from_secs(3) {
-            use ratatui::widgets::{Block, Borders, Paragraph};
+        if let Some((message, time)) = &self.notification
+            && time.elapsed() < std::time::Duration::from_secs(3)
+        {
             use ratatui::layout::Rect;
-            use ratatui::style::{Style, Color, Modifier};
+            use ratatui::style::{Color, Modifier, Style};
+            use ratatui::widgets::{Block, Borders, Paragraph};
 
             let area = frame.area();
             let max_width = area.width.saturating_sub(2); // Keep some margin
@@ -375,7 +399,7 @@ impl App {
             let para = Paragraph::new(message.as_str())
                 .block(block)
                 .style(Style::default().add_modifier(Modifier::BOLD));
-            
+
             frame.render_widget(ratatui::widgets::Clear, rect);
             frame.render_widget(para, rect);
         }
@@ -383,7 +407,28 @@ impl App {
 
     #[allow(clippy::too_many_lines)]
     fn handle_key(&mut self, key: KeyEvent) -> EventResult {
-        if EventHandler::is_quit_event(&key) && self.state == AppState::Login {
+        if self.state == AppState::Login {
+            let is_force_quit = matches!(
+                key,
+                KeyEvent {
+                    code: KeyCode::Esc,
+                    ..
+                } | KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: crossterm::event::KeyModifiers::CONTROL,
+                    ..
+                }
+            );
+
+            if is_force_quit {
+                return EventResult::Exit;
+            }
+        } else if let KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: crossterm::event::KeyModifiers::CONTROL,
+            ..
+        } = key
+        {
             return EventResult::Exit;
         }
 
@@ -505,25 +550,25 @@ impl App {
             ChatKeyResult::Paste => {
                 let clipboard = self.clipboard_service.clone();
                 let tx = self.action_tx.clone();
-                
+
                 tokio::task::spawn_blocking(move || {
                     if let Some(image) = clipboard.get_image() {
                         let temp_dir = std::env::temp_dir();
                         let filename = format!("paste_{}.png", uuid::Uuid::new_v4());
                         let path = temp_dir.join(filename);
-                        
+
                         if let Some(img) = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
                             u32::try_from(image.width).unwrap_or_default(),
                             u32::try_from(image.height).unwrap_or_default(),
-                            image.bytes.into_owned()
+                            image.bytes.into_owned(),
                         ) {
                             if img.save(&path).is_ok() {
                                 let _ = tx.send(Action::PasteImageLoaded(path));
                                 return;
                             }
                         }
-                    } 
-                    
+                    }
+
                     if let Some(text) = clipboard.get_text() {
                         let _ = tx.send(Action::PasteTextLoaded(text));
                     }
@@ -1110,6 +1155,7 @@ impl App {
                 if let Some(auth_token) = AuthToken::new(&token) {
                     self.current_token = Some(auth_token);
                 }
+                self.token_source = Some(source);
                 self.start_app_loading(user);
             }
             Action::LoginFailure(error) => {
@@ -1237,8 +1283,14 @@ impl App {
 
     fn transition_to_login(&mut self) {
         self.disconnect_gateway();
+
+        if let Some((mut token, _)) = self.pending_token.take() {
+            token.zeroize();
+        }
+
         self.state = AppState::Login;
         self.current_token = None;
+        self.token_source = None;
         self.current_user_id = None;
         self.pending_chat_state = None;
         self.typing_manager = TypingIndicatorManager::new();

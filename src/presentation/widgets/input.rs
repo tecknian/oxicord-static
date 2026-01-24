@@ -6,6 +6,7 @@ use ratatui::{
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph, Widget},
 };
+use zeroize::Zeroize;
 
 /// Text input field widget.
 #[derive(Debug, Clone)]
@@ -16,6 +17,12 @@ pub struct TextInput {
     masked: bool,
     placeholder: String,
     label: String,
+}
+
+impl Drop for TextInput {
+    fn drop(&mut self) {
+        self.value.zeroize();
+    }
 }
 
 impl TextInput {
@@ -71,6 +78,7 @@ impl TextInput {
 
     /// Clears value.
     pub fn clear(&mut self) {
+        self.value.zeroize();
         self.value.clear();
         self.cursor = 0;
     }
