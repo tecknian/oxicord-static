@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::LazyLock;
 
 use crate::application::services::markdown_service::{MarkdownService, MentionResolver};
 use crate::domain::entities::{ChannelId, Embed, ForumThread, ImageId, Message, MessageId};
@@ -14,6 +15,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Padding, Paragraph, StatefulWidget, Widget},
 };
+use regex::Regex;
 use tui_scrollbar::{GlyphSet, ScrollBar, ScrollLengths};
 use unicode_width::UnicodeWidthStr;
 
@@ -51,6 +53,8 @@ pub struct UiMessage {
     pub image_attachments: Vec<ImageAttachment>,
     /// Pre-calculated embed layouts.
     pub rendered_embeds: Vec<RenderedEmbed>,
+    /// Cached reply preview line
+    pub reply_preview: Option<Line<'static>>,
 }
 
 impl UiMessage {
@@ -76,6 +80,7 @@ impl UiMessage {
             rendered_content: None,
             image_attachments,
             rendered_embeds: Vec::new(),
+            reply_preview: None,
         }
     }
 
@@ -500,7 +505,7 @@ impl MessagePaneData {
 
             let mut height = 1 + content_lines;
 
-            if message.is_reply() && message.referenced().is_some() {
+            if message.is_reply() {
                 height += 1;
             }
 
@@ -521,6 +526,46 @@ impl MessagePaneData {
                 rendered_embeds.push(layout);
             }
             ui_msg.rendered_embeds = rendered_embeds;
+
+            if message.is_reply() {
+                if let Some(referenced) = message.referenced() {
+                    static MENTION_RE: LazyLock<Regex> =
+                        LazyLock::new(|| Regex::new(r"<@!?(\d+)>").unwrap());
+
+                    let content = referenced.content();
+                    let resolved_content =
+                        MENTION_RE.replace_all(content, |caps: &regex::Captures| {
+                            let id = &caps[1];
+                            authors
+                                .get(id)
+                                .map_or_else(|| format!("@{id}"), |name| format!("@{name}"))
+                        });
+
+                    let snippet = truncate_string(&resolved_content, 50);
+
+                    let reply_style = Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC);
+                    let username_style = Style::default().fg(Color::Cyan);
+
+                    let spans = vec![
+                        Span::raw(" ".repeat(CONTENT_INDENT)),
+                        Span::styled("┌─ Replying to ", reply_style),
+                        Span::styled(referenced.author().display_name(), username_style),
+                        Span::styled(format!(": {snippet}"), reply_style),
+                    ];
+                    ui_msg.reply_preview = Some(Line::from(spans));
+                } else {
+                    let error_style = Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::ITALIC);
+                    let spans = vec![
+                        Span::raw(" ".repeat(CONTENT_INDENT)),
+                        Span::styled("┌─ Original message unavailable", error_style),
+                    ];
+                    ui_msg.reply_preview = Some(Line::from(spans));
+                }
+            }
 
             ui_msg.estimated_height = height;
         }
@@ -1073,7 +1118,7 @@ impl<'a> MessagePane<'a> {
 
         let mut height = 1 + content_lines;
 
-        if message.is_reply() && message.referenced().is_some() {
+        if message.is_reply() {
             height += 1;
         }
 
@@ -1231,7 +1276,8 @@ impl<'a> MessagePane<'a> {
 
         let mut current_y: i32 = 0;
 
-        for (idx, ui_msg) in data.ui_messages_mut().iter_mut().enumerate() {
+        let authors = &data.authors;
+        for (idx, ui_msg) in data.messages.iter_mut().enumerate() {
             let h = ui_msg.estimated_height as usize;
             let current_y_usize = usize::try_from(current_y).unwrap_or(0);
 
@@ -1241,6 +1287,7 @@ impl<'a> MessagePane<'a> {
                 render_ui_message(
                     ui_msg,
                     style,
+                    authors,
                     idx,
                     render_y,
                     inner_area,
@@ -1601,6 +1648,7 @@ fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffe
 fn render_ui_message(
     ui_msg: &mut UiMessage,
     style: &MessagePaneStyle,
+    _authors: &HashMap<String, String>,
     index: usize,
     render_y: i32,
     area: Rect,
@@ -1618,24 +1666,38 @@ fn render_ui_message(
         Style::default()
     };
 
-    if message.is_reply()
-        && let Some(referenced) = message.referenced()
-    {
-        if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
-            let reply_text = format!(
-                "↱ Replying to {}: {}",
-                referenced.author().display_name(),
-                truncate_string(referenced.content(), 50)
-            );
-            let reply_style = if is_selected {
-                style.reply_style.fg(Color::White)
-            } else {
-                style.reply_style
-            };
-            let indent_span = Span::raw(" ".repeat(CONTENT_INDENT));
-            let reply_line = Line::from(vec![indent_span, Span::styled(reply_text, reply_style)]);
-            let reply_para = Paragraph::new(reply_line).style(base_style);
+    if message.is_reply() {
+        if current_msg_y >= 0
+            && current_msg_y < i32::from(area.height)
+            && let Some(preview) = &ui_msg.reply_preview
+        {
+            let render_line = if is_selected {
+                let mut spans = preview.spans.clone();
+                if spans.len() == 4 {
+                    let username_content = spans[2].content.clone();
+                    let indent_content = spans[0].content.clone();
 
+                    for span in &mut spans {
+                        if span.content == username_content {
+                            span.style = style
+                                .selected_style
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD);
+                        } else if span.content != indent_content {
+                            span.style = style.selected_style.fg(Color::White);
+                        }
+                    }
+                } else {
+                    for span in &mut spans {
+                        span.style = style.selected_style.fg(Color::White);
+                    }
+                }
+                Line::from(spans)
+            } else {
+                preview.clone()
+            };
+
+            let reply_para = Paragraph::new(render_line).style(base_style);
             let reply_area = Rect::new(
                 area.x,
                 area.y
