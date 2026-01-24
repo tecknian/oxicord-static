@@ -15,7 +15,9 @@ use crate::application::dto::{LoginRequest, TokenSource};
 use crate::application::services::markdown_service::MarkdownService;
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
 use crate::domain::ConnectionStatus;
-use crate::domain::entities::{AuthToken, ChannelId, GuildId, MessageId, UserCache};
+use crate::domain::entities::{
+    AuthToken, ChannelId, GuildFolder, GuildId, MessageId, UserCache,
+};
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
     AuthPort, DiscordDataPort, EditMessageRequest, SendMessageRequest, TokenStoragePort,
@@ -52,6 +54,7 @@ enum CurrentScreen {
     Chat(Box<ChatScreenState>),
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     state: AppState,
     screen: CurrentScreen,
@@ -73,6 +76,7 @@ pub struct App {
     current_user_id: Option<String>,
     pending_chat_state: Option<Box<ChatScreenState>>,
     pending_read_states: Option<Vec<crate::domain::entities::ReadState>>,
+    pending_guild_folders: Option<Vec<GuildFolder>>,
     gateway_ready: bool,
     connection_status: ConnectionStatus,
     should_render: bool,
@@ -83,6 +87,7 @@ pub struct App {
     /// Last time we checked for images to load.
     last_image_check: Instant,
     disable_user_colors: bool,
+    group_guilds: bool,
     theme: Theme,
     identity: Arc<ClientIdentity>,
     state_store: StateStore,
@@ -101,6 +106,7 @@ impl App {
         discord_data: Arc<dyn DiscordDataPort>,
         storage_port: Arc<dyn TokenStoragePort>,
         disable_user_colors: bool,
+        group_guilds: bool,
         theme: Theme,
         identity: Arc<ClientIdentity>,
     ) -> Self {
@@ -165,6 +171,7 @@ impl App {
             current_user_id: None,
             pending_chat_state: None,
             pending_read_states: None,
+            pending_guild_folders: None,
             gateway_ready: false,
             connection_status: ConnectionStatus::Disconnected,
             should_render: true,
@@ -172,6 +179,7 @@ impl App {
             image_load_rx: None,
             last_image_check: Instant::now(),
             disable_user_colors,
+            group_guilds,
             theme,
             identity,
             state_store,
@@ -560,12 +568,11 @@ impl App {
                             u32::try_from(image.width).unwrap_or_default(),
                             u32::try_from(image.height).unwrap_or_default(),
                             image.bytes.into_owned(),
-                        ) {
-                            if img.save(&path).is_ok() {
+                        )
+                            && img.save(&path).is_ok() {
                                 let _ = tx.send(Action::PasteImageLoaded(path));
                                 return;
                             }
-                        }
                     }
 
                     if let Some(text) = clipboard.get_text() {
@@ -861,6 +868,7 @@ impl App {
                 user_id,
                 guilds,
                 read_states,
+                guild_folders,
                 ..
             } => {
                 info!(user_id = %user_id, guild_count = guilds.len(), "Gateway ready");
@@ -873,18 +881,29 @@ impl App {
 
                 if let CurrentScreen::Chat(ref mut state) = self.screen {
                     state.set_read_states(read_states_map);
+                    state.set_guild_folders(guild_folders);
                 } else {
                     if let Some(ref mut state) = self.pending_chat_state {
                         state.set_read_states(read_states_map);
+                        state.set_guild_folders(guild_folders.clone());
                     }
 
                     self.pending_read_states = Some(read_states);
+                    self.pending_guild_folders = Some(guild_folders);
 
                     if self.pending_chat_state.is_some()
                         && let CurrentScreen::Splash(splash) = &mut self.screen
                     {
                         splash.set_data_ready();
                     }
+                }
+            }
+            DispatchEvent::UserSettingsUpdate { guild_folders } => {
+                debug!("Received guild folders update");
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.set_guild_folders(guild_folders);
+                } else if let Some(ref mut state) = self.pending_chat_state {
+                    state.set_guild_folders(guild_folders);
                 }
             }
             _ => {}
@@ -1112,6 +1131,11 @@ impl App {
                     .collect();
                 chat_state.set_dm_users(dm_users);
                 chat_state.set_guilds(guilds);
+
+                if let Some(folders) = self.pending_guild_folders.take() {
+                    chat_state.set_guild_folders(folders);
+                }
+                chat_state.set_group_guilds(self.group_guilds);
 
                 let mut final_read_states = read_states;
                 if let Some(pending) = self.pending_read_states.take() {

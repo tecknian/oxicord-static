@@ -171,6 +171,7 @@ impl EventParser {
             "GUILD_UPDATE" => Self::parse_guild_update(data),
             "GUILD_DELETE" => Self::parse_guild_delete(data),
             "USER_UPDATE" => Self::parse_user_update(data),
+            "USER_SETTINGS_UPDATE" => Self::parse_user_settings_update(data),
             "VOICE_STATE_UPDATE" => Self::parse_voice_state_update(data),
             "VOICE_SERVER_UPDATE" => Self::parse_voice_server_update(data),
             _ => Ok(DispatchEvent::Unknown {
@@ -211,12 +212,30 @@ impl EventParser {
             })
             .collect();
 
+        let guild_folders = ready
+            .user_settings
+            .map(|s| s.guild_folders)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| crate::domain::entities::GuildFolder {
+                id: f.id,
+                name: f.name,
+                color: f.color,
+                guild_ids: f
+                    .guild_ids
+                    .into_iter()
+                    .filter_map(|id| id.parse::<u64>().ok().map(GuildId))
+                    .collect(),
+            })
+            .collect();
+
         Ok(DispatchEvent::Ready {
             session_id: ready.session_id,
             resume_gateway_url: ready.resume_gateway_url,
             user_id: ready.user.id,
             guilds,
             read_states,
+            guild_folders,
         })
     }
 
@@ -601,6 +620,28 @@ impl EventParser {
             discriminator: payload.discriminator,
             avatar: payload.avatar,
         })
+    }
+
+    fn parse_user_settings_update(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
+        let payload: super::payloads::UserSettingsPayload = serde_json::from_value(data)
+            .map_err(|e| GatewayError::serialization(format!("Failed to parse UserSettingsUpdate: {e}")))?;
+
+        let guild_folders = payload
+            .guild_folders
+            .into_iter()
+            .map(|f| crate::domain::entities::GuildFolder {
+                id: f.id,
+                name: f.name,
+                color: f.color,
+                guild_ids: f
+                    .guild_ids
+                    .into_iter()
+                    .filter_map(|id| id.parse::<u64>().ok().map(GuildId))
+                    .collect(),
+            })
+            .collect();
+
+        Ok(DispatchEvent::UserSettingsUpdate { guild_folders })
     }
 
     fn parse_voice_state_update(data: serde_json::Value) -> GatewayResult<DispatchEvent> {

@@ -2,7 +2,9 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 
-use crate::domain::entities::{Channel, ChannelId, GuildId, Message, MessageId, ReadState};
+use crate::domain::entities::{
+    Channel, ChannelId, GuildFolder, GuildId, Message, MessageId, ReadState,
+};
 
 /// Commands that can be sent to the gateway.
 #[derive(Debug, Clone)]
@@ -71,6 +73,7 @@ pub enum DispatchEvent {
         user_id: String,
         guilds: Vec<UnavailableGuild>,
         read_states: Vec<ReadState>,
+        guild_folders: Vec<GuildFolder>,
     },
 
     MessageCreate {
@@ -164,6 +167,10 @@ pub enum DispatchEvent {
         avatar: Option<String>,
     },
 
+    UserSettingsUpdate {
+        guild_folders: Vec<GuildFolder>,
+    },
+
     VoiceStateUpdate {
         guild_id: Option<GuildId>,
         channel_id: Option<ChannelId>,
@@ -208,6 +215,7 @@ impl DispatchEvent {
             Self::GuildUpdate { .. } => "GUILD_UPDATE",
             Self::GuildDelete { .. } => "GUILD_DELETE",
             Self::UserUpdate { .. } => "USER_UPDATE",
+            Self::UserSettingsUpdate { .. } => "USER_SETTINGS_UPDATE",
             Self::VoiceStateUpdate { .. } => "VOICE_STATE_UPDATE",
             Self::VoiceServerUpdate { .. } => "VOICE_SERVER_UPDATE",
             Self::Unknown { .. } => "UNKNOWN",

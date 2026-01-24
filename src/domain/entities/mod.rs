@@ -15,7 +15,7 @@ pub use channel::{
     ThreadMetadata, VideoQualityMode,
 };
 pub use forum::ForumThread;
-pub use guild::{Guild, GuildId, NsfwLevel, PremiumTier, VerificationLevel};
+pub use guild::{Guild, GuildFolder, GuildId, NsfwLevel, PremiumTier, VerificationLevel};
 pub use image::{ImageId, ImageMetadata, ImageSource, ImageStatus, LoadedImage};
 pub use message::{
     Attachment, Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedImage, EmbedProvider,

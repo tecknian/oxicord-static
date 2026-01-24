@@ -207,6 +207,24 @@ pub struct ReadyPayload {
     pub guilds: Vec<ReadyGuild>,
     #[serde(default)]
     pub read_state: Vec<ReadStatePayload>,
+    #[serde(default)]
+    pub user_settings: Option<UserSettingsPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserSettingsPayload {
+    #[serde(default)]
+    pub guild_folders: Vec<GuildFolderPayload>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GuildFolderPayload {
+    #[serde(default)]
+    pub id: Option<u64>,
+    pub name: Option<String>,
+    pub color: Option<u64>,
+    #[serde(default)]
+    pub guild_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

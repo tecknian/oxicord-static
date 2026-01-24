@@ -59,6 +59,7 @@ fn create_app() -> Result<(App, Option<String>)> {
         discord_client,
         token_storage,
         config.disable_user_colors,
+        config.ui.group_guilds,
         theme,
         identity,
     );

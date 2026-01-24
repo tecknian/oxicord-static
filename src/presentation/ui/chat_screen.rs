@@ -12,8 +12,8 @@ use crate::application::services::autocomplete_service::AutocompleteService;
 use crate::application::services::markdown_service::MarkdownService;
 use crate::domain::ConnectionStatus;
 use crate::domain::entities::{
-    CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildId, Message, MessageId, User,
-    UserCache,
+    CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, Message, MessageId,
+    User, UserCache,
 };
 use crate::domain::keybinding::{Action, Keybind};
 use crate::presentation::commands::{CommandRegistry, HasCommands};
@@ -268,6 +268,14 @@ impl ChatScreenState {
 
     pub fn set_guilds(&mut self, guilds: Vec<Guild>) {
         self.guilds_tree_data.set_guilds(guilds);
+    }
+
+    pub fn set_guild_folders(&mut self, folders: Vec<GuildFolder>) {
+        self.guilds_tree_data.set_folders(folders);
+    }
+
+    pub fn set_group_guilds(&mut self, group: bool) {
+        self.guilds_tree_data.set_group_guilds(group);
     }
 
     pub fn set_channels(&mut self, guild_id: GuildId, channels: Vec<Channel>) {

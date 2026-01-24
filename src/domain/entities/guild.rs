@@ -359,6 +359,14 @@ impl Guild {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GuildFolder {
+    pub id: Option<u64>,
+    pub name: Option<String>,
+    pub color: Option<u64>,
+    pub guild_ids: Vec<GuildId>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

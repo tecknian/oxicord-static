@@ -11,7 +11,9 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, StatefulWidget, Widget},
 };
 
-use crate::domain::entities::{Channel, ChannelId, ChannelKind, Guild, GuildId, ReadState};
+use crate::domain::entities::{
+    Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, ReadState,
+};
 use crate::domain::keybinding::Action;
 use crate::presentation::commands::CommandRegistry;
 use crate::presentation::theme::Theme;
@@ -23,6 +25,8 @@ pub enum TreeNodeId {
     DirectMessages,
 
     DirectMessageUser(String),
+
+    Folder(Option<u64>),
 
     Guild(GuildId),
 
@@ -38,6 +42,7 @@ impl std::fmt::Display for TreeNodeId {
         match self {
             Self::DirectMessages => write!(f, "dm"),
             Self::DirectMessageUser(id) => write!(f, "dm:{id}"),
+            Self::Folder(id) => write!(f, "folder:{id:?}"),
             Self::Guild(id) => write!(f, "guild:{id}"),
             Self::Category(id) => write!(f, "cat:{id}"),
             Self::Channel(id) => write!(f, "ch:{id}"),
@@ -181,7 +186,10 @@ impl GuildsTreeState {
                 if let Some(selected) = &self.selected {
                     let can_expand = matches!(
                         selected,
-                        TreeNodeId::Guild(_) | TreeNodeId::Category(_) | TreeNodeId::DirectMessages
+                        TreeNodeId::Guild(_)
+                            | TreeNodeId::Category(_)
+                            | TreeNodeId::DirectMessages
+                            | TreeNodeId::Folder(_)
                     );
 
                     if can_expand && !self.expanded.contains(selected) {
@@ -222,7 +230,9 @@ impl GuildsTreeState {
                             }
                             None
                         }
-                        TreeNodeId::Category(_) | TreeNodeId::DirectMessages => {
+                        TreeNodeId::Category(_)
+                        | TreeNodeId::DirectMessages
+                        | TreeNodeId::Folder(_) => {
                             self.toggle_current();
                             None
                         }
@@ -236,6 +246,7 @@ impl GuildsTreeState {
                 let id = match node {
                     TreeNodeId::DirectMessages => "direct_messages".to_string(),
                     TreeNodeId::DirectMessageUser(id) => id.clone(),
+                    TreeNodeId::Folder(id) => format!("{id:?}"),
                     TreeNodeId::Guild(id) | TreeNodeId::Placeholder(id) => id.to_string(),
                     TreeNodeId::Category(id) | TreeNodeId::Channel(id) => id.to_string(),
                 };
@@ -280,6 +291,7 @@ pub struct GuildsTreeStyle {
     pub dm_style: Style,
     pub placeholder_style: Style,
     pub tree_guide_style: Style,
+    pub folder_style: Style,
 }
 
 impl GuildsTreeStyle {
@@ -301,6 +313,7 @@ impl GuildsTreeStyle {
                 .add_modifier(Modifier::BOLD),
             dm_style: Style::default().fg(theme.accent),
             tree_guide_style: Style::default().fg(Color::Gray),
+            folder_style: Style::default().fg(theme.accent),
             ..Self::default()
         }
     }
@@ -336,6 +349,7 @@ impl Default for GuildsTreeStyle {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
             tree_guide_style: Style::default().fg(Color::Gray),
+            folder_style: Style::default().fg(Color::Blue),
         }
     }
 }
@@ -351,6 +365,8 @@ pub struct FlattenedNode<'a> {
 /// Data container for the guilds tree.
 pub struct GuildsTreeData {
     guilds: Vec<Guild>,
+    folders: Vec<GuildFolder>,
+    group_guilds: bool,
     channels_by_guild: std::collections::HashMap<GuildId, Vec<Channel>>,
     dm_users: Vec<(String, String)>,
     active_guild_id: Option<GuildId>,
@@ -363,6 +379,8 @@ impl GuildsTreeData {
     pub fn new() -> Self {
         Self {
             guilds: Vec::new(),
+            folders: Vec::new(),
+            group_guilds: false,
             channels_by_guild: std::collections::HashMap::new(),
             dm_users: Vec::new(),
             active_guild_id: None,
@@ -373,6 +391,14 @@ impl GuildsTreeData {
 
     pub fn set_guilds(&mut self, guilds: Vec<Guild>) {
         self.guilds = guilds;
+    }
+
+    pub fn set_folders(&mut self, folders: Vec<GuildFolder>) {
+        self.folders = folders;
+    }
+
+    pub fn set_group_guilds(&mut self, group: bool) {
+        self.group_guilds = group;
     }
 
     pub fn set_channels(&mut self, guild_id: GuildId, channels: Vec<Channel>) {
@@ -475,6 +501,7 @@ impl GuildsTreeData {
         }
     }
 
+    #[allow(clippy::items_after_statements)]
     #[must_use]
     pub fn flatten<'a>(
         &'a self,
@@ -484,20 +511,88 @@ impl GuildsTreeData {
     ) -> Vec<FlattenedNode<'a>> {
         let mut nodes = Vec::new();
 
-        let dm_expanded = state.expanded.contains(&TreeNodeId::DirectMessages);
+        enum RootItem<'a> {
+            Dm,
+            Folder(&'a GuildFolder),
+            Guild(&'a Guild),
+        }
+
+        let mut items = Vec::new();
+        items.push(RootItem::Dm);
+
+        if self.group_guilds {
+            let mut processed_guilds = std::collections::HashSet::new();
+            for folder in &self.folders {
+                items.push(RootItem::Folder(folder));
+                for gid in &folder.guild_ids {
+                    processed_guilds.insert(*gid);
+                }
+            }
+            for guild in &self.guilds {
+                if !processed_guilds.contains(&guild.id()) {
+                    items.push(RootItem::Guild(guild));
+                }
+            }
+        } else {
+            for guild in &self.guilds {
+                items.push(RootItem::Guild(guild));
+            }
+        }
+
+        for item in items {
+            let children_base_indent = "";
+
+            match item {
+                RootItem::Dm => {
+                    self.render_dm_node(&mut nodes, state, style, children_base_indent);
+                }
+                RootItem::Folder(folder) => {
+                    self.render_folder_node(
+                        &mut nodes,
+                        folder,
+                        state,
+                        width,
+                        style,
+                        children_base_indent,
+                    );
+                }
+                RootItem::Guild(guild) => {
+                    self.render_guild_node(
+                        &mut nodes,
+                        guild,
+                        state,
+                        width,
+                        style,
+                        "",
+                        children_base_indent,
+                    );
+                }
+            }
+        }
+
+        nodes
+    }
+
+    fn render_dm_node<'a>(
+        &'a self,
+        nodes: &mut Vec<FlattenedNode<'a>>,
+        state: &GuildsTreeState,
+        style: &GuildsTreeStyle,
+        children_base_indent: &'a str,
+    ) {
+        let expanded = state.expanded.contains(&TreeNodeId::DirectMessages);
+        let arrow = if expanded { "▾ " } else { "▸ " };
+
         nodes.push(FlattenedNode {
             id: TreeNodeId::DirectMessages,
             label: Line::from(vec![
-                Span::styled(
-                    if dm_expanded { "▾ " } else { "▸ " },
-                    style.tree_guide_style,
-                ),
+                Span::styled(arrow, style.tree_guide_style),
                 Span::raw("Direct Messages"),
             ]),
             depth: 0,
         });
 
-        if dm_expanded {
+        if expanded {
             for (i, (id, name)) in self.dm_users.iter().enumerate() {
                 let is_last = i == self.dm_users.len() - 1;
                 let prefix = if is_last { "└── " } else { "├── " };
@@ -516,6 +611,7 @@ impl GuildsTreeData {
                 nodes.push(FlattenedNode {
                     id: TreeNodeId::DirectMessageUser(id.clone()),
                     label: Line::from(vec![
+                        Span::styled(children_base_indent, style.tree_guide_style),
                         Span::styled(prefix, style.tree_guide_style),
                         Span::styled("@ ", current_style),
                         Span::styled(clean_name, current_style),
@@ -524,50 +620,170 @@ impl GuildsTreeData {
                 });
             }
         }
+    }
 
-        for (i, guild) in self.guilds.iter().enumerate() {
-            let _is_last_guild = i == self.guilds.len() - 1;
-            let guild_id = guild.id();
-            let expanded = state.expanded.contains(&TreeNodeId::Guild(guild_id));
+    fn render_folder_node<'a>(
+        &'a self,
+        nodes: &mut Vec<FlattenedNode<'a>>,
+        folder: &'a GuildFolder,
+        state: &GuildsTreeState,
+        width: u16,
+        style: &GuildsTreeStyle,
+        children_base_indent: &'a str,
+    ) {
+        let expanded = state.expanded.contains(&TreeNodeId::Folder(folder.id));
+        let folder_name = folder.name.as_deref().unwrap_or("Folder");
+        let folder_icon = " ";
 
-            let is_active = self.active_guild_id() == Some(guild_id);
-            let guild_style = if is_active {
-                style.active_guild_style
-            } else if guild.has_unread() {
-                style.guild_unread_style
-            } else {
-                style.guild_style
-            };
+        let mut folder_style = style.folder_style;
+        if let Some(color) = folder.color {
+            let r = ((color >> 16) & 0xFF) as u8;
+            let g = ((color >> 8) & 0xFF) as u8;
+            let b = (color & 0xFF) as u8;
+            folder_style = folder_style.fg(Color::Rgb(r, g, b));
+        }
 
-            let clean_name = clean_text(guild.name());
+        let arrow = if expanded { "▾ " } else { "▸ " };
+        nodes.push(FlattenedNode {
+            id: TreeNodeId::Folder(folder.id),
+            label: Line::from(vec![
+                Span::styled(arrow, style.tree_guide_style),
+                Span::styled(folder_icon, folder_style),
+                Span::styled(folder_name, folder_style),
+            ]),
+            depth: 0,
+        });
 
-            let arrow = if expanded { "▾ " } else { "▸ " };
-            nodes.push(FlattenedNode {
-                id: TreeNodeId::Guild(guild_id),
-                label: Line::from(vec![
-                    Span::styled(arrow, style.tree_guide_style),
-                    Span::styled(clean_name, guild_style),
-                ]),
-                depth: 0,
-            });
-
-            if expanded {
-                if let Some(channels) = self.channels(guild_id) {
-                    self.flatten_channels(&mut nodes, channels, state, width, style);
-                } else {
-                    nodes.push(FlattenedNode {
-                        id: TreeNodeId::Placeholder(guild_id),
-                        label: Line::from(vec![
-                            Span::styled("└── ", style.tree_guide_style),
-                            Span::styled("Loading...", style.placeholder_style),
-                        ]),
-                        depth: 1,
-                    });
+        if expanded {
+            for (i, guild_id) in folder.guild_ids.iter().enumerate() {
+                if let Some(guild) = self.guilds.iter().find(|g| g.id() == *guild_id) {
+                    let is_last_in_folder = i == folder.guild_ids.len() - 1;
+                    
+                    let prefix = if is_last_in_folder { "└── " } else { "├── " };
+                    
+                    let guild_sibling_indent = if is_last_in_folder { "    " } else { "│   " };
+                    
+                    self.render_guild_node_nested(
+                        nodes,
+                        guild,
+                        state,
+                        width,
+                        style,
+                        children_base_indent,
+                        prefix,
+                        guild_sibling_indent
+                    );
                 }
             }
         }
+    }
 
-        nodes
+    #[allow(clippy::too_many_arguments)]
+    fn render_guild_node_nested<'a>(
+        &'a self,
+        nodes: &mut Vec<FlattenedNode<'a>>,
+        guild: &'a Guild,
+        state: &GuildsTreeState,
+        width: u16,
+        style: &GuildsTreeStyle,
+        base_indent_1: &'a str,
+        connector: &'a str,
+        base_indent_2: &'a str,
+    ) {
+        let guild_id = guild.id();
+        let expanded = state.expanded.contains(&TreeNodeId::Guild(guild_id));
+
+        let is_active = self.active_guild_id() == Some(guild_id);
+        let guild_style = if is_active {
+            style.active_guild_style
+        } else if guild.has_unread() {
+            style.guild_unread_style
+        } else {
+            style.guild_style
+        };
+
+        let clean_name = clean_text(guild.name());
+        let arrow = if expanded { "▾ " } else { "▸ " };
+
+        nodes.push(FlattenedNode {
+            id: TreeNodeId::Guild(guild_id),
+            label: Line::from(vec![
+                Span::styled(base_indent_1, style.tree_guide_style),
+                Span::styled(connector, style.tree_guide_style),
+                Span::styled(arrow, style.tree_guide_style),
+                Span::styled(clean_name, guild_style),
+            ]),
+            depth: 0, 
+        });
+
+        if expanded {
+            if let Some(channels) = self.channels(guild_id) {
+                self.flatten_channels_nested(nodes, channels, state, width, style, base_indent_1, base_indent_2);
+            } else {
+                nodes.push(FlattenedNode {
+                    id: TreeNodeId::Placeholder(guild_id),
+                    label: Line::from(vec![
+                        Span::styled(base_indent_1, style.tree_guide_style),
+                        Span::styled(base_indent_2, style.tree_guide_style),
+                        Span::styled("└── ", style.tree_guide_style),
+                        Span::styled("Loading...", style.placeholder_style),
+                    ]),
+                    depth: 1,
+                });
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_guild_node<'a>(
+        &'a self,
+        nodes: &mut Vec<FlattenedNode<'a>>,
+        guild: &'a Guild,
+        state: &GuildsTreeState,
+        width: u16,
+        style: &GuildsTreeStyle,
+        _prefix_unused: &'a str,
+        children_base_indent: &'a str,
+    ) {
+        let guild_id = guild.id();
+        let expanded = state.expanded.contains(&TreeNodeId::Guild(guild_id));
+
+        let is_active = self.active_guild_id() == Some(guild_id);
+        let guild_style = if is_active {
+            style.active_guild_style
+        } else if guild.has_unread() {
+            style.guild_unread_style
+        } else {
+            style.guild_style
+        };
+
+        let clean_name = clean_text(guild.name());
+        let arrow = if expanded { "▾ " } else { "▸ " };
+
+        nodes.push(FlattenedNode {
+            id: TreeNodeId::Guild(guild_id),
+            label: Line::from(vec![
+                Span::styled(arrow, style.tree_guide_style),
+                Span::styled(clean_name, guild_style),
+            ]),
+            depth: 0,
+        });
+
+        if expanded {
+            if let Some(channels) = self.channels(guild_id) {
+                self.flatten_channels(nodes, channels, state, width, style, children_base_indent);
+            } else {
+                nodes.push(FlattenedNode {
+                    id: TreeNodeId::Placeholder(guild_id),
+                    label: Line::from(vec![
+                        Span::styled(children_base_indent, style.tree_guide_style),
+                        Span::styled("└── ", style.tree_guide_style),
+                        Span::styled("Loading...", style.placeholder_style),
+                    ]),
+                    depth: 1,
+                });
+            }
+        }
     }
 
     fn flatten_channels<'a>(
@@ -577,6 +793,21 @@ impl GuildsTreeData {
         state: &GuildsTreeState,
         width: u16,
         style: &GuildsTreeStyle,
+        base_indent: &'a str,
+    ) {
+        self.flatten_channels_nested(nodes, channels, state, width, style, base_indent, "");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn flatten_channels_nested<'a>(
+        &'a self,
+        nodes: &mut Vec<FlattenedNode<'a>>,
+        channels: &'a [Channel],
+        state: &GuildsTreeState,
+        width: u16,
+        style: &GuildsTreeStyle,
+        base_indent_1: &'a str,
+        base_indent_2: &'a str,
     ) {
         let mut categories: std::collections::HashMap<ChannelId, Vec<&Channel>> =
             std::collections::HashMap::new();
@@ -599,7 +830,7 @@ impl GuildsTreeData {
         for (i, channel) in orphan_channels.iter().enumerate() {
             let is_last = i == orphan_channels.len() - 1 && category_channels.is_empty();
             let prefix = if is_last { "└── " } else { "├── " };
-            if let Some(node) = self.create_channel_node(channel, 1, is_last, prefix, width, style)
+            if let Some(node) = self.create_channel_node(channel, 1, prefix, width, style, base_indent_1, base_indent_2)
             {
                 nodes.push(node);
             }
@@ -607,23 +838,18 @@ impl GuildsTreeData {
 
         for (i, category) in category_channels.iter().enumerate() {
             let is_last_category = i == category_channels.len() - 1;
-            let cat_prefix = if is_last_category {
-                "└── "
-            } else {
-                "├── "
-            };
-            let child_indent = if is_last_category { "    " } else { "│   " };
+            let cat_prefix = if is_last_category { "└── " } else { "├── " };
+            let child_indent_comp = if is_last_category { "    " } else { "│   " };
 
-            let expanded = state
-                .expanded
-                .contains(&TreeNodeId::Category(category.id()));
+            let expanded = state.expanded.contains(&TreeNodeId::Category(category.id()));
             let arrow = if expanded { "▾ " } else { "▸ " };
-
             let clean_name = clean_text(category.name());
 
             nodes.push(FlattenedNode {
                 id: TreeNodeId::Category(category.id()),
                 label: Line::from(vec![
+                    Span::styled(base_indent_1, style.tree_guide_style),
+                    Span::styled(base_indent_2, style.tree_guide_style),
                     Span::styled(cat_prefix, style.tree_guide_style),
                     Span::styled(arrow, style.tree_guide_style),
                     Span::styled(clean_name.to_uppercase(), style.category_style),
@@ -637,16 +863,18 @@ impl GuildsTreeData {
 
                 for (j, child) in sorted_children.iter().enumerate() {
                     let is_last_child = j == sorted_children.len() - 1;
-                    let mut prefix = child_indent.to_string();
-                    prefix.push_str(if is_last_child {
-                        "└── "
-                    } else {
-                        "├── "
-                    });
+                    let mut prefix = child_indent_comp.to_string();
+                    prefix.push_str(if is_last_child { "└── " } else { "├── " });
 
-                    if let Some(node) =
-                        self.create_channel_node(child, 2, is_last_child, &prefix, width, style)
-                    {
+                    if let Some(node) = self.create_channel_node(
+                        child, 
+                        2, 
+                        &prefix, 
+                        width, 
+                        style, 
+                        base_indent_1, 
+                        base_indent_2
+                    ) {
                         nodes.push(node);
                     }
                 }
@@ -654,14 +882,16 @@ impl GuildsTreeData {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_channel_node<'a>(
         &'a self,
         channel: &'a Channel,
         depth: usize,
-        _is_last: bool,
         prefix: &str,
         width: u16,
         style: &GuildsTreeStyle,
+        base_indent_1: &'a str,
+        base_indent_2: &'a str,
     ) -> Option<FlattenedNode<'a>> {
         if !channel.kind().is_text_based()
             && !channel.kind().is_voice()
@@ -713,12 +943,22 @@ impl GuildsTreeData {
             clean_name = clean_name[..new_len].to_string();
         }
 
-        let mut spans = vec![Span::styled(prefix.to_string(), style.tree_guide_style)];
+        let mut spans = vec![
+            Span::styled(base_indent_1, style.tree_guide_style),
+            Span::styled(base_indent_2, style.tree_guide_style),
+        ];
+        spans.push(Span::styled(prefix.to_string(), style.tree_guide_style));
         spans.push(Span::styled(channel_icon.to_string(), channel_style));
         spans.push(Span::styled(clean_name.clone(), channel_style));
 
         if channel.has_unread() {
-            let used_width = prefix_width
+            let used_width = u16::try_from(unicode_width::UnicodeWidthStr::width(base_indent_1))
+                .unwrap_or(0)
+                .saturating_add(
+                    u16::try_from(unicode_width::UnicodeWidthStr::width(base_indent_2))
+                        .unwrap_or(0)
+                )
+                .saturating_add(prefix_width)
                 .saturating_add(channel_icon_width)
                 .saturating_add(
                     u16::try_from(unicode_width::UnicodeWidthStr::width(clean_name.as_str()))

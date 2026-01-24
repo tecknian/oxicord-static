@@ -53,7 +53,7 @@ impl std::fmt::Display for LogLevel {
 }
 
 /// Application configuration from CLI.
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Serialize, Deserialize)]
 #[command(
     name = "oxicord",
     version,
@@ -85,9 +85,23 @@ pub struct AppConfig {
     #[arg(long, default_value_t = false)]
     pub disable_user_colors: bool,
 
+    /// UI configuration.
+    #[command(flatten)]
+    #[serde(default)]
+    pub ui: UiConfig,
+
     /// Theme configuration.
     #[command(flatten)]
     pub theme: ThemeConfig,
+}
+
+/// UI configuration.
+#[derive(Debug, Clone, Default, clap::Args, Serialize, Deserialize)]
+pub struct UiConfig {
+    /// Group guilds into folders.
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub group_guilds: bool,
 }
 
 /// Theme configuration.
@@ -154,6 +168,7 @@ impl Default for AppConfig {
             log_level: LogLevel::Info,
             mouse: true,
             disable_user_colors: false,
+            ui: UiConfig::default(),
             theme: ThemeConfig::default(),
         }
     }
