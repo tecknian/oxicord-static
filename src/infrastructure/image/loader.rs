@@ -74,9 +74,9 @@ impl ImageLoader {
     pub async fn new(
         config: ImageLoaderConfig,
         event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
+        disk_cache: Arc<DiskImageCache>,
     ) -> CacheResult<Self> {
         let memory_cache = Arc::new(MemoryImageCache::new(config.memory_cache_size));
-        let disk_cache = Arc::new(DiskImageCache::default_location().await?);
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
@@ -100,7 +100,8 @@ impl ImageLoader {
     pub async fn with_defaults(
         event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
     ) -> CacheResult<Self> {
-        Self::new(ImageLoaderConfig::default(), event_tx).await
+        let disk_cache = Arc::new(DiskImageCache::default_location().await?);
+        Self::new(ImageLoaderConfig::default(), event_tx, disk_cache).await
     }
 
     /// Checks memory cache synchronously (non-blocking peek).
@@ -376,17 +377,29 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_loader_creation() {
+    async fn test_loader_creation() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let loader = ImageLoader::with_defaults(tx).await;
+        let temp_dir = tempfile::TempDir::new()?;
+        let disk_cache = Arc::new(
+            DiskImageCache::new(temp_dir.path().to_path_buf(), 1024 * 1024).await?,
+        );
+
+        let loader = ImageLoader::new(ImageLoaderConfig::default(), tx, disk_cache).await;
         assert!(loader.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_pending_tracking() {
+    async fn test_pending_tracking() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let loader = ImageLoader::with_defaults(tx).await.unwrap();
+        let temp_dir = tempfile::TempDir::new()?;
+        let disk_cache = Arc::new(
+            DiskImageCache::new(temp_dir.path().to_path_buf(), 1024 * 1024).await?,
+        );
+
+        let loader = ImageLoader::new(ImageLoaderConfig::default(), tx, disk_cache).await?;
 
         assert_eq!(loader.pending_count().await, 0);
+        Ok(())
     }
 }
