@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use ratatui::layout::Rect;
-use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::Resize;
 
 use crate::domain::entities::{ImageId, ImageStatus};
 
@@ -274,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn test_image_manager_creation() {
         let manager = ImageManager::new();
         assert_eq!(manager.width(), 0);

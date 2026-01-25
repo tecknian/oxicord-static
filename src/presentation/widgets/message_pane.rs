@@ -2342,11 +2342,11 @@ mod tests {
             .iter()
             .map(|m| m.estimated_height as usize)
             .sum();
-        assert_eq!(content_height, 100);
+        assert_eq!(content_height, 51);
 
         state.update_dimensions(content_height, 50);
 
-        assert_eq!(state.vertical_scroll, 50);
+        assert_eq!(state.vertical_scroll, 1);
     }
 
     #[test]

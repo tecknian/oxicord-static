@@ -884,7 +884,8 @@ mod tests {
             "timestamp": 1_234_567_890,
             "member": {
                 "user": {
-                    "username": "TestUser"
+                    "username": "TestUser",
+                    "discriminator": "0"
                 },
                 "nick": null
             }
