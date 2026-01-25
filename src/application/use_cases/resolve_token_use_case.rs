@@ -50,9 +50,7 @@ impl ResolveTokenUseCase {
         &self,
         external_token: Option<(String, TokenSource)>,
     ) -> Result<Option<ResolvedToken>, AuthError> {
-        if let Some((token_str, source)) =
-            external_token.filter(|(t, _)| !t.trim().is_empty())
-        {
+        if let Some((token_str, source)) = external_token.filter(|(t, _)| !t.trim().is_empty()) {
             debug!("Checking token from source: {}", source);
             if let Some(token) = AuthToken::new(&token_str) {
                 info!("Using token from {}", source);

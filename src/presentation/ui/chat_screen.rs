@@ -1850,9 +1850,12 @@ fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer
     let disable_user_colors = state.disable_user_colors;
 
     let inner_width = area.width.saturating_sub(2);
-    state
-        .message_pane_data
-        .update_layout(inner_width, &service, state.theme.accent);
+    state.message_pane_data.update_layout(
+        inner_width,
+        &service,
+        state.theme.accent,
+        state.message_pane_state.show_spoilers,
+    );
 
     let style = MessagePaneStyle::from_theme(&state.theme);
     let (data, pane_state) = state.message_pane_parts_mut();

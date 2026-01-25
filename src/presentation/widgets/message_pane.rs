@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
 
 use crate::application::services::identity_service::IdentityService;
-use crate::application::services::markdown_service::{MarkdownService, MentionResolver};
+use crate::application::services::markdown_service::{
+    MarkdownService, MdBlock, MentionResolver, parse_markdown,
+};
 use crate::domain::entities::{ChannelId, Embed, ForumThread, ImageId, Message, MessageId};
 use crate::domain::keybinding::Action;
 
@@ -50,6 +52,7 @@ pub struct UiMessage {
     pub message: Message,
     pub estimated_height: u16,
     pub rendered_content: Option<Text<'static>>,
+    pub parsed_content: Vec<MdBlock>,
     /// Image attachments for this message.
     pub image_attachments: Vec<ImageAttachment>,
     /// Pre-calculated embed layouts.
@@ -67,6 +70,7 @@ impl UiMessage {
             .collect();
 
         let content = message.content();
+        let parsed_content = parse_markdown(content);
         let inline_images = Self::extract_inline_images(content);
         for url in inline_images {
             if !image_attachments.iter().any(|img| img.url == url) {
@@ -79,6 +83,7 @@ impl UiMessage {
             message,
             estimated_height: 1,
             rendered_content: None,
+            parsed_content,
             image_attachments,
             rendered_embeds: Vec::new(),
             reply_preview: None,
@@ -273,6 +278,7 @@ pub struct MessagePaneData {
     typing_indicator: Option<String>,
     authors: HashMap<String, String>,
     last_layout_width: Option<u16>,
+    last_show_spoilers: Option<bool>,
     is_dirty: bool,
     use_display_name: bool,
 }
@@ -293,6 +299,7 @@ impl MessagePaneData {
             typing_indicator: None,
             authors: HashMap::new(),
             last_layout_width: None,
+            last_show_spoilers: None,
             is_dirty: true,
             use_display_name,
         }
@@ -489,8 +496,12 @@ impl MessagePaneData {
         width: u16,
         markdown_service: &MarkdownService,
         default_color: Color,
+        show_spoilers: bool,
     ) {
-        if !self.is_dirty && self.last_layout_width == Some(width) {
+        if !self.is_dirty
+            && self.last_layout_width == Some(width)
+            && self.last_show_spoilers == Some(show_spoilers)
+        {
             return;
         }
 
@@ -505,7 +516,8 @@ impl MessagePaneData {
         for ui_msg in &mut self.messages {
             let message = &ui_msg.message;
 
-            let text = markdown_service.render(message.content(), Some(&resolver));
+            let text =
+                markdown_service.render_ast(&ui_msg.parsed_content, Some(&resolver), show_spoilers);
 
             let mut content_lines = 0;
             for line in &text.lines {
@@ -590,6 +602,7 @@ impl MessagePaneData {
         }
 
         self.last_layout_width = Some(width);
+        self.last_show_spoilers = Some(show_spoilers);
         self.is_dirty = false;
     }
 
@@ -654,13 +667,18 @@ impl Default for MessagePaneData {
     }
 }
 
+pub struct MessagePaneFlags {
+    pub focused: bool,
+    pub is_following: bool,
+    pub scroll_to_selection: bool,
+}
+
 pub struct MessagePaneState {
     pub view_mode: ViewMode,
     pub vertical_scroll: usize,
+    pub show_spoilers: bool,
     selected_index: Option<usize>,
-    focused: bool,
-    is_following: bool,
-    scroll_to_selection: bool,
+    flags: MessagePaneFlags,
     content_height: usize,
     viewport_height: u16,
     last_width: u16,
@@ -672,23 +690,26 @@ impl MessagePaneState {
         Self {
             view_mode: ViewMode::Messages,
             vertical_scroll: 0,
+            show_spoilers: false,
             selected_index: None,
-            focused: false,
-            is_following: true,
-            scroll_to_selection: false,
+            flags: MessagePaneFlags {
+                focused: false,
+                is_following: true,
+                scroll_to_selection: false,
+            },
             content_height: 0,
             viewport_height: 0,
             last_width: 0,
         }
     }
 
-    pub const fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
+    pub fn set_focused(&mut self, focused: bool) {
+        self.flags.focused = focused;
     }
 
     #[must_use]
     pub const fn is_focused(&self) -> bool {
-        self.focused
+        self.flags.focused
     }
 
     #[must_use]
@@ -717,8 +738,8 @@ impl MessagePaneState {
 
     pub fn jump_to_index(&mut self, index: usize) {
         self.selected_index = Some(index);
-        self.scroll_to_selection = true;
-        self.is_following = false;
+        self.flags.scroll_to_selection = true;
+        self.flags.is_following = false;
     }
 
     pub fn select_next(&mut self, message_count: usize) {
@@ -726,8 +747,8 @@ impl MessagePaneState {
             return;
         }
 
-        self.is_following = false;
-        self.scroll_to_selection = true;
+        self.flags.is_following = false;
+        self.flags.scroll_to_selection = true;
         self.selected_index = Some(self.selected_index.map_or_else(
             || message_count.saturating_sub(1),
             |idx| (idx + 1).min(message_count - 1),
@@ -739,8 +760,8 @@ impl MessagePaneState {
             return;
         }
 
-        self.is_following = false;
-        self.scroll_to_selection = true;
+        self.flags.is_following = false;
+        self.flags.scroll_to_selection = true;
         self.selected_index = Some(self.selected_index.map_or_else(
             || message_count.saturating_sub(1),
             |idx| idx.saturating_sub(1),
@@ -749,8 +770,8 @@ impl MessagePaneState {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn select_first(&mut self) {
-        self.is_following = false;
-        self.scroll_to_selection = true;
+        self.flags.is_following = false;
+        self.flags.scroll_to_selection = true;
         self.selected_index = Some(0);
         self.scroll_to_top();
     }
@@ -760,20 +781,20 @@ impl MessagePaneState {
             return;
         }
         self.selected_index = Some(message_count - 1);
-        self.is_following = false;
-        self.scroll_to_selection = true;
+        self.flags.is_following = false;
+        self.flags.scroll_to_selection = true;
         self.scroll_to_bottom();
     }
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn clear_selection(&mut self) {
         self.selected_index = None;
-        self.is_following = true;
+        self.flags.is_following = true;
         self.scroll_to_bottom();
     }
 
     pub fn on_new_message(&mut self) {
-        if self.is_following {
+        if self.flags.is_following {
             self.scroll_to_bottom();
         }
     }
@@ -782,7 +803,7 @@ impl MessagePaneState {
     /// This ensures new channels start at the bottom (following mode).
     pub fn on_channel_change(&mut self) {
         self.selected_index = None;
-        self.is_following = true;
+        self.flags.is_following = true;
         self.vertical_scroll = 0;
         self.content_height = 0;
         self.viewport_height = 0;
@@ -791,7 +812,7 @@ impl MessagePaneState {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_down(&mut self) {
-        self.is_following = false;
+        self.flags.is_following = false;
         let max_scroll = self
             .content_height
             .saturating_sub(self.viewport_height as usize);
@@ -803,7 +824,7 @@ impl MessagePaneState {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_up(&mut self) {
-        self.is_following = false;
+        self.flags.is_following = false;
         self.vertical_scroll = self.vertical_scroll.saturating_sub(SCROLL_AMOUNT as usize);
     }
 
@@ -825,7 +846,7 @@ impl MessagePaneState {
         self.content_height = content_height;
         self.viewport_height = viewport_height;
 
-        if self.is_following {
+        if self.flags.is_following {
             self.scroll_to_bottom();
         } else {
             let max_scroll = content_height.saturating_sub(viewport_height as usize);
@@ -905,7 +926,7 @@ impl MessagePaneState {
                     .content_height
                     .saturating_sub(self.viewport_height as usize);
                 if self.vertical_scroll == max_scroll {
-                    self.is_following = true;
+                    self.flags.is_following = true;
                 }
                 None
             }
@@ -931,7 +952,7 @@ impl MessagePaneState {
             Some(Action::ScrollToBottom) => {
                 self.scroll_to_bottom();
                 if self.selected_index.is_none() {
-                    self.is_following = true;
+                    self.flags.is_following = true;
                 }
                 None
             }
@@ -980,6 +1001,10 @@ impl MessagePaneState {
                 .and_then(|m| m.reference())
                 .and_then(|r| r.message_id)
                 .map(MessagePaneAction::JumpToReply),
+            Some(Action::Select) => {
+                self.show_spoilers = !self.show_spoilers;
+                None
+            }
             _ => None,
         }
     }
@@ -1266,7 +1291,7 @@ impl<'a> MessagePane<'a> {
         let mut offset = state.vertical_scroll;
 
         if let Some(selected_idx) = state.selected_index
-            && state.scroll_to_selection
+            && state.flags.scroll_to_selection
         {
             let mut selection_y_start = 0;
             let mut selection_height = 0;
@@ -1290,7 +1315,7 @@ impl<'a> MessagePane<'a> {
             }
 
             state.vertical_scroll = offset;
-            state.scroll_to_selection = false;
+            state.flags.scroll_to_selection = false;
         }
 
         let mut current_y: i32 = 0;
@@ -2227,10 +2252,10 @@ mod tests {
         data.set_messages(messages);
 
         let markdown = MarkdownService::new();
-        data.update_layout(100, &markdown, Color::Yellow);
+        data.update_layout(100, &markdown, Color::Yellow, false);
 
         let mut state = MessagePaneState::new();
-        state.is_following = true;
+        state.flags.is_following = true;
 
         let content_height: usize = data
             .ui_messages()
