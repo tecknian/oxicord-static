@@ -67,6 +67,29 @@ nix develop
 
 ### Building from Source
 
+**Prerequisites**
+
+Ensure you have the latest stable Rust toolchain installed. You will also need the following system dependencies:
+
+- **Debian/Ubuntu:**
+  ```bash
+  sudo apt install pkg-config libdbus-1-dev libchafa-dev libglib2.0-dev mold clang
+  ```
+- **Fedora:**
+  ```bash
+  sudo dnf install pkgconf-pkg-config dbus-devel chafa-devel glib2-devel mold clang
+  ```
+- **Arch Linux:**
+  ```bash
+  sudo pacman -S pkgconf chafa dbus glib2 mold clang
+  ```
+- **macOS:**
+  ```bash
+  brew install chafa
+  ```
+
+**Build Steps**
+
 ```bash
 git clone https://github.com/linuxmobile/oxicord
 cd oxicord
@@ -79,6 +102,43 @@ cargo build --release
 Oxicord is currently configured via command-line arguments. Full support for a persistent `config.toml` file adhering to the XDG Base Directory specification is **in development**:
 
 - **Linux:** `~/.config/oxicord/config.toml` (Planned)
+
+## Authentication
+
+Oxicord requires a Discord user token to function.
+
+> **Warning**
+> Automated user accounts are against Discord's Terms of Service. Use this client at your own risk. **Never share your token with anyone.**
+
+### Obtaining the Token
+
+1. Log in to [Discord Web](https://discord.com/app) in your browser.
+2. Open **Developer Tools** (`F12` or `Ctrl+Shift+I`) and go to the **Network** tab.
+3. In the filter box, type `/api`.
+4. Click on any channel to trigger a network request.
+5. Select a request (e.g., `messages`, `typing`) and scroll to **Request Headers**.
+6. Copy the value of the `authorization` header.
+
+### Usage
+
+**1. Secure Keyring (Recommended)**
+
+Run Oxicord without arguments:
+
+```bash
+oxicord
+```
+
+Paste your token when prompted. Oxicord will verify and securely store it in your system's keyring (using `libsecret` on Linux, Keychain on macOS) for automatic future logins.
+
+**2. Environment Variable**
+
+For temporary sessions, testing, or scripts, you can provide the token via the environment. This takes precedence over the keyring and is **not** saved.
+
+```bash
+export OXICORD_TOKEN="your_token_here"
+oxicord
+```
 
 ## Roadmap
 
