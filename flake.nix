@@ -45,16 +45,11 @@
 
           nativeBuildInputs = [pkgs.pkg-config pkgs.clang pkgs.mold pkgs.makeBinaryWrapper];
 
-          buildInputs =
-            [
-              pkgs.dbus
-              pkgs.chafa
-              pkgs.glib
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-              pkgs.darwin.apple_sdk.frameworks.Security
-              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            ];
+          buildInputs = [
+            pkgs.dbus
+            pkgs.chafa
+            pkgs.glib
+          ];
 
           preCheck = ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [pkgs.dbus.lib pkgs.chafa pkgs.glib]}:$LD_LIBRARY_PATH
@@ -85,16 +80,11 @@
             pkgs.mold
           ];
 
-          buildInputs =
-            [
-              pkgs.dbus
-              pkgs.chafa
-              pkgs.glib
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-              pkgs.darwin.apple_sdk.frameworks.Security
-              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            ];
+          buildInputs = [
+            pkgs.dbus
+            pkgs.chafa
+            pkgs.glib
+          ];
 
           PKG_CONFIG_PATH = "${pkgs.chafa}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.dbus.dev}/lib/pkgconfig";
           LD_LIBRARY_PATH = "${pkgs.chafa}/lib:${pkgs.glib.out}/lib:${pkgs.dbus.lib}/lib";
