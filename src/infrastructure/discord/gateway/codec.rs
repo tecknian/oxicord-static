@@ -932,4 +932,63 @@ mod tests {
             _ => panic!("Expected TypingStart event"),
         }
     }
+
+    #[test]
+    fn test_parse_ready_with_integer_zero_fields() {
+        let data = serde_json::json!({
+            "v": 9,
+            "user_settings": {},
+            "user": {
+                "verified": true,
+                "username": "test",
+                "mfa_enabled": false,
+                "id": "12345",
+                "flags": 0,
+                "email": "test@example.com",
+                "discriminator": "0000",
+                "bot": false,
+                "avatar": null
+            },
+            "session_id": "session123",
+            "relationships": [],
+            "read_state": [
+                {
+                    "mention_count": 0,
+                    "last_message_id": 0,
+                    "id": "123456"
+                }
+            ],
+            "private_channels": [],
+            "presences": [],
+            "guilds": [],
+            "guild_join_requests": [],
+            "geo_ordered_rtc_regions": [],
+            "friend_suggestion_count": 0,
+            "experiments": [],
+            "country_code": "US",
+            "consents": {},
+            "connected_accounts": [],
+            "auth_session_id_hash": "hash",
+            "application": {
+                "id": "123",
+                "flags": 0
+            },
+            "analytics_token": "token",
+            "_trace": []
+        });
+
+        let result = EventParser::parse_ready(data);
+        assert!(
+            result.is_ok(),
+            "Parsing should succeed even with integer 0 for last_message_id"
+        );
+
+        if let Ok(DispatchEvent::Ready { read_states, .. }) = result {
+            assert_eq!(read_states.len(), 1);
+            let rs = &read_states[0];
+            assert!(rs.last_read_message_id.is_none());
+        } else {
+            panic!("Expected Ready event");
+        }
+    }
 }

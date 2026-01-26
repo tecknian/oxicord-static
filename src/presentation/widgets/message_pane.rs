@@ -438,14 +438,13 @@ impl MessagePaneData {
 
             ui_msg.group = MessageGroup::Start;
 
-            if !msg.is_reply() {
-                if let (Some(prev_id), Some(prev_ts)) = (&previous_author_id, previous_timestamp)
-                    && prev_id == &current_author_id
-                {
-                    let diff = current_timestamp.saturating_sub(prev_ts);
-                    if diff < GROUPING_WINDOW_SECONDS {
-                        ui_msg.group = MessageGroup::Compact;
-                    }
+            if !msg.is_reply()
+                && let (Some(prev_id), Some(prev_ts)) = (&previous_author_id, previous_timestamp)
+                && prev_id == &current_author_id
+            {
+                let diff = current_timestamp.saturating_sub(prev_ts);
+                if diff < GROUPING_WINDOW_SECONDS {
+                    ui_msg.group = MessageGroup::Compact;
                 }
             }
 

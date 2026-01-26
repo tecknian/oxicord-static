@@ -71,7 +71,7 @@ impl ImageLoader {
     ///
     /// # Errors
     /// Returns error if disk cache or HTTP client cannot be created.
-    pub async fn new(
+    pub fn new(
         config: ImageLoaderConfig,
         event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
         disk_cache: Arc<DiskImageCache>,
@@ -101,7 +101,7 @@ impl ImageLoader {
         event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
     ) -> CacheResult<Self> {
         let disk_cache = Arc::new(DiskImageCache::default_location().await?);
-        Self::new(ImageLoaderConfig::default(), event_tx, disk_cache).await
+        Self::new(ImageLoaderConfig::default(), event_tx, disk_cache)
     }
 
     /// Checks memory cache synchronously (non-blocking peek).
@@ -380,11 +380,10 @@ mod tests {
     async fn test_loader_creation() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, _rx) = mpsc::unbounded_channel();
         let temp_dir = tempfile::TempDir::new()?;
-        let disk_cache = Arc::new(
-            DiskImageCache::new(temp_dir.path().to_path_buf(), 1024 * 1024).await?,
-        );
+        let disk_cache =
+            Arc::new(DiskImageCache::new(temp_dir.path().to_path_buf(), 1024 * 1024).await?);
 
-        let loader = ImageLoader::new(ImageLoaderConfig::default(), tx, disk_cache).await;
+        let loader = ImageLoader::new(ImageLoaderConfig::default(), tx, disk_cache);
         assert!(loader.is_ok());
         Ok(())
     }
@@ -393,11 +392,10 @@ mod tests {
     async fn test_pending_tracking() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, _rx) = mpsc::unbounded_channel();
         let temp_dir = tempfile::TempDir::new()?;
-        let disk_cache = Arc::new(
-            DiskImageCache::new(temp_dir.path().to_path_buf(), 1024 * 1024).await?,
-        );
+        let disk_cache =
+            Arc::new(DiskImageCache::new(temp_dir.path().to_path_buf(), 1024 * 1024).await?);
 
-        let loader = ImageLoader::new(ImageLoaderConfig::default(), tx, disk_cache).await?;
+        let loader = ImageLoader::new(ImageLoaderConfig::default(), tx, disk_cache)?;
 
         assert_eq!(loader.pending_count().await, 0);
         Ok(())
