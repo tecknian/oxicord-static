@@ -62,3 +62,32 @@ jobs:
           path: |
             target/${{ matrix.target }}/release/oxicord
             target/${{ matrix.target }}/release/oxicord.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename artifacts
+        run: |
+          mkdir release_assets
+          for target in artifacts/*; do
+            target_name=$(basename $target)
+            target_name=${target_name#oxicord_}
+            if [ -f "$target/oxicord.exe" ]; then
+              cp "$target/oxicord.exe" "release_assets/oxicord-${target_name}.exe"
+            else
+              cp "$target/oxicord" "release_assets/oxicord-${target_name}"
+            fi
+          done
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release_assets/*
+          draft: true
