@@ -27,8 +27,13 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = ["rust-src" "rust-analyzer" "clippy" "rustfmt"];
         };
+
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
       in {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
+        packages.default = rustPlatform.buildRustPackage {
           pname = "oxicord";
           version = "0.1.6";
 
@@ -38,7 +43,7 @@
             lockFile = ./Cargo.lock;
           };
 
-          nativeBuildInputs = [pkgs.pkg-config pkgs.clang pkgs.mold];
+          nativeBuildInputs = [pkgs.pkg-config pkgs.clang pkgs.mold pkgs.makeBinaryWrapper];
 
           buildInputs =
             [
@@ -50,6 +55,15 @@
               pkgs.darwin.apple_sdk.frameworks.Security
               pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
             ];
+
+          preCheck = ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [pkgs.dbus.lib pkgs.chafa pkgs.glib]}:$LD_LIBRARY_PATH
+          '';
+
+          postInstall = ''
+            wrapProgram $out/bin/oxicord \
+              --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [pkgs.dbus.lib pkgs.chafa pkgs.glib]}"
+          '';
 
           meta = with pkgs.lib; {
             description = "A lightweight, secure Discord terminal client";
