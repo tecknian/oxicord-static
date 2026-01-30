@@ -780,7 +780,12 @@ impl ChatScreenState {
                 MessageInputAction::Paste => {
                     return ChatKeyResult::Paste;
                 }
-                MessageInputAction::StartTyping | MessageInputAction::CancelReply => {}
+                MessageInputAction::StartTyping | MessageInputAction::CancelReply => {
+                    if autocomplete_changed {
+                        self.update_autocomplete_suggestions();
+                    }
+                    return ChatKeyResult::StartTyping;
+                }
             }
         } else {
             let value = self.message_input_state.value();

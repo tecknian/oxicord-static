@@ -13,6 +13,7 @@ use crate::domain::entities::MessageId;
 use crate::domain::keybinding::Action;
 use crate::presentation::commands::CommandRegistry;
 use crate::presentation::theme::Theme;
+use unicode_width::UnicodeWidthChar;
 
 const MAX_MESSAGE_LENGTH: usize = 2000;
 const PLACEHOLDER_TEXT: &str = "Type a message...";
@@ -57,6 +58,7 @@ pub struct MessageInputState<'a> {
     has_channel: bool,
     attachments: Vec<PathBuf>,
     scroll_offset: usize,
+    last_width: usize,
 }
 
 impl MessageInputState<'_> {
@@ -71,6 +73,7 @@ impl MessageInputState<'_> {
             has_channel: false,
             attachments: Vec::new(),
             scroll_offset: 0,
+            last_width: 0,
         }
     }
 
@@ -184,6 +187,137 @@ impl MessageInputState<'_> {
         index + col
     }
 
+    fn get_visual_info(&self, width: usize) -> (Vec<String>, usize, usize) {
+        if width == 0 {
+            let logical_lines: Vec<String> = self.textarea.lines().to_vec();
+            let (row, col) = self.textarea.cursor();
+            return (logical_lines, row, col);
+        }
+
+        let mut visual_lines = Vec::new();
+        let mut visual_cursor_row = 0;
+        let mut visual_cursor_col = 0;
+
+        let (cursor_row, cursor_col) = self.textarea.cursor();
+        let logical_lines = self.textarea.lines();
+
+        for (i, line) in logical_lines.iter().enumerate() {
+            let is_cursor_line = i == cursor_row;
+
+            if line.is_empty() {
+                if is_cursor_line {
+                    visual_cursor_row = visual_lines.len();
+                    visual_cursor_col = 0;
+                }
+                visual_lines.push(String::new());
+                continue;
+            }
+
+            let mut current_line = String::new();
+            let mut current_width = 0;
+
+            for (j, ch) in line.chars().enumerate() {
+                let ch_width = ch.width().unwrap_or(0);
+
+                if current_width + ch_width > width {
+                    visual_lines.push(current_line.clone());
+                    current_line.clear();
+                    current_width = 0;
+                }
+
+                if is_cursor_line && j == cursor_col {
+                    visual_cursor_row = visual_lines.len();
+                    visual_cursor_col = current_width;
+                }
+
+                current_line.push(ch);
+                current_width += ch_width;
+            }
+
+            if is_cursor_line && cursor_col == line.chars().count() {
+                if current_width >= width {
+                    visual_lines.push(current_line.clone());
+                    current_line.clear();
+                    visual_cursor_row = visual_lines.len();
+                    visual_cursor_col = 0;
+                } else {
+                    visual_cursor_row = visual_lines.len();
+                    visual_cursor_col = current_width;
+                }
+            }
+
+            visual_lines.push(current_line);
+        }
+
+        (visual_lines, visual_cursor_row, visual_cursor_col)
+    }
+
+    fn get_logical_pos(
+        &self,
+        target_v_row: usize,
+        target_v_col: usize,
+        width: usize,
+    ) -> (usize, usize) {
+        let mut v_row_counter = 0;
+
+        for (l_row, line) in self.textarea.lines().iter().enumerate() {
+            if line.is_empty() {
+                if v_row_counter == target_v_row {
+                    return (l_row, 0);
+                }
+                v_row_counter += 1;
+                continue;
+            }
+
+            let mut current_v_width = 0;
+            let mut line_start_char_idx = 0;
+
+            for (char_idx, ch) in line.chars().enumerate() {
+                let ch_width = ch.width().unwrap_or(0);
+
+                if current_v_width + ch_width > width {
+                    if v_row_counter == target_v_row {
+                        let mut run_width = 0;
+                        for (k, k_char) in line
+                            .chars()
+                            .enumerate()
+                            .skip(line_start_char_idx)
+                            .take(char_idx - line_start_char_idx)
+                        {
+                            let w = k_char.width().unwrap_or(0);
+                            if run_width + w > target_v_col {
+                                return (l_row, k);
+                            }
+                            run_width += w;
+                        }
+                        return (l_row, char_idx);
+                    }
+
+                    v_row_counter += 1;
+                    current_v_width = 0;
+                    line_start_char_idx = char_idx;
+                }
+
+                current_v_width += ch_width;
+            }
+
+            if v_row_counter == target_v_row {
+                let mut run_width = 0;
+                for (k, k_char) in line.chars().enumerate().skip(line_start_char_idx) {
+                    let w = k_char.width().unwrap_or(0);
+                    if run_width + w > target_v_col {
+                        return (l_row, k);
+                    }
+                    run_width += w;
+                }
+                return (l_row, line.chars().count());
+            }
+            v_row_counter += 1;
+        }
+
+        (0, 0)
+    }
+
     pub fn insert_mention(&mut self, trigger_index: usize, user_id: &str) {
         let content = self.value();
         let mention = format!("<@{user_id}> ");
@@ -209,6 +343,72 @@ impl MessageInputState<'_> {
         self.set_content(&new_content);
     }
 
+    fn move_cursor_up(&mut self) {
+        let width = self.last_width;
+        if width == 0 {
+            self.textarea.move_cursor(tui_textarea::CursorMove::Up);
+            return;
+        }
+
+        let (_, v_row, v_col) = self.get_visual_info(width);
+
+        if v_row == 0 {
+            return;
+        }
+
+        let target_v_row = v_row - 1;
+        let (l_row, l_col) = self.get_logical_pos(target_v_row, v_col, width);
+        self.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+    }
+
+    fn move_cursor_down(&mut self) {
+        let width = self.last_width;
+        if width == 0 {
+            self.textarea.move_cursor(tui_textarea::CursorMove::Down);
+            return;
+        }
+
+        let (visual_lines, v_row, v_col) = self.get_visual_info(width);
+
+        if v_row >= visual_lines.len().saturating_sub(1) {
+            return;
+        }
+
+        let target_v_row = v_row + 1;
+        let (l_row, l_col) = self.get_logical_pos(target_v_row, v_col, width);
+        self.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+    }
+
+    fn move_cursor_start(&mut self) {
+        let width = self.last_width;
+        if width == 0 {
+            self.textarea.move_cursor(tui_textarea::CursorMove::Head);
+            return;
+        }
+
+        let (_, v_row, _) = self.get_visual_info(width);
+        let (l_row, l_col) = self.get_logical_pos(v_row, 0, width);
+        self.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+    }
+
+    fn move_cursor_end(&mut self) {
+        let width = self.last_width;
+        if width == 0 {
+            self.textarea.move_cursor(tui_textarea::CursorMove::End);
+            return;
+        }
+
+        let (visual_lines, v_row, _) = self.get_visual_info(width);
+        if let Some(line) = visual_lines.get(v_row) {
+             let v_col_end = line.chars().map(|c| c.width().unwrap_or(0)).sum();
+             let (l_row, l_col) = self.get_logical_pos(v_row, v_col_end, width);
+             self.textarea.move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+        }
+    }
+
     fn enforce_message_limit(&mut self) {
         let content = self.value();
         if content.len() > MAX_MESSAGE_LENGTH {
@@ -222,11 +422,16 @@ impl MessageInputState<'_> {
         key: KeyEvent,
         registry: &CommandRegistry,
     ) -> Option<MessageInputAction> {
-        if !self.has_channel {
-            if key.code == KeyCode::Esc {
-                return Some(MessageInputAction::ExitInput);
+        match key.code {
+            KeyCode::Home => {
+                self.move_cursor_start();
+                return Some(MessageInputAction::StartTyping);
             }
-            return None;
+            KeyCode::End => {
+                self.move_cursor_end();
+                return Some(MessageInputAction::StartTyping);
+            }
+            _ => {}
         }
 
         match if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -290,17 +495,52 @@ impl MessageInputState<'_> {
                 {
                     self.textarea.insert_char(c);
                 } else if key.code == KeyCode::Backspace {
-                    self.textarea.delete_char();
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::ALT)
+                    {
+                        self.textarea.delete_word();
+                        return Some(MessageInputAction::StartTyping);
+                    } else {
+                        self.textarea.delete_char();
+                    }
+                } else if (key.code == KeyCode::Delete
+                    && (key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::ALT)))
+                    || (key.code == KeyCode::Char('d')
+                        && key.modifiers.contains(KeyModifiers::ALT))
+                {
+                    self.textarea.delete_next_word();
+                    return Some(MessageInputAction::StartTyping);
+                } else if (key.code == KeyCode::Char('w')
+                    && key.modifiers.contains(KeyModifiers::CONTROL))
+                    || (key.code == KeyCode::Char('h')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                {
+                    self.textarea.delete_word();
+                    return Some(MessageInputAction::StartTyping);
                 } else if key.code == KeyCode::Delete {
                     self.textarea.delete_next_char();
                 } else if key.code == KeyCode::Left {
-                    self.textarea.move_cursor(tui_textarea::CursorMove::Back);
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::ALT)
+                    {
+                        self.textarea.move_cursor(tui_textarea::CursorMove::WordBack);
+                    } else {
+                        self.textarea.move_cursor(tui_textarea::CursorMove::Back);
+                    }
                 } else if key.code == KeyCode::Right {
-                    self.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::ALT)
+                    {
+                        self.textarea
+                            .move_cursor(tui_textarea::CursorMove::WordForward);
+                    } else {
+                        self.textarea.move_cursor(tui_textarea::CursorMove::Forward);
+                    }
                 } else if key.code == KeyCode::Up {
-                    self.textarea.move_cursor(tui_textarea::CursorMove::Up);
+                    self.move_cursor_up();
                 } else if key.code == KeyCode::Down {
-                    self.textarea.move_cursor(tui_textarea::CursorMove::Down);
+                    self.move_cursor_down();
                 } else if key.code == KeyCode::Enter {
                     self.textarea.insert_newline();
                 }
@@ -369,94 +609,103 @@ impl MessageInputState<'_> {
         if width == 0 {
             return;
         }
+        self.last_width = width;
 
-        let (_, cursor_col) = self.textarea.cursor();
+        let (visual_lines, v_cursor_row, v_cursor_col) = self.get_visual_info(width);
 
-        if cursor_col >= self.scroll_offset + width {
-            self.scroll_offset = cursor_col - width + 1;
-        } else if cursor_col < self.scroll_offset {
-            self.scroll_offset = cursor_col;
+        let height = inner.height as usize;
+
+        if v_cursor_row >= self.scroll_offset + height {
+            self.scroll_offset = v_cursor_row - height + 1;
+        } else if v_cursor_row < self.scroll_offset {
+            self.scroll_offset = v_cursor_row;
         }
-
-        let content = self.value();
-        let display_content = if content.is_empty() {
-            if self.has_channel {
-                PLACEHOLDER_TEXT.to_string()
-            } else {
-                PLACEHOLDER_NO_CHANNEL.to_string()
-            }
-        } else {
-            content
-        };
 
         let text_style = if self.value().is_empty() {
             Style::default().fg(Color::DarkGray)
         } else {
-            Style::default().fg(Color::White)
+            style.text_style
         };
 
-        let (cursor_row, _) = self.textarea.cursor();
+        for (i, line) in visual_lines
+            .iter()
+            .enumerate()
+            .skip(self.scroll_offset)
+            .take(height)
+        {
+            let y = inner.y + u16::try_from(i - self.scroll_offset).unwrap_or(0);
 
-        let lines: Vec<&str> = display_content.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            if i >= inner.height as usize {
-                break;
-            }
-            let y = inner.y + u16::try_from(i).unwrap_or(0);
-
-            for (j, ch) in line
-                .chars()
-                .enumerate()
-                .skip(self.scroll_offset)
-                .take(width)
-            {
-                let visual_x = j - self.scroll_offset;
-                let x = inner.x + u16::try_from(visual_x).unwrap_or(0);
-
-                let style = if self.focused
-                    && !self.value().is_empty()
-                    && i == cursor_row
-                    && j == cursor_col
-                {
-                    Style::default().bg(Color::White).fg(Color::Black)
+            if self.value().is_empty() && visual_lines.len() == 1 && line.is_empty() {
+                let placeholder = if self.has_channel {
+                    PLACEHOLDER_TEXT
                 } else {
-                    text_style
+                    PLACEHOLDER_NO_CHANNEL
                 };
+                let placeholder_chars: Vec<char> = placeholder.chars().collect();
 
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_symbol(&ch.to_string());
-                    cell.set_style(style);
+                for j in 0..width {
+                    let x = inner.x + u16::try_from(j).unwrap_or(0);
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        if j < placeholder_chars.len() {
+                            cell.set_symbol(&placeholder_chars[j].to_string());
+                            cell.set_style(style.placeholder_style);
+                        } else {
+                            cell.set_symbol(" ");
+                            cell.set_style(Style::default());
+                        }
+                    }
+                }
+            } else {
+                let line_chars: Vec<char> = line.chars().collect();
+                let mut current_width = 0;
+
+                for ch in &line_chars {
+                    let ch_width = ch.width().unwrap_or(0);
+                    if current_width + ch_width > width {
+                        break;
+                    }
+
+                    let x = inner.x + u16::try_from(current_width).unwrap_or(0);
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_symbol(&ch.to_string());
+                        cell.set_style(text_style);
+                    }
+                    current_width += ch_width;
+                }
+
+                for j in current_width..width {
+                    let x = inner.x + u16::try_from(j).unwrap_or(0);
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_symbol(" ");
+                        cell.set_style(Style::default());
+                    }
                 }
             }
 
-            if self.focused
-                && !self.value().is_empty()
-                && i == cursor_row
-                && cursor_col >= line.len()
-                && cursor_col >= self.scroll_offset
-                && cursor_col < self.scroll_offset + width
-            {
-                let visual_x = cursor_col - self.scroll_offset;
-                let x = inner.x + u16::try_from(visual_x).unwrap_or(0);
-
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_symbol(" ");
-                    cell.set_style(Style::default().bg(Color::White).fg(Color::Black));
+            if self.focused && i == v_cursor_row {
+                let cursor_x = inner.x + u16::try_from(v_cursor_col).unwrap_or(0);
+                if cursor_x < inner.x + inner.width {
+                    if let Some(cell) = buf.cell_mut((cursor_x, y)) {
+                        cell.set_style(style.cursor_style);
+                        if cell.symbol().is_empty() {
+                            cell.set_symbol(" ");
+                        }
+                    }
                 }
             }
         }
 
-        if self.focused && !self.value().is_empty() && cursor_row >= lines.len() {
-            let y = inner.y + u16::try_from(cursor_row).unwrap_or(0);
-            if y < inner.y + inner.height
-                && cursor_col >= self.scroll_offset
-                && cursor_col < self.scroll_offset + width
-            {
-                let visual_x = cursor_col - self.scroll_offset;
-                let x = inner.x + u16::try_from(visual_x).unwrap_or(0);
+        let lines_rendered = visual_lines
+            .len()
+            .saturating_sub(self.scroll_offset)
+            .min(height);
+        for i in lines_rendered..height {
+            let y = inner.y + u16::try_from(i).unwrap_or(0);
+            for j in 0..width {
+                let x = inner.x + u16::try_from(j).unwrap_or(0);
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_symbol(" ");
-                    cell.set_style(Style::default().bg(Color::White).fg(Color::Black));
+                    cell.set_style(Style::default());
                 }
             }
         }
@@ -674,5 +923,111 @@ mod tests {
             Some(MessageInputAction::SendMessage { .. })
         ));
         assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_ctrl_delete_deletes_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tui_textarea::CursorMove;
+
+        let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
+        state.set_has_channel(true);
+        state.set_content("hello world");
+
+        state.textarea.move_cursor(CursorMove::Head);
+
+        let key = KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL);
+
+        state.handle_key(key, &registry);
+
+        assert_eq!(state.value(), " world");
+    }
+
+    #[test]
+    fn test_multiline_wrapping() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        let mut state = MessageInputState::new();
+        state.set_content("1234567890"); // 10 chars
+
+        let style = MessageInputStyle::default();
+
+        let area = Rect::new(0, 0, 7, 5);
+        let mut buf = Buffer::empty(area);
+
+        state.render_with_style(area, &mut buf, &style);
+
+        assert_eq!(buf[(1, 1)].symbol(), "1");
+        assert_eq!(buf[(5, 1)].symbol(), "5");
+
+        assert_eq!(buf[(1, 2)].symbol(), "6");
+        assert_eq!(buf[(5, 2)].symbol(), "0");
+    }
+
+    #[test]
+    fn test_ctrl_backspace_deletes_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tui_textarea::CursorMove;
+
+        let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
+        state.set_has_channel(true);
+        state.set_content("hello world");
+
+        state.textarea.move_cursor(CursorMove::End);
+
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL);
+
+        state.handle_key(key, &registry);
+
+        assert_eq!(state.value(), "hello ");
+    }
+
+    #[test]
+    fn test_ctrl_w_deletes_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tui_textarea::CursorMove;
+
+        let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
+        state.set_has_channel(true);
+        state.set_content("hello world");
+
+        state.textarea.move_cursor(CursorMove::End);
+
+        let key = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+
+        state.handle_key(key, &registry);
+
+        assert_eq!(state.value(), "hello ");
+    }
+
+    #[test]
+    fn test_ctrl_left_right_move_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tui_textarea::CursorMove;
+
+        let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
+        state.set_has_channel(true);
+        state.set_content("hello world test");
+
+        state.textarea.move_cursor(CursorMove::Head);
+
+        let key = KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL);
+        state.handle_key(key, &registry);
+        let (_, col) = state.textarea.cursor();
+        assert_eq!(col, 6);
+
+        state.handle_key(key, &registry);
+        let (_, col) = state.textarea.cursor();
+        assert_eq!(col, 12);
+
+        let key = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL);
+        state.handle_key(key, &registry);
+        let (_, col) = state.textarea.cursor();
+        assert_eq!(col, 6);
     }
 }

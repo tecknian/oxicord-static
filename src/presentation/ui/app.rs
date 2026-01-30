@@ -357,13 +357,15 @@ impl App {
     }
 
     fn handle_paste(&mut self, text: &str) -> EventResult {
+        let clean_text = text.trim_end_matches(['\n', '\r']);
+
         match &mut self.screen {
             CurrentScreen::Login(screen) => {
-                screen.paste_token(text);
+                screen.paste_token(clean_text);
                 EventResult::Continue
             }
             CurrentScreen::Chat(state) => {
-                state.insert_text(text);
+                state.insert_text(clean_text);
                 EventResult::Continue
             }
             CurrentScreen::Splash(_) => EventResult::Continue,
