@@ -5,6 +5,7 @@ use std::str::CharIndices;
 /// Keeping it here just in case, but likely not needed for AST generation unless we want to validate IDs.
 pub trait MentionResolver: Send + Sync {
     fn resolve(&self, user_id: &str) -> Option<String>;
+    fn resolve_channel(&self, channel_id: &str) -> Option<String>;
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ pub enum MdInline {
     Spoiler(Vec<MdInline>),
     Code(String),
     Mention(String),
+    Channel(String),
 }
 
 #[must_use]
@@ -228,6 +230,10 @@ fn handle_special_chars(
             handle_mention(input, idx, start, inlines, chars);
             true
         }
+        'h' => {
+            handle_discord_url(input, idx, start, inlines, chars);
+            true
+        }
         '\\' => {
             handle_escape(input, idx, start, inlines, chars);
             true
@@ -271,6 +277,51 @@ fn handle_inline_code(
     }
 }
 
+fn handle_discord_url(
+    input: &str,
+    idx: usize,
+    start: &mut usize,
+    inlines: &mut Vec<MdInline>,
+    chars: &mut Peekable<CharIndices>,
+) {
+    let remaining = &input[idx..];
+    if remaining.starts_with("https://discord.com/channels/")
+        || remaining.starts_with("https://ptb.discord.com/channels/")
+        || remaining.starts_with("https://canary.discord.com/channels/")
+    {
+        let url_end_offset = remaining
+            .find(|c: char| c.is_whitespace() || c == ')')
+            .unwrap_or(remaining.len());
+        let url_str = &remaining[..url_end_offset];
+
+        let parts: Vec<&str> = url_str
+            .trim_start_matches("https://")
+            .split('/')
+            .collect();
+
+        if parts.len() >= 4 && parts[1] == "channels" {
+            let channel_id_str = parts[3].split('?').next().unwrap_or(parts[3]);
+            if channel_id_str.chars().all(char::is_numeric) && !channel_id_str.is_empty() {
+                if idx > *start {
+                    inlines.push(MdInline::Text(input[*start..idx].to_string()));
+                }
+
+                inlines.push(MdInline::Channel(channel_id_str.to_string()));
+
+                let end_pos = idx + url_end_offset;
+                while let Some((curr, _)) = chars.peek() {
+                    if *curr < end_pos {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                *start = end_pos;
+            }
+        }
+    }
+}
+
 fn handle_mention(
     input: &str,
     idx: usize,
@@ -279,7 +330,31 @@ fn handle_mention(
     chars: &mut Peekable<CharIndices>,
 ) {
     let remaining = &input[idx..];
-    if remaining.starts_with("<@")
+
+    if remaining.starts_with("<@") {
+        if let Some(end) = remaining.find('>') {
+            if idx > *start {
+                inlines.push(MdInline::Text(input[*start..idx].to_string()));
+            }
+            let content = &remaining[..=end];
+            let id_content = &content[2..end];
+            let id = id_content.trim_start_matches('!');
+
+            if id.chars().all(char::is_numeric) && !id.is_empty() {
+                inlines.push(MdInline::Mention(id.to_string()));
+
+                let end_pos = idx + end;
+                while let Some((curr, _)) = chars.peek() {
+                    if *curr <= end_pos {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                *start = end_pos + 1;
+            }
+        }
+    } else if remaining.starts_with("<#")
         && let Some(end) = remaining.find('>')
     {
         if idx > *start {
@@ -287,10 +362,9 @@ fn handle_mention(
         }
         let content = &remaining[..=end];
         let id_content = &content[2..end];
-        let id = id_content.trim_start_matches('!');
 
-        if id.chars().all(char::is_numeric) && !id.is_empty() {
-            inlines.push(MdInline::Mention(id.to_string()));
+        if id_content.chars().all(char::is_numeric) && !id_content.is_empty() {
+            inlines.push(MdInline::Channel(id_content.to_string()));
 
             let end_pos = idx + end;
             while let Some((curr, _)) = chars.peek() {
@@ -304,6 +378,7 @@ fn handle_mention(
         }
     }
 }
+
 
 fn handle_escape(
     input: &str,
@@ -444,6 +519,56 @@ mod tests {
                     _ => panic!("Expected Bold inside Italic"),
                 },
                 _ => panic!("Expected Italic"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_discord_channel_url() {
+        let content = "Check this: https://discord.com/channels/12345/67890";
+        let blocks = parse_markdown(content);
+
+        if let MdBlock::Paragraph(inlines) = &blocks[0] {
+            assert_eq!(inlines.len(), 2);
+            if let MdInline::Text(t) = &inlines[0] {
+                assert_eq!(t, "Check this: ");
+            }
+            if let MdInline::Channel(id) = &inlines[1] {
+                assert_eq!(id, "67890");
+            } else {
+                panic!("Expected Channel inline from URL");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_channel_mention() {
+        let content = "Check <#123456789>";
+        let blocks = parse_markdown(content);
+
+        if let MdBlock::Paragraph(inlines) = &blocks[0] {
+            assert_eq!(inlines.len(), 2);
+            if let MdInline::Text(t) = &inlines[0] {
+                assert_eq!(t, "Check ");
+            }
+            if let MdInline::Channel(id) = &inlines[1] {
+                assert_eq!(id, "123456789");
+            } else {
+                panic!("Expected Channel mention");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_discord_channel_url_with_query_params() {
+        let content = "Check https://discord.com/channels/123/456?foo=bar";
+        let blocks = parse_markdown(content);
+        if let MdBlock::Paragraph(inlines) = &blocks[0] {
+            assert_eq!(inlines.len(), 2);
+             if let MdInline::Channel(id) = &inlines[1] {
+                assert_eq!(id, "456");
+            } else {
+                panic!("Expected Channel inline");
             }
         }
     }

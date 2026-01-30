@@ -688,6 +688,34 @@ impl App {
                 };
                 self.show_notification(format!("Display names {status}"));
             }
+            ChatKeyResult::JumpToChannel(channel_id) => {
+                debug!(channel_id = %channel_id, "Jump to channel requested");
+                self.save_state(None, Some(channel_id));
+                self.load_channel_messages(channel_id);
+
+                if let CurrentScreen::Chat(state) = &mut self.screen {
+                    let name = state
+                        .get_channel(channel_id)
+                        .map(|c| c.display_name())
+                        .unwrap_or_else(|| format!("{channel_id}"));
+                    
+                    state.message_pane_data_mut().set_channel(channel_id, name);
+                    state.message_pane_parts_mut().1.on_channel_change();
+                    state.message_input_parts_mut().set_has_channel(true);
+                    state.message_input_parts_mut().clear();
+                    state.focus_messages_list();
+                }
+            }
+            ChatKeyResult::RequestChannelFetch(ids) => {
+                if let Some(ref token) = self.current_token {
+                    for id in ids {
+                        let _ = self.command_tx.send(BackendCommand::FetchChannel {
+                            channel_id: id,
+                            token: token.clone(),
+                        });
+                    }
+                }
+            }
         }
 
         EventResult::Continue
@@ -1117,10 +1145,14 @@ impl App {
 
         if let CurrentScreen::Chat(ref mut state) = self.screen {
             state.on_message_received(&message);
-            state.add_message(message);
+            if let Some(result) = state.add_message(message) {
+                let _ = self.process_chat_key_result(result);
+            }
         } else if let Some(ref mut state) = self.pending_chat_state {
             state.on_message_received(&message);
-            state.add_message(message);
+            if let Some(result) = state.add_message(message) {
+                let _ = result; 
+            }
         }
 
         self.typing_manager.remove_typing(channel_id, &user_id);
@@ -1146,7 +1178,9 @@ impl App {
     fn handle_message_update(&mut self, message: crate::domain::entities::Message) {
         debug!(message_id = %message.id(), "Message updated");
         if let CurrentScreen::Chat(ref mut state) = self.screen {
-            state.update_message(message);
+            if let Some(result) = state.update_message(message) {
+                let _ = self.process_chat_key_result(result);
+            }
         }
     }
 
@@ -1298,6 +1332,25 @@ impl App {
             }
             Action::LoadError(e) => {
                 warn!(error = %e, "Failed to load history");
+            }
+            Action::ChannelLoaded(channel) => {
+                let id = channel.id().to_string();
+                let icon = if channel.kind().is_thread() {
+                    "󰙯 "
+                } else if channel.kind() == crate::domain::entities::ChannelKind::Forum {
+                    "󰠄 "
+                } else {
+                    "#"
+                };
+                let name = format!("{}{}", icon, channel.name());
+
+                if let CurrentScreen::Chat(state) = &mut self.screen {
+                    state.message_pane_data_mut().register_channel(id, name);
+                    state.message_pane_data_mut().force_refresh_layout();
+                }
+            }
+            Action::ChannelLoadError { channel_id, error } => {
+                warn!(channel_id = %channel_id, error = %error, "Failed to load channel info");
             }
             Action::DataLoaded {
                 user,
@@ -1947,6 +2000,18 @@ mod tests {
             _limit: Option<u8>,
         ) -> Result<Vec<crate::domain::entities::ForumThread>, AuthError> {
             Ok(vec![])
+        }
+
+        async fn fetch_channel(
+            &self,
+            _token: &AuthToken,
+            _channel_id: ChannelId,
+        ) -> Result<crate::domain::entities::Channel, AuthError> {
+            Ok(crate::domain::entities::Channel::new(
+                123,
+                "mock-channel".to_string(),
+                crate::domain::entities::ChannelKind::Text,
+            ))
         }
     }
 

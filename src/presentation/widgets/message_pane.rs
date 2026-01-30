@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
 
 use crate::application::services::identity_service::IdentityService;
-use crate::application::services::markdown_parser::{MdBlock, MentionResolver, parse_markdown};
+use crate::application::services::markdown_parser::{
+    MdBlock, MdInline, MentionResolver, parse_markdown,
+};
 use crate::application::services::url_extractor::UrlExtractor;
 use crate::domain::entities::{ChannelId, Embed, ForumThread, ImageId, Message, MessageId};
 use crate::domain::keybinding::Action;
@@ -134,11 +136,18 @@ impl UiMessage {
     }
 }
 
-struct HashMapResolver<'a>(&'a HashMap<String, String>);
+struct HashMapResolver<'a> {
+    authors: &'a HashMap<String, String>,
+    channels: &'a HashMap<String, String>,
+}
 
 impl MentionResolver for HashMapResolver<'_> {
     fn resolve(&self, user_id: &str) -> Option<String> {
-        self.0.get(user_id).cloned()
+        self.authors.get(user_id).cloned()
+    }
+
+    fn resolve_channel(&self, channel_id: &str) -> Option<String> {
+        self.channels.get(channel_id).cloned()
     }
 }
 
@@ -245,6 +254,7 @@ pub struct MessagePaneData {
     is_dm: bool,
     typing_indicator: Option<String>,
     authors: HashMap<String, String>,
+    channels: HashMap<String, String>,
     last_layout_width: Option<u16>,
     last_show_spoilers: Option<bool>,
     is_dirty: bool,
@@ -266,6 +276,7 @@ impl MessagePaneData {
             is_dm: false,
             typing_indicator: None,
             authors: HashMap::new(),
+            channels: HashMap::new(),
             last_layout_width: None,
             last_show_spoilers: None,
             is_dirty: true,
@@ -429,6 +440,7 @@ impl MessagePaneData {
         self.is_dm = false;
         self.typing_indicator = None;
         self.authors.clear();
+        self.channels.clear();
         self.is_dirty = true;
     }
 
@@ -458,9 +470,23 @@ impl MessagePaneData {
         self.typing_indicator = indicator;
     }
 
+    pub fn register_channel(&mut self, id: String, name: String) {
+        self.channels.insert(id, name);
+    }
+
+    pub fn is_channel_known(&self, id: &str) -> bool {
+        self.channels.contains_key(id)
+    }
+
     /// Marks the data as dirty, requiring re-layout.
     pub fn mark_dirty(&mut self) {
         self.is_dirty = true;
+    }
+
+    /// Forces a re-layout of all messages, including re-parsing if resolver data changed.
+    pub fn force_refresh_layout(&mut self) {
+        self.is_dirty = true;
+        self.last_layout_width = None;
     }
 
     #[must_use]
@@ -537,7 +563,8 @@ impl MessagePaneData {
             .saturating_sub(SCROLLBAR_MARGIN);
 
         let authors = &self.authors;
-        let resolver = HashMapResolver(authors);
+        let channels = &self.channels;
+        let resolver = HashMapResolver { authors, channels };
 
         for ui_msg in &mut self.messages {
             let message = &ui_msg.message;
@@ -677,7 +704,6 @@ pub struct ForumState {
     pub threads: Vec<ForumThread>,
     pub selected_idx: usize,
     pub scroll_offset: u16,
-    /// When true, scroll should be recalculated on next render to show selection.
     pub needs_scroll_to_selection: bool,
 }
 
@@ -691,6 +717,10 @@ pub enum ViewMode {
 impl MentionResolver for MessagePaneData {
     fn resolve(&self, user_id: &str) -> Option<String> {
         self.authors.get(user_id).cloned()
+    }
+
+    fn resolve_channel(&self, channel_id: &str) -> Option<String> {
+        self.channels.get(channel_id).cloned()
     }
 }
 
@@ -1033,15 +1063,40 @@ impl MessagePaneState {
             Some(Action::OpenAttachments) => self
                 .get_selected_message_id(data)
                 .map(MessagePaneAction::OpenAttachments),
-            Some(Action::JumpToReply) => self
-                .get_selected_message(data)
-                .and_then(|m| m.reference())
-                .and_then(|r| r.message_id)
-                .map(MessagePaneAction::JumpToReply),
+            Some(Action::JumpToReply) => {
+                if let Some(msg) = self.get_selected_message(data)
+                    && let Some(reference) = msg.reference()
+                    && let Some(message_id) = reference.message_id
+                {
+                    return Some(MessagePaneAction::JumpToReply(message_id));
+                }
+
+                if let Some(msg) = self.get_selected_message(data) {
+                    if let Some(ui_msg) = data
+                        .ui_messages()
+                        .iter()
+                        .find(|m| m.message.id() == msg.id())
+                    {
+                        for block in &ui_msg.parsed_content {
+                            if let MdBlock::Paragraph(inlines) = block {
+                                for inline in inlines {
+                                    if let MdInline::Channel(channel_id) = inline {
+                                        return Some(MessagePaneAction::OpenThread(ChannelId(
+                                            channel_id.parse().unwrap_or(0),
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
             Some(Action::Select) => {
                 self.show_spoilers = !self.show_spoilers;
                 None
             }
+
             _ => None,
         }
     }
@@ -1187,7 +1242,8 @@ impl<'a> MessagePane<'a> {
             .saturating_sub(SCROLLBAR_MARGIN);
 
         let authors = &self.data.authors;
-        let resolver = HashMapResolver(authors);
+        let channels = &self.data.channels;
+        let resolver = HashMapResolver { authors, channels };
         let text = markdown_service.render_markdown(message.content(), Some(&resolver), false);
 
         let mut content_lines = 0;

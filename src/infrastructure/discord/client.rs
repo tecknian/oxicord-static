@@ -1009,6 +1009,49 @@ impl DiscordDataPort for DiscordClient {
         let threads = Self::process_threads_response(threads_response, None);
         Ok(threads)
     }
+
+    async fn fetch_channel(
+        &self,
+        token: &AuthToken,
+        channel_id: ChannelId,
+    ) -> Result<Channel, AuthError> {
+        let url = format!("{}/channels/{}", self.base_url, channel_id.as_u64());
+
+        debug!(channel_id = %channel_id, "Fetching single channel from Discord API");
+
+        let response = self
+            .build_request(Method::GET, &url)
+            .header(header::AUTHORIZATION, token.as_str())
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to fetch channel");
+                AuthError::network(e.to_string())
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(self.handle_error_response(status, response).await);
+        }
+
+        let channel_response: ChannelResponse = response.json().await.map_err(|e| {
+            warn!(error = %e, "Failed to parse channel response");
+            AuthError::unexpected(format!("failed to parse channel: {e}"))
+        })?;
+
+        let guild_id = channel_response
+            .guild_id
+            .as_deref()
+            .and_then(|g| g.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let channels = Self::parse_channels(vec![channel_response], guild_id);
+        channels
+            .into_iter()
+            .next()
+            .ok_or_else(|| AuthError::unexpected("failed to parse fetched channel"))
+    }
 }
 
 impl DiscordClient {

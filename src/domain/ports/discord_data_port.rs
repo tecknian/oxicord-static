@@ -192,4 +192,11 @@ pub trait DiscordDataPort: Send + Sync {
         offset: u32,
         limit: Option<u8>,
     ) -> Result<Vec<ForumThread>, AuthError>;
+
+    /// Fetches a single channel by ID.
+    async fn fetch_channel(
+        &self,
+        token: &AuthToken,
+        channel_id: ChannelId,
+    ) -> Result<Channel, AuthError>;
 }

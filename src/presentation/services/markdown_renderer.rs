@@ -221,6 +221,16 @@ impl<'a> InternalRenderer<'a> {
                         style.fg(Color::Blue).add_modifier(Modifier::BOLD),
                     ));
                 }
+                MdInline::Channel(id) => {
+                    let name = self
+                        .resolver
+                        .and_then(|r| r.resolve_channel(&id))
+                        .unwrap_or_else(|| format!("<#{id}>"));
+                    spans.push(Span::styled(
+                        name,
+                        style.fg(Color::Blue).add_modifier(Modifier::BOLD),
+                    ));
+                }
             }
         }
         spans

@@ -48,6 +48,11 @@ pub enum Action {
         channel_id: ChannelId,
         error: String,
     },
+    ChannelLoaded(crate::domain::entities::Channel),
+    ChannelLoadError {
+        channel_id: ChannelId,
+        error: String,
+    },
     MessageSent(Message),
     MessageSendError(String),
     MessageEdited(Message),
@@ -82,6 +87,10 @@ pub enum BackendCommand {
         guild_id: Option<GuildId>,
         token: AuthToken,
         offset: u32,
+    },
+    FetchChannel {
+        channel_id: ChannelId,
+        token: AuthToken,
     },
     LoadHistory {
         channel_id: ChannelId,
@@ -216,6 +225,21 @@ impl Backend {
                     Err(e) => {
                         warn!(channel_id = %channel_id, error = %e, "Failed to load forum threads");
                         let _ = self.action_tx.send(Action::ForumThreadsLoadError {
+                            channel_id,
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            }
+            BackendCommand::FetchChannel { channel_id, token } => {
+                match self.discord_data.fetch_channel(&token, channel_id).await {
+                    Ok(channel) => {
+                        debug!(channel_id = %channel.id(), name = %channel.name(), "Channel fetched");
+                        let _ = self.action_tx.send(Action::ChannelLoaded(channel));
+                    }
+                    Err(e) => {
+                        warn!(channel_id = %channel_id, error = %e, "Failed to fetch channel info");
+                        let _ = self.action_tx.send(Action::ChannelLoadError {
                             channel_id,
                             error: e.to_string(),
                         });

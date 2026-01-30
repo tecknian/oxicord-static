@@ -4,9 +4,10 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     widgets::{StatefulWidget, Widget},
 };
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tachyonfx::{Effect, Interpolation, fx};
+use regex::Regex;
 
 use crate::application::services::autocomplete_service::AutocompleteService;
 use crate::application::services::identity_service::IdentityService;
@@ -682,6 +683,8 @@ impl ChatScreenState {
                             };
                         }
                     }
+
+                    return ChatKeyResult::JumpToChannel(channel_id);
                 }
                 MessagePaneAction::CloseThread => {
                     if let ViewMode::Forum(_) = &self.message_pane_state.view_mode {
@@ -874,6 +877,44 @@ impl ChatScreenState {
         self.autocomplete_service.update_results(candidates);
     }
 
+    fn register_channel_mentions(&mut self, messages: &[Message]) -> Vec<ChannelId> {
+        static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<#(\d+)>").unwrap());
+        static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/\d+/(\d+)").unwrap()
+        });
+
+        let mut unknown_ids = Vec::new();
+
+        for msg in messages {
+            let content = msg.content();
+            let channel_ids = MENTION_RE
+                .captures_iter(content)
+                .filter_map(|c| c.get(1))
+                .chain(URL_RE.captures_iter(content).filter_map(|c| c.get(1)));
+
+            for id_match in channel_ids {
+                if let Ok(id) = id_match.as_str().parse::<u64>() {
+                    let channel_id = ChannelId(id);
+                    if let Some(channel) = self.guilds_tree_data.get_channel(channel_id) {
+                        let icon = if channel.kind().is_thread() {
+                            "󰙯 "
+                        } else if channel.kind() == ChannelKind::Forum {
+                            "󰠄 "
+                        } else {
+                            "#"
+                        };
+                        let name = format!("{}{}", icon, channel.name());
+                        self.message_pane_data.register_channel(id.to_string(), name);
+                    } else if !self.message_pane_data.is_channel_known(&id.to_string()) {
+                        unknown_ids.push(channel_id);
+                    }
+                }
+            }
+        }
+        unknown_ids
+    }
+
+
     fn on_channel_selected(&mut self, channel_id: ChannelId) -> Option<ChatKeyResult> {
         let mut guild_id = self.selected_guild;
 
@@ -1027,8 +1068,14 @@ impl ChatScreenState {
         (&self.guilds_tree_data, &mut self.guilds_tree_state)
     }
 
-    pub fn set_messages(&mut self, messages: Vec<Message>) {
+    pub fn set_messages(&mut self, messages: Vec<Message>) -> Option<ChatKeyResult> {
+        let unknown = self.register_channel_mentions(&messages);
         self.message_pane_data.set_messages(messages);
+        if !unknown.is_empty() {
+            Some(ChatKeyResult::RequestChannelFetch(unknown))
+        } else {
+            None
+        }
     }
 
     pub fn set_forum_threads(
@@ -1088,15 +1135,22 @@ impl ChatScreenState {
         }
     }
 
-    pub fn add_message(&mut self, message: Message) {
+    pub fn add_message(&mut self, message: Message) -> Option<ChatKeyResult> {
+        let unknown = self.register_channel_mentions(std::slice::from_ref(&message));
         self.message_pane_data.add_message(message);
         self.message_pane_state.on_new_message();
+        if !unknown.is_empty() {
+            Some(ChatKeyResult::RequestChannelFetch(unknown))
+        } else {
+            None
+        }
     }
 
-    pub fn prepend_messages(&mut self, new_messages: Vec<Message>) {
+    pub fn prepend_messages(&mut self, new_messages: Vec<Message>) -> Option<ChatKeyResult> {
         if new_messages.is_empty() {
-            return;
+            return None;
         }
+        let unknown = self.register_channel_mentions(&new_messages);
 
         let width = self.message_pane_state.last_width();
         let pane = MessagePane::new(&mut self.message_pane_data, &self.markdown_service);
@@ -1113,10 +1167,21 @@ impl ChatScreenState {
             self.message_pane_state
                 .adjust_for_prepend(added_count, added_height.into());
         }
+        if !unknown.is_empty() {
+            Some(ChatKeyResult::RequestChannelFetch(unknown))
+        } else {
+            None
+        }
     }
 
-    pub fn update_message(&mut self, message: Message) {
+    pub fn update_message(&mut self, message: Message) -> Option<ChatKeyResult> {
+        let unknown = self.register_channel_mentions(std::slice::from_ref(&message));
         self.message_pane_data.update_message(message);
+        if !unknown.is_empty() {
+            Some(ChatKeyResult::RequestChannelFetch(unknown))
+        } else {
+            None
+        }
     }
 
     pub fn remove_message(&mut self, message_id: crate::domain::entities::MessageId) {
@@ -1547,6 +1612,8 @@ pub enum ChatKeyResult {
     Paste,
     ToggleHelp,
     ToggleDisplayName,
+    JumpToChannel(ChannelId),
+    RequestChannelFetch(Vec<ChannelId>),
 }
 
 pub struct ChatScreen;
