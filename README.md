@@ -61,7 +61,7 @@ We stand on the shoulders of giants. Here is how Oxicord compares to existing te
 ### Arch
 
 ```bash
-yay -S oxicord-bin
+paru -S oxicord-bin
 ```
 
 ### Nix
