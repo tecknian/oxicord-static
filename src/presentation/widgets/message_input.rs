@@ -358,8 +358,10 @@ impl MessageInputState<'_> {
 
         let target_v_row = v_row - 1;
         let (l_row, l_col) = self.get_logical_pos(target_v_row, v_col, width);
-        self.textarea
-            .move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+        self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+            u16::try_from(l_row).unwrap_or(u16::MAX),
+            u16::try_from(l_col).unwrap_or(u16::MAX),
+        ));
     }
 
     fn move_cursor_down(&mut self) {
@@ -377,8 +379,10 @@ impl MessageInputState<'_> {
 
         let target_v_row = v_row + 1;
         let (l_row, l_col) = self.get_logical_pos(target_v_row, v_col, width);
-        self.textarea
-            .move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+        self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+            u16::try_from(l_row).unwrap_or(u16::MAX),
+            u16::try_from(l_col).unwrap_or(u16::MAX),
+        ));
     }
 
     fn move_cursor_start(&mut self) {
@@ -390,8 +394,10 @@ impl MessageInputState<'_> {
 
         let (_, v_row, _) = self.get_visual_info(width);
         let (l_row, l_col) = self.get_logical_pos(v_row, 0, width);
-        self.textarea
-            .move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+        self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+            u16::try_from(l_row).unwrap_or(u16::MAX),
+            u16::try_from(l_col).unwrap_or(u16::MAX),
+        ));
     }
 
     fn move_cursor_end(&mut self) {
@@ -403,9 +409,12 @@ impl MessageInputState<'_> {
 
         let (visual_lines, v_row, _) = self.get_visual_info(width);
         if let Some(line) = visual_lines.get(v_row) {
-             let v_col_end = line.chars().map(|c| c.width().unwrap_or(0)).sum();
-             let (l_row, l_col) = self.get_logical_pos(v_row, v_col_end, width);
-             self.textarea.move_cursor(tui_textarea::CursorMove::Jump(l_row as u16, l_col as u16));
+            let v_col_end = line.chars().map(|c| c.width().unwrap_or(0)).sum();
+            let (l_row, l_col) = self.get_logical_pos(v_row, v_col_end, width);
+            self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+                u16::try_from(l_row).unwrap_or(u16::MAX),
+                u16::try_from(l_col).unwrap_or(u16::MAX),
+            ));
         }
     }
 
@@ -417,6 +426,7 @@ impl MessageInputState<'_> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn handle_key(
         &mut self,
         key: KeyEvent,
@@ -500,14 +510,12 @@ impl MessageInputState<'_> {
                     {
                         self.textarea.delete_word();
                         return Some(MessageInputAction::StartTyping);
-                    } else {
-                        self.textarea.delete_char();
                     }
+                    self.textarea.delete_char();
                 } else if (key.code == KeyCode::Delete
                     && (key.modifiers.contains(KeyModifiers::CONTROL)
                         || key.modifiers.contains(KeyModifiers::ALT)))
-                    || (key.code == KeyCode::Char('d')
-                        && key.modifiers.contains(KeyModifiers::ALT))
+                    || (key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::ALT))
                 {
                     self.textarea.delete_next_word();
                     return Some(MessageInputAction::StartTyping);
@@ -524,7 +532,8 @@ impl MessageInputState<'_> {
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         || key.modifiers.contains(KeyModifiers::ALT)
                     {
-                        self.textarea.move_cursor(tui_textarea::CursorMove::WordBack);
+                        self.textarea
+                            .move_cursor(tui_textarea::CursorMove::WordBack);
                     } else {
                         self.textarea.move_cursor(tui_textarea::CursorMove::Back);
                     }
@@ -684,12 +693,12 @@ impl MessageInputState<'_> {
 
             if self.focused && i == v_cursor_row {
                 let cursor_x = inner.x + u16::try_from(v_cursor_col).unwrap_or(0);
-                if cursor_x < inner.x + inner.width {
-                    if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                        cell.set_style(style.cursor_style);
-                        if cell.symbol().is_empty() {
-                            cell.set_symbol(" ");
-                        }
+                if cursor_x < inner.x + inner.width
+                    && let Some(cell) = buf.cell_mut((cursor_x, y))
+                {
+                    cell.set_style(style.cursor_style);
+                    if cell.symbol().is_empty() {
+                        cell.set_symbol(" ");
                     }
                 }
             }

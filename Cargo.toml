@@ -61,6 +61,7 @@ uuid = { version = "1.19.0", features = ["v4", "fast-rng"] }
 parking_lot = "0.12.5"
 arboard = { version = "3.6.1", features = ["wayland-data-control", "image-data"], default-features = false }
 notify-rust = "4"
+opener = "0.8.4"
 
 # Image rendering - Platform Specific
 

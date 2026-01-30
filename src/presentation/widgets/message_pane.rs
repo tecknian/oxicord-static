@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 use crate::application::services::identity_service::IdentityService;
 use crate::application::services::markdown_parser::{MdBlock, MentionResolver, parse_markdown};
+use crate::application::services::url_extractor::UrlExtractor;
 use crate::domain::entities::{ChannelId, Embed, ForumThread, ImageId, Message, MessageId};
 use crate::domain::keybinding::Action;
 
@@ -79,7 +80,7 @@ impl UiMessage {
 
         let content = message.content();
         let parsed_content = parse_markdown(content);
-        let inline_images = Self::extract_inline_images(content);
+        let inline_images = UrlExtractor::extract_image_urls(content);
         for url in inline_images {
             if !image_attachments.iter().any(|img| img.url == url) {
                 let id = crate::domain::entities::ImageId::from_url(&url);
@@ -97,48 +98,6 @@ impl UiMessage {
             reply_preview: None,
             group: MessageGroup::Start,
         }
-    }
-
-    /// Extracts inline image URLs from message content.
-    /// Matches markdown images `![alt](url)` and direct image URLs.
-    #[allow(clippy::items_after_statements)]
-    fn extract_inline_images(content: &str) -> Vec<String> {
-        if !content.contains("http") {
-            return Vec::new();
-        }
-
-        use regex::Regex;
-        use std::sync::LazyLock;
-
-        static MD_IMAGE_RE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"!\[[^\]]*\]\((https?://[^)]+)\)").unwrap());
-
-        static DIRECT_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"(?:^|\s)(https?://[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)(?:\s|$)")
-                .unwrap()
-        });
-
-        let mut urls: Vec<String> = Vec::new();
-
-        for cap in MD_IMAGE_RE.captures_iter(content) {
-            if let Some(url) = cap.get(1) {
-                let url_str = url.as_str().to_owned();
-                if !urls.contains(&url_str) {
-                    urls.push(url_str);
-                }
-            }
-        }
-
-        for cap in DIRECT_IMAGE_RE.captures_iter(content) {
-            if let Some(url) = cap.get(1) {
-                let url_str = url.as_str().to_owned();
-                if !urls.contains(&url_str) {
-                    urls.push(url_str);
-                }
-            }
-        }
-
-        urls
     }
 
     #[must_use]

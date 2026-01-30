@@ -576,6 +576,41 @@ impl App {
             }
             ChatKeyResult::OpenAttachments(message_id) => {
                 debug!(message_id = %message_id, "Open attachments requested");
+                if let CurrentScreen::Chat(state) = &self.screen
+                    && let Some(ui_msg) = state
+                        .message_pane_data()
+                        .messages()
+                        .iter()
+                        .find(|m| m.message.id() == message_id)
+                {
+                    let mut urls = std::collections::HashSet::new();
+                    for img in &ui_msg.image_attachments {
+                        urls.insert(img.url.clone());
+                    }
+
+                    if let Some(loader) = &self.image_loader {
+                        for url in urls {
+                            let loader = loader.clone();
+                            let image_id = crate::domain::entities::ImageId::from_url(&url);
+                            let url_clone = url.clone();
+
+                            tokio::spawn(async move {
+                                match loader.export_for_viewing(&image_id, &url_clone).await {
+                                    Ok(path) => {
+                                        tokio::task::spawn_blocking(move || {
+                                            if let Err(e) = opener::open(&path) {
+                                                tracing::error!("Failed to open image file: {}", e);
+                                            }
+                                        });
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to export image for viewing: {}", e);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
             }
             ChatKeyResult::JumpToMessage(message_id) => {
                 debug!(message_id = %message_id, "Jump to message requested");

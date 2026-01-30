@@ -134,9 +134,10 @@ impl ImageLoader {
         let optimized_url = optimize_cdn_url_default(url);
         debug!(id = %id, url = %optimized_url, "Downloading image from network");
 
-        let bytes = self.download(&optimized_url).await?;
+        let (bytes, _content_type) = self.download(&optimized_url).await?;
 
         let disk_cache = self.disk_cache.clone();
+
         let id_for_disk = id.clone();
         let bytes_for_disk = bytes.clone();
         tokio::spawn(async move {
@@ -236,7 +237,7 @@ impl ImageLoader {
     }
 
     /// Downloads image bytes from a URL.
-    async fn download(&self, url: &str) -> CacheResult<Vec<u8>> {
+    async fn download(&self, url: &str) -> CacheResult<(Vec<u8>, Option<String>)> {
         let response = self
             .http_client
             .get(url)
@@ -252,12 +253,75 @@ impl ImageLoader {
             )));
         }
 
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
+
         let bytes = response
             .bytes()
             .await
             .map_err(|e| CacheError::NetworkError(format!("Failed to read body: {e}")))?;
 
-        Ok(bytes.to_vec())
+        Ok((bytes.to_vec(), content_type))
+    }
+
+    /// Exports an image to a temporary file for external viewing.
+    ///
+    /// This method ensures the image is cached, then copies it to a temporary file
+    /// with the correct extension derived from the content type or URL.
+    /// The file is placed in a `view` subdirectory of the cache to avoid cluttering /tmp.
+    ///
+    /// # Errors
+    /// Returns error if download fails or file I/O fails.
+    pub async fn export_for_viewing(
+        &self,
+        id: &ImageId,
+        url: &str,
+    ) -> CacheResult<std::path::PathBuf> {
+        let (bytes, content_type) = if let Some(cached_bytes) = self.disk_cache.get_bytes(id).await
+        {
+            (cached_bytes, None)
+        } else {
+            let optimized_url = optimize_cdn_url_default(url);
+            let (bytes, ctype) = self.download(&optimized_url).await?;
+            let _ = self.disk_cache.put_bytes(id, &bytes).await;
+            (bytes, ctype)
+        };
+
+        let ext = if let Some(ctype) = content_type {
+            match ctype.as_str() {
+                "image/jpeg" => "jpg",
+                "image/gif" => "gif",
+                "image/webp" => "webp",
+                _ => "png",
+            }
+        } else if url.contains(".png") {
+            "png"
+        } else if url.contains(".jpg") || url.contains(".jpeg") {
+            "jpg"
+        } else if url.contains(".gif") {
+            "gif"
+        } else if url.contains(".webp") {
+            "webp"
+        } else {
+            "png"
+        };
+
+        let temp_dir = std::env::temp_dir().join("oxicord").join("view");
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .map_err(|e| CacheError::IoError(format!("Failed to create temp view dir: {e}")))?;
+
+        let filename = format!("{}.{}", id.as_str(), ext);
+        let path = temp_dir.join(filename);
+
+        tokio::fs::write(&path, &bytes)
+            .await
+            .map_err(|e| CacheError::IoError(format!("Failed to write export file: {e}")))?;
+
+        Ok(path)
     }
 
     /// Evicts images that are far from the viewport.

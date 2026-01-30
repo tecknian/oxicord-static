@@ -1455,6 +1455,9 @@ impl HasCommands for ChatScreenState {
                     if let Some(key) = registry.get_first(Action::DeleteMessage) {
                         commands.push(Keybind::new(key, Action::DeleteMessage, "Del"));
                     }
+                    if let Some(key) = registry.get_first(Action::OpenAttachments) {
+                        commands.push(Keybind::new(key, Action::OpenAttachments, "Open Image"));
+                    }
                 }
                 ChatFocus::MessageInput => {
                     if let Some(key) = registry.get_first(Action::SendMessage) {
@@ -1652,7 +1655,7 @@ fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) 
                 (Action::DeleteMessage, "Delete Message"),
                 (Action::CopyContent, "Copy Content"),
                 (Action::YankId, "Copy Message ID"),
-                (Action::OpenAttachments, "Open Attachment"),
+                (Action::OpenAttachments, "Open Image"),
                 (Action::JumpToReply, "Jump to Reply"),
                 (Action::ToggleDisplayName, "Toggle Display Name"),
             ],

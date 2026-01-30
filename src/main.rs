@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     let (app, external_token) = create_app()?;
 
     let mut terminal = ratatui::init();
-    
+
     // Enable Bracketed Paste Mode to properly handle pasted text
     // This prevents pasted text with newlines from automatically sending messages
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
