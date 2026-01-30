@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use super::UserId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GuildId(pub u64);
+#[serde(transparent)]
+pub struct GuildId(#[serde(with = "crate::domain::serde_utils::string_to_u64")] pub u64);
 
 impl GuildId {
     #[must_use]
@@ -391,6 +392,7 @@ impl Guild {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GuildFolder {
+    #[serde(default, with = "crate::domain::serde_utils::string_to_u64::option")]
     pub id: Option<u64>,
     pub name: Option<String>,
     pub color: Option<u64>,

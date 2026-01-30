@@ -5,7 +5,8 @@ use super::{ChannelId, GuildId, User};
 
 /// Unique identifier for a Discord message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MessageId(pub u64);
+#[serde(transparent)]
+pub struct MessageId(#[serde(with = "crate::domain::serde_utils::string_to_u64")] pub u64);
 
 impl MessageId {
     /// Returns the underlying u64 value.

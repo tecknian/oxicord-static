@@ -10,6 +10,8 @@ pub mod errors;
 pub mod keybinding;
 /// Port definitions.
 pub mod ports;
+/// Serde utilities.
+pub mod serde_utils;
 
 pub use connection::ConnectionStatus;
 pub use entities::{AuthToken, User};

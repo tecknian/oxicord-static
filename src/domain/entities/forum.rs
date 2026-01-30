@@ -12,6 +12,7 @@ pub struct ForumThread {
     pub message_count: u32,
     pub member_count: u32,
     pub last_activity_at: Option<String>,
+    #[serde(with = "crate::domain::serde_utils::vec_string_to_u64")]
     pub applied_tags: Vec<u64>,
     pub starter_message: Option<Message>,
     pub last_message_id: Option<super::MessageId>,

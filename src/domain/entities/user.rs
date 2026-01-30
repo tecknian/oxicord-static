@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct UserId(pub u64);
+#[serde(transparent)]
+pub struct UserId(#[serde(with = "crate::domain::serde_utils::string_to_u64")] pub u64);
 
 impl UserId {
     #[must_use]

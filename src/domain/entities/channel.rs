@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use super::{GuildId, MessageId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ChannelId(pub u64);
+#[serde(transparent)]
+pub struct ChannelId(#[serde(with = "crate::domain::serde_utils::string_to_u64")] pub u64);
 
 impl ChannelId {
     #[must_use]
