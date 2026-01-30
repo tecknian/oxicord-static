@@ -14,5 +14,6 @@ result
 
 debug/
 target/
+.cargo/
 
 **/*.rs.bk
