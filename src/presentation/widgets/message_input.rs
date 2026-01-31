@@ -59,6 +59,7 @@ pub struct MessageInputState<'a> {
     attachments: Vec<PathBuf>,
     scroll_offset: usize,
     last_width: usize,
+    mentions: std::collections::HashMap<String, String>,
 }
 
 impl MessageInputState<'_> {
@@ -74,6 +75,7 @@ impl MessageInputState<'_> {
             attachments: Vec::new(),
             scroll_offset: 0,
             last_width: 0,
+            mentions: std::collections::HashMap::new(),
         }
     }
 
@@ -106,6 +108,18 @@ impl MessageInputState<'_> {
     #[must_use]
     pub const fn has_channel(&self) -> bool {
         self.has_channel
+    }
+
+    #[must_use]
+    pub fn message_content(&self) -> String {
+        let mut content = self.value();
+        let mut sorted_mentions: Vec<_> = self.mentions.iter().collect();
+        sorted_mentions.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+
+        for (name, id) in sorted_mentions {
+            content = content.replace(name, &format!("<@{id}>"));
+        }
+        content
     }
 
     #[must_use]
@@ -154,6 +168,7 @@ impl MessageInputState<'_> {
         self.textarea.select_all();
         self.textarea.cut();
         self.mode = MessageInputMode::Normal;
+        self.mentions.clear();
     }
 
     pub fn set_content(&mut self, content: &str) {
@@ -318,9 +333,11 @@ impl MessageInputState<'_> {
         (0, 0)
     }
 
-    pub fn insert_mention(&mut self, trigger_index: usize, user_id: &str) {
+    pub fn insert_mention(&mut self, trigger_index: usize, resolved_name: &str, user_id: &str) {
         let content = self.value();
-        let mention = format!("<@{user_id}> ");
+        let mention_text = format!("@{resolved_name} ");
+        self.mentions
+            .insert(format!("@{resolved_name}"), user_id.to_string());
 
         if trigger_index >= content.len() {
             return;
@@ -338,7 +355,7 @@ impl MessageInputState<'_> {
         let prefix = &content[..trigger_index];
         let suffix = &content[cursor_idx..];
 
-        let new_content = format!("{prefix}{mention}{suffix}");
+        let new_content = format!("{prefix}{mention_text}{suffix}");
 
         self.set_content(&new_content);
     }
@@ -466,7 +483,7 @@ impl MessageInputState<'_> {
                 }
             }
             Some(Action::SendMessage) => {
-                let content = self.value();
+                let content = self.message_content();
                 if content.trim().is_empty() && self.attachments.is_empty() {
                     return None;
                 }
@@ -511,6 +528,44 @@ impl MessageInputState<'_> {
                         self.textarea.delete_word();
                         return Some(MessageInputAction::StartTyping);
                     }
+
+                    let (row, col) = self.textarea.cursor();
+                    let lines = self.textarea.lines();
+                    if let Some(line) = lines.get(row) {
+                        let byte_index = line
+                            .char_indices()
+                            .map(|(i, _)| i)
+                            .nth(col)
+                            .unwrap_or(line.len());
+
+                        let prefix = &line[..byte_index];
+                        let mut deleted_mention = false;
+                        let mut longest_match: Option<String> = None;
+                        for mention in self.mentions.keys() {
+                            if prefix.ends_with(mention) {
+                                if let Some(ref current) = longest_match {
+                                    if mention.len() > current.len() {
+                                        longest_match = Some(mention.clone());
+                                    }
+                                } else {
+                                    longest_match = Some(mention.clone());
+                                }
+                            }
+                        }
+
+                        if let Some(mention) = longest_match {
+                            for _ in 0..mention.len() {
+                                self.textarea.delete_char();
+                            }
+                            self.mentions.remove(&mention);
+                            deleted_mention = true;
+                        }
+
+                        if deleted_mention {
+                            return Some(MessageInputAction::StartTyping);
+                        }
+                    }
+
                     self.textarea.delete_char();
                 } else if (key.code == KeyCode::Delete
                     && (key.modifiers.contains(KeyModifiers::CONTROL)
@@ -1038,5 +1093,49 @@ mod tests {
         state.handle_key(key, &registry);
         let (_, col) = state.textarea.cursor();
         assert_eq!(col, 6);
+    }
+
+    #[test]
+    fn test_delete_mention_at_once() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tui_textarea::CursorMove;
+
+        let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
+        state.set_has_channel(true);
+        state.set_content("Hello @Ant");
+        state.textarea.move_cursor(CursorMove::End);
+
+        state.insert_mention(6, "Antonio", "12345");
+
+        state.textarea.move_cursor(CursorMove::End);
+
+        state.textarea.delete_char();
+
+        assert_eq!(state.value(), "Hello @Antonio", "Pre-condition failed");
+
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        state.handle_key(key, &registry);
+
+        assert_eq!(state.value(), "Hello ");
+        
+        assert!(!state.mentions.contains_key("@Antonio"));
+    }
+
+    #[test]
+    fn test_backspace_with_multibyte_chars() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tui_textarea::CursorMove;
+
+        let mut state = MessageInputState::new();
+        let registry = CommandRegistry::default();
+
+        state.set_content("Despupé");
+        state.textarea.move_cursor(CursorMove::End);
+
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        state.handle_key(key, &registry);
+
+        assert_eq!(state.value(), "Despup");
     }
 }

@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, StatefulWidget, Widget},
 };
 
-use crate::application::services::identity_service::IdentityService;
+use crate::application::services::identity_resolver::IdentityResolver;
 use crate::domain::entities::{
     Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, ReadState, User,
 };
@@ -753,7 +753,7 @@ impl GuildsTreeData {
                     .with_global_name(dm.recipient_global_name.clone().unwrap_or_default());
 
                     let preferred_name =
-                        IdentityService::get_preferred_name(&user, use_display_name);
+                        IdentityResolver::with_preference(use_display_name).resolve(&user);
                     clean_name = clean_text(&preferred_name);
                 }
 

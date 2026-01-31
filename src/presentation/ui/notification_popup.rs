@@ -39,9 +39,9 @@ impl Widget for NotificationPopup<'_> {
         let inner_width = width.saturating_sub(2).max(1);
         let content_width = u16::try_from(message.width()).unwrap_or(0);
 
-        let lines = (content_width + inner_width - 1) / inner_width;
+        let lines = content_width.div_ceil(inner_width);
 
-        let height = lines.saturating_add(3).min(10).max(3);
+        let height = lines.saturating_add(3).clamp(3, 10);
 
         let x = area.width.saturating_sub(width).saturating_sub(2);
         let y = 2;

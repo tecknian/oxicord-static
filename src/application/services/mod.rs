@@ -1,5 +1,5 @@
 pub mod autocomplete_service;
-pub mod identity_service;
+pub mod identity_resolver;
 pub mod markdown_parser;
 pub mod message_content_service;
 pub mod notification_manager;

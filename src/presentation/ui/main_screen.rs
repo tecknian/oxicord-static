@@ -35,9 +35,9 @@ impl MainScreen {
     }
 
     pub fn set_use_display_name(&mut self, enabled: bool) {
-        use crate::application::services::identity_service::IdentityService;
+        use crate::application::services::identity_resolver::IdentityResolver;
         self.use_display_name = enabled;
-        let name = IdentityService::get_preferred_name(&self.user, enabled);
+        let name = IdentityResolver::with_preference(enabled).resolve(&self.user);
         self.status = self.status.clone().left(format!("Logged in as: {name}"));
     }
 
@@ -91,10 +91,10 @@ impl Widget for &MainScreen {
             Line::from(vec![
                 Span::raw("Logged in as: "),
                 Span::styled(
-                    crate::application::services::identity_service::IdentityService::get_preferred_name(
-                        &self.user,
+                    crate::application::services::identity_resolver::IdentityResolver::with_preference(
                         self.use_display_name,
-                    ),
+                    )
+                    .resolve(&self.user),
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),

@@ -10,6 +10,7 @@ pub struct CachedUser {
     username: String,
     discriminator: String,
     avatar: Option<String>,
+    global_name: Option<String>,
     bot: bool,
 }
 
@@ -20,6 +21,7 @@ impl CachedUser {
         username: impl Into<String>,
         discriminator: impl Into<String>,
         avatar: Option<String>,
+        global_name: Option<String>,
         bot: bool,
     ) -> Self {
         Self {
@@ -27,6 +29,7 @@ impl CachedUser {
             username: username.into(),
             discriminator: discriminator.into(),
             avatar,
+            global_name,
             bot,
         }
     }
@@ -38,6 +41,7 @@ impl CachedUser {
             username: user.username().to_string(),
             discriminator: user.discriminator().to_string(),
             avatar: user.avatar().map(String::from),
+            global_name: user.global_name().map(String::from),
             bot: user.is_bot(),
         }
     }
@@ -63,12 +67,20 @@ impl CachedUser {
     }
 
     #[must_use]
+    pub fn global_name(&self) -> Option<&str> {
+        self.global_name.as_deref()
+    }
+
+    #[must_use]
     pub const fn is_bot(&self) -> bool {
         self.bot
     }
 
     #[must_use]
     pub fn display_name(&self) -> String {
+        if let Some(global) = &self.global_name {
+            return global.clone();
+        }
         if self.discriminator == "0" {
             self.username.clone()
         } else {
@@ -122,7 +134,7 @@ impl UserCache {
     }
 
     pub fn insert_basic(&self, user_id: impl Into<String>, username: impl Into<String>) {
-        let user = CachedUser::new(user_id, username, "0", None, false);
+        let user = CachedUser::new(user_id, username, "0", None, None, false);
         self.insert(user);
     }
 
@@ -196,10 +208,10 @@ mod tests {
 
     #[test]
     fn test_cached_user_display_name() {
-        let user = CachedUser::new("123", "testuser", "0", None, false);
+        let user = CachedUser::new("123", "testuser", "0", None, None, false);
         assert_eq!(user.display_name(), "testuser");
 
-        let legacy_user = CachedUser::new("456", "legacyuser", "1234", None, false);
+        let legacy_user = CachedUser::new("456", "legacyuser", "1234", None, None, false);
         assert_eq!(legacy_user.display_name(), "legacyuser#1234");
     }
 

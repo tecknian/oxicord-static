@@ -10,7 +10,7 @@ use std::time::Duration;
 use tachyonfx::{Effect, Interpolation, fx};
 
 use crate::application::services::autocomplete_service::AutocompleteService;
-use crate::application::services::identity_service::IdentityService;
+use crate::application::services::identity_resolver::IdentityResolver;
 use crate::application::services::message_content_service::{
     MessageContentAction, MessageContentService,
 };
@@ -319,7 +319,7 @@ impl ChatScreenState {
                 )
                 .with_global_name(dm.recipient_global_name.clone().unwrap_or_default());
 
-                let name = IdentityService::get_preferred_name(&user, self.use_display_name);
+                let name = IdentityResolver::with_preference(self.use_display_name).resolve(&user);
                 let info = DmChannelInfo::new(ChannelId(channel_id), name);
                 self.dm_channels.insert(dm.channel_id.clone(), info);
             }
@@ -864,8 +864,10 @@ impl ChatScreenState {
             KeyCode::Enter | KeyCode::Tab => {
                 if let Some(user) = self.autocomplete_service.state().selected_user() {
                     let trigger_idx = self.autocomplete_service.state().trigger_index;
+                    let name =
+                        IdentityResolver::with_preference(self.use_display_name).resolve(user);
                     self.message_input_state
-                        .insert_mention(trigger_idx, user.id());
+                        .insert_mention(trigger_idx, &name, user.id());
                 }
                 self.autocomplete_service.reset();
                 true
@@ -900,6 +902,7 @@ impl ChatScreenState {
                         author.username(),
                         author.discriminator(),
                         author.avatar().map(String::from),
+                        author.global_name.clone(),
                         author.is_bot(),
                     );
                     candidates.push(cached);
@@ -1276,7 +1279,9 @@ impl ChatScreenState {
             .messages()
             .iter()
             .find(|m| m.message.id() == message_id)
-            .map(|m| IdentityService::get_preferred_name(m.message.author(), self.use_display_name))
+            .map(|m| {
+                IdentityResolver::with_preference(self.use_display_name).resolve(m.message.author())
+            })
     }
 
     pub fn message_input_parts_mut(&mut self) -> &mut MessageInputState<'static> {
@@ -2055,7 +2060,11 @@ fn render_messages_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffe
             popup_height,
         );
         let mut autocomplete_state = state.autocomplete_service.state().clone();
-        MentionPopup::new(state.use_display_name).render(popup_area, buf, &mut autocomplete_state);
+        MentionPopup::new(IdentityResolver::with_preference(state.use_display_name)).render(
+            popup_area,
+            buf,
+            &mut autocomplete_state,
+        );
     }
 }
 

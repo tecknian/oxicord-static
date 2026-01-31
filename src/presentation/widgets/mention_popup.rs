@@ -7,21 +7,22 @@ use ratatui::{
 };
 
 use crate::application::services::autocomplete_service::AutocompleteState;
+use crate::application::services::identity_resolver::IdentityResolver;
 
 pub struct MentionPopup {
-    use_display_name: bool,
+    resolver: IdentityResolver,
 }
 
 impl Default for MentionPopup {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(IdentityResolver::with_preference(false))
     }
 }
 
 impl MentionPopup {
     #[must_use]
-    pub fn new(use_display_name: bool) -> Self {
-        Self { use_display_name }
+    pub fn new(resolver: IdentityResolver) -> Self {
+        Self { resolver }
     }
 }
 
@@ -43,14 +44,7 @@ impl StatefulWidget for MentionPopup {
         let items: Vec<ListItem> = state
             .results
             .iter()
-            .map(|user| {
-                ListItem::new(Span::raw(
-                    crate::application::services::identity_service::IdentityService::get_preferred_name(
-                        user,
-                        self.use_display_name,
-                    ),
-                ))
-            })
+            .map(|user| ListItem::new(Span::raw(self.resolver.resolve(user))))
             .collect();
 
         let list = List::new(items)

@@ -1128,6 +1128,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_message_create(&mut self, message: crate::domain::entities::Message) {
         let channel_id = message.channel_id();
         let user_id = message.author().id().to_string();
@@ -1255,6 +1256,7 @@ impl App {
                 author.username(),
                 author.discriminator(),
                 author.avatar().map(String::from),
+                author.global_name.clone(),
                 author.is_bot(),
             ));
 
@@ -1283,7 +1285,11 @@ impl App {
         }
 
         if let Some(ref name) = username {
-            self.user_cache.insert_basic(&user_id, name);
+            if self.user_cache.contains(&user_id) {
+                self.user_cache.update_username(&user_id, name);
+            } else {
+                self.user_cache.insert_basic(&user_id, name);
+            }
         }
 
         let display_name = username
@@ -1470,8 +1476,14 @@ impl App {
                 chat_state.set_connection_status(self.connection_status);
 
                 for dm in &dms {
-                    self.user_cache
-                        .insert_basic(&dm.recipient_id, &dm.recipient_username);
+                    self.user_cache.insert(crate::domain::entities::CachedUser::new(
+                        &dm.recipient_id,
+                        &dm.recipient_username,
+                        &dm.recipient_discriminator,
+                        None,
+                        dm.recipient_global_name.clone(),
+                        false,
+                    ));
                 }
 
                 chat_state.set_dm_users(dms);

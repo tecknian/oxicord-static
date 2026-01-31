@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
 
-use crate::application::services::identity_service::IdentityService;
+use crate::application::services::identity_resolver::IdentityResolver;
 use crate::application::services::markdown_parser::{
     MdBlock, MdInline, MentionResolver, parse_markdown,
 };
@@ -309,12 +309,12 @@ impl MessagePaneData {
         for msg in &messages {
             self.authors.insert(
                 msg.author().id().to_string(),
-                IdentityService::get_preferred_name(msg.author(), self.use_display_name),
+                IdentityResolver::with_preference(self.use_display_name).resolve(msg.author()),
             );
             for mention in msg.mentions() {
                 self.authors.insert(
                     mention.id().to_string(),
-                    IdentityService::get_preferred_name(mention, self.use_display_name),
+                    IdentityResolver::with_preference(self.use_display_name).resolve(mention),
                 );
             }
         }
@@ -331,12 +331,12 @@ impl MessagePaneData {
         {
             self.authors.insert(
                 message.author().id().to_string(),
-                IdentityService::get_preferred_name(message.author(), self.use_display_name),
+                IdentityResolver::with_preference(self.use_display_name).resolve(message.author()),
             );
             for mention in message.mentions() {
                 self.authors.insert(
                     mention.id().to_string(),
-                    IdentityService::get_preferred_name(mention, self.use_display_name),
+                    IdentityResolver::with_preference(self.use_display_name).resolve(mention),
                 );
             }
             self.messages.push_back(UiMessage::new(message));
@@ -352,12 +352,12 @@ impl MessagePaneData {
             if !existing_ids.contains(&msg.id()) {
                 self.authors.insert(
                     msg.author().id().to_string(),
-                    IdentityService::get_preferred_name(msg.author(), self.use_display_name),
+                    IdentityResolver::with_preference(self.use_display_name).resolve(msg.author()),
                 );
                 for mention in msg.mentions() {
                     self.authors.insert(
                         mention.id().to_string(),
-                        IdentityService::get_preferred_name(mention, self.use_display_name),
+                        IdentityResolver::with_preference(self.use_display_name).resolve(mention),
                     );
                 }
                 self.messages.push_front(UiMessage::new(msg));
@@ -452,12 +452,13 @@ impl MessagePaneData {
         for ui_msg in &self.messages {
             self.authors.insert(
                 ui_msg.message.author().id().to_string(),
-                IdentityService::get_preferred_name(ui_msg.message.author(), self.use_display_name),
+                IdentityResolver::with_preference(self.use_display_name)
+                    .resolve(ui_msg.message.author()),
             );
             for mention in ui_msg.message.mentions() {
                 self.authors.insert(
                     mention.id().to_string(),
-                    IdentityService::get_preferred_name(mention, self.use_display_name),
+                    IdentityResolver::with_preference(self.use_display_name).resolve(mention),
                 );
             }
         }
@@ -661,7 +662,8 @@ impl MessagePaneData {
                     Span::raw(" ".repeat(CONTENT_INDENT)),
                     Span::styled("┌─ Replying to ", reply_style),
                     Span::styled(
-                        IdentityService::get_preferred_name(referenced.author(), use_display_name),
+                        IdentityResolver::with_preference(use_display_name)
+                            .resolve(referenced.author()),
                         username_style,
                     ),
                     Span::styled(format!(": {snippet}"), reply_style),
@@ -1703,7 +1705,9 @@ impl<'a> MessagePane<'a> {
         let author_name = thread
             .starter_message
             .as_ref()
-            .map(|m| IdentityService::get_preferred_name(m.author(), self.data.use_display_name))
+            .map(|m| {
+                IdentityResolver::with_preference(self.data.use_display_name).resolve(m.author())
+            })
             .or_else(|| {
                 self.data
                     .get_author_name(&thread.author_id)
@@ -1981,7 +1985,7 @@ fn render_ui_message(
                     timestamp_style,
                 ),
                 Span::styled(
-                    IdentityService::get_preferred_name(message.author(), use_display_name),
+                    IdentityResolver::with_preference(use_display_name).resolve(message.author()),
                     style.author_style.fg(author_color),
                 ),
             ];

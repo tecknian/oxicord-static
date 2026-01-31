@@ -1,6 +1,5 @@
-//! Identity service for resolving user names based on configuration.
-
 use crate::domain::entities::{CachedUser, MessageAuthor, User};
+use crate::infrastructure::config::UiConfig;
 
 /// Trait for entities that have identity information.
 pub trait Identifiable {
@@ -19,7 +18,7 @@ impl Identifiable for CachedUser {
     }
 
     fn global_name(&self) -> Option<&str> {
-        None
+        self.global_name()
     }
 }
 
@@ -51,17 +50,34 @@ impl Identifiable for MessageAuthor {
     }
 }
 
-/// Service to resolve user identity (names) based on preferences.
-pub struct IdentityService;
+/// Resolver for user identity (names) based on preferences.
+#[derive(Debug, Clone)]
+pub struct IdentityResolver {
+    use_display_name: bool,
+}
 
-impl IdentityService {
-    /// Returns the preferred name for the user based on the configuration.
+impl IdentityResolver {
+    /// Creates a new `IdentityResolver` with the given configuration.
+    #[must_use]
+    pub fn new(config: &UiConfig) -> Self {
+        Self {
+            use_display_name: config.use_display_name,
+        }
+    }
+
+    /// Creates a new `IdentityResolver` with explicit preference.
+    #[must_use]
+    pub fn with_preference(use_display_name: bool) -> Self {
+        Self { use_display_name }
+    }
+
+    /// Resolves the name for the user based on the configuration.
     ///
     /// If `use_display_name` is true, it prefers the global name (display name).
     /// Otherwise, it returns the username (with discriminator if legacy).
     #[must_use]
-    pub fn get_preferred_name(user: &impl Identifiable, use_display_name: bool) -> String {
-        if let Some(global_name) = use_display_name.then(|| user.global_name()).flatten() {
+    pub fn resolve(&self, user: &impl Identifiable) -> String {
+        if let Some(global_name) = self.use_display_name.then(|| user.global_name()).flatten() {
             return global_name.to_string();
         }
 
@@ -89,33 +105,28 @@ mod tests {
     #[test]
     fn test_prefer_display_name() {
         let user = make_user("username", "0", Some("Global Name"));
-        assert_eq!(
-            IdentityService::get_preferred_name(&user, true),
-            "Global Name"
-        );
+        let resolver = IdentityResolver::with_preference(true);
+        assert_eq!(resolver.resolve(&user), "Global Name");
     }
 
     #[test]
     fn test_prefer_username_legacy() {
         let user = make_user("username", "1234", Some("Global Name"));
-        assert_eq!(
-            IdentityService::get_preferred_name(&user, false),
-            "username#1234"
-        );
+        let resolver = IdentityResolver::with_preference(false);
+        assert_eq!(resolver.resolve(&user), "username#1234");
     }
 
     #[test]
     fn test_prefer_username_pomelo() {
         let user = make_user("username", "0", Some("Global Name"));
-        assert_eq!(
-            IdentityService::get_preferred_name(&user, false),
-            "username"
-        );
+        let resolver = IdentityResolver::with_preference(false);
+        assert_eq!(resolver.resolve(&user), "username");
     }
 
     #[test]
     fn test_fallback_when_no_global_name() {
         let user = make_user("username", "0", None);
-        assert_eq!(IdentityService::get_preferred_name(&user, true), "username");
+        let resolver = IdentityResolver::with_preference(true);
+        assert_eq!(resolver.resolve(&user), "username");
     }
 }
