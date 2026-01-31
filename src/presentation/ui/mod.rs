@@ -5,6 +5,7 @@ pub mod backend;
 mod chat_screen;
 mod login_screen;
 mod main_screen;
+pub mod notification_popup;
 pub mod splash_screen;
 pub mod utils;
 

@@ -46,6 +46,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub use_display_name: Option<bool>,
 
+    /// Notification duration in seconds.
+    #[arg(long)]
+    pub notification_duration: Option<u64>,
+
     /// Accent color (name or hex code).
     #[arg(long)]
     pub accent_color: Option<String>,

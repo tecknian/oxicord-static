@@ -1313,7 +1313,11 @@ impl<'a> MessagePane<'a> {
                     }
                 }
 
-                let non_image_count = message.attachments().iter().filter(|a| !a.is_image()).count();
+                let non_image_count = message
+                    .attachments()
+                    .iter()
+                    .filter(|a| !a.is_image())
+                    .count();
                 height += u16::try_from(non_image_count).unwrap_or(0);
             } else {
                 height += u16::try_from(message.attachments().len()).unwrap_or(u16::MAX);

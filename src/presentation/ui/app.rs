@@ -12,6 +12,7 @@ use tracing::{debug, error, info, warn};
 use zeroize::Zeroize;
 
 use crate::application::dto::{LoginRequest, TokenSource};
+use crate::application::services::notification_manager::NotificationManager;
 use crate::application::services::notification_service::NotificationService;
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
 use crate::domain::ConnectionStatus;
@@ -66,6 +67,8 @@ pub struct AppConfig {
     pub image_preview: bool,
     pub timestamp_format: String,
     pub show_typing: bool,
+    pub internal_notifications: bool,
+    pub notification_duration: u64,
     pub theme: Theme,
 }
 
@@ -108,12 +111,13 @@ pub struct App {
     image_preview: bool,
     timestamp_format: String,
     show_typing: bool,
+    internal_notifications: bool,
     theme: Theme,
     identity: Arc<ClientIdentity>,
     state_store: StateStore,
     state_save_tx: mpsc::UnboundedSender<(Option<GuildId>, Option<ChannelId>)>,
     clipboard_service: ClipboardService,
-    notification: Option<(String, std::time::Instant)>,
+    notification_manager: NotificationManager,
     notification_service: NotificationService,
     last_desktop_notification: Option<Instant>,
 }
@@ -209,12 +213,15 @@ impl App {
             image_preview: config.image_preview,
             timestamp_format: config.timestamp_format,
             show_typing: config.show_typing,
+            internal_notifications: config.internal_notifications,
             theme: config.theme,
             identity,
             state_store,
             state_save_tx,
             clipboard_service: ClipboardService::new(),
-            notification: None,
+            notification_manager: NotificationManager::new(Duration::from_secs(
+                config.notification_duration,
+            )),
             notification_service,
             last_desktop_notification: None,
         }
@@ -322,6 +329,10 @@ impl App {
                         self.trigger_image_loads();
                         self.last_image_check = Instant::now();
                     }
+
+                    if self.notification_manager.has_notifications() {
+                        self.should_render = true;
+                    }
                 }
 
                 Some(Ok(event)) = terminal_event => {
@@ -416,7 +427,7 @@ impl App {
     }
 
     pub fn show_notification(&mut self, message: String) {
-        self.notification = Some((message, std::time::Instant::now()));
+        self.notification_manager.info("Info", message);
     }
 
     fn render(&mut self, frame: &mut Frame) {
@@ -434,33 +445,13 @@ impl App {
             }
         }
 
-        if let Some((message, time)) = &self.notification
-            && time.elapsed() < std::time::Duration::from_secs(3)
-        {
-            use ratatui::layout::Rect;
-            use ratatui::style::{Color, Modifier, Style};
-            use ratatui::widgets::{Block, Borders, Paragraph};
-
-            let area = frame.area();
-            let max_width = area.width.saturating_sub(2);
-            let width = u16::try_from(message.len())
-                .unwrap_or(u16::MAX)
-                .saturating_add(4)
-                .min(max_width);
-            let height = 3;
-            let x = area.width.saturating_sub(width).saturating_sub(2);
-            let y = 2;
-
-            let rect = Rect::new(x, y, width, height);
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default().fg(Color::Green));
-            let para = Paragraph::new(message.as_str())
-                .block(block)
-                .style(Style::default().add_modifier(Modifier::BOLD));
-
-            frame.render_widget(ratatui::widgets::Clear, rect);
-            frame.render_widget(para, rect);
+        self.notification_manager.tick();
+        if let Some(notification) = self.notification_manager.current_notification() {
+            use crate::presentation::ui::notification_popup::NotificationPopup;
+            frame.render_widget(
+                NotificationPopup::new(notification, &self.theme),
+                frame.area(),
+            );
         }
     }
 
@@ -1184,6 +1175,49 @@ impl App {
         };
 
         if is_mentioned && !is_focused {
+            let content = message.content();
+            let mut body = if content.is_empty() {
+                if !message.attachments().is_empty() {
+                    "[Attachment]".to_string()
+                } else if !message.embeds().is_empty() {
+                    "[Embed]".to_string()
+                } else {
+                    "Sent a message".to_string()
+                }
+            } else {
+                content.chars().take(500).collect()
+            };
+
+            for mention in message.mentions() {
+                let id_pattern = format!("<@{}>", mention.id().as_u64());
+                let id_pattern_bang = format!("<@!{}>", mention.id().as_u64());
+                let name = if self.use_display_name {
+                    self.user_cache
+                        .get_display_name(&mention.id_str())
+                        .unwrap_or_else(|| mention.username().to_string())
+                } else {
+                    mention.username().to_string()
+                };
+                let replacement = format!("@{name}");
+                body = body.replace(&id_pattern, &replacement);
+                body = body.replace(&id_pattern_bang, &replacement);
+            }
+
+            if body.chars().count() > 200 {
+                body = body.chars().take(200).collect();
+                body.push_str("...");
+            }
+
+            if self.internal_notifications {
+                let title = if self.use_display_name {
+                    message.author().raw_display_name()
+                } else {
+                    message.author().username().to_string()
+                };
+
+                self.notification_manager.info(format!("@{title}"), &body);
+            }
+
             let now = Instant::now();
             let should_notify = match self.last_desktop_notification {
                 Some(last) => now.duration_since(last) > Duration::from_secs(2),
@@ -1192,18 +1226,6 @@ impl App {
 
             if should_notify {
                 let title = format!("Oxicord - @{}", message.author().username());
-                let content = message.content();
-                let body = if content.is_empty() {
-                    if !message.attachments().is_empty() {
-                        "[Attachment]".to_string()
-                    } else if !message.embeds().is_empty() {
-                        "[Embed]".to_string()
-                    } else {
-                        "Sent a message".to_string()
-                    }
-                } else {
-                    content.chars().take(120).collect()
-                };
                 self.notification_service.send(&title, &body);
                 self.last_desktop_notification = Some(now);
             }
@@ -2018,6 +2040,8 @@ mod tests {
             image_preview: true,
             timestamp_format: "%H:%M".to_string(),
             show_typing: true,
+            internal_notifications: true,
+            notification_duration: 5,
             theme,
         };
         let app = App::new(auth, data, storage, config, identity);

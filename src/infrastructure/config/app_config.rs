@@ -118,6 +118,14 @@ pub struct UiConfig {
     /// Show typing indicators.
     #[serde(default = "default_true")]
     pub show_typing: bool,
+
+    /// Enable internal TUI notifications.
+    #[serde(default = "default_true")]
+    pub internal_notifications: bool,
+
+    /// Notification duration in seconds.
+    #[serde(default = "default_notification_duration")]
+    pub notification_duration: u64,
 }
 
 impl Default for UiConfig {
@@ -128,6 +136,8 @@ impl Default for UiConfig {
             image_preview: true,
             timestamp_format: default_timestamp_format(),
             show_typing: true,
+            internal_notifications: true,
+            notification_duration: 5,
         }
     }
 }
@@ -164,6 +174,10 @@ fn default_timestamp_format() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_notification_duration() -> u64 {
+    5
 }
 
 impl Default for ThemeConfig {
@@ -205,6 +219,9 @@ impl AppConfig {
         }
         if let Some(use_display_name) = args.use_display_name {
             self.ui.use_display_name = use_display_name;
+        }
+        if let Some(notification_duration) = args.notification_duration {
+            self.ui.notification_duration = notification_duration;
         }
         if let Some(accent_color) = args.accent_color {
             self.theme.accent_color = accent_color;

@@ -2615,5 +2615,4 @@ mod tests {
             .unwrap_or(0);
         assert_eq!(count, 0, "Mention count should be 0 for active DM");
     }
-
 }
