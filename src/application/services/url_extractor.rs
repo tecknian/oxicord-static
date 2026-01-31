@@ -81,4 +81,18 @@ impl UrlExtractor {
 
         urls
     }
+
+    pub fn extract_first_url(content: &str) -> Option<String> {
+        static URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://[^\s]+").unwrap());
+
+        URL_RE.captures(content).and_then(|cap| {
+            cap.get(0).map(|m| {
+                m.as_str()
+                    .trim_end_matches(|c| {
+                        matches!(c, '.' | ',' | ';' | ':' | '?' | '!' | ')' | ']')
+                    })
+                    .to_string()
+            })
+        })
+    }
 }

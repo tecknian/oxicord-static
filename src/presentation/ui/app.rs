@@ -615,6 +615,14 @@ impl App {
                     }
                 }
             }
+            ChatKeyResult::OpenLink(url) => {
+                debug!(url = %url, "Open link requested");
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = opener::open(&url) {
+                        tracing::error!("Failed to open link: {}", e);
+                    }
+                });
+            }
             ChatKeyResult::JumpToMessage(message_id) => {
                 debug!(message_id = %message_id, "Jump to message requested");
                 if let CurrentScreen::Chat(state) = &mut self.screen {

@@ -11,6 +11,9 @@ use tachyonfx::{Effect, Interpolation, fx};
 
 use crate::application::services::autocomplete_service::AutocompleteService;
 use crate::application::services::identity_service::IdentityService;
+use crate::application::services::message_content_service::{
+    MessageContentAction, MessageContentService,
+};
 use crate::domain::ConnectionStatus;
 use crate::domain::entities::{
     CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, Message, MessageId,
@@ -661,7 +664,21 @@ impl ChatScreenState {
                     return ChatKeyResult::CopyToClipboard(id);
                 }
                 MessagePaneAction::OpenAttachments(message_id) => {
-                    return ChatKeyResult::OpenAttachments(message_id);
+                    if let Some(message) = self
+                        .message_pane_data
+                        .messages()
+                        .iter()
+                        .find(|m| m.message.id() == message_id)
+                        .map(|m| &m.message)
+                    {
+                        return match MessageContentService::resolve(message) {
+                            MessageContentAction::OpenImages => {
+                                ChatKeyResult::OpenAttachments(message_id)
+                            }
+                            MessageContentAction::OpenLink(url) => ChatKeyResult::OpenLink(url),
+                            MessageContentAction::None => ChatKeyResult::Ignored,
+                        };
+                    }
                 }
                 MessagePaneAction::JumpToReply(message_id) => {
                     return ChatKeyResult::JumpToMessage(message_id);
@@ -1552,7 +1569,15 @@ impl HasCommands for ChatScreenState {
                         commands.push(Keybind::new(key, Action::DeleteMessage, "Del"));
                     }
                     if let Some(key) = registry.get_first(Action::OpenAttachments) {
-                        commands.push(Keybind::new(key, Action::OpenAttachments, "Open Image"));
+                        let label = self
+                            .message_pane_state
+                            .selected_index()
+                            .and_then(|idx| self.message_pane_data.get_message(idx))
+                            .and_then(|m| MessageContentService::resolve(m).label());
+
+                        if let Some(label) = label {
+                            commands.push(Keybind::new(key, Action::OpenAttachments, label));
+                        }
                     }
                 }
                 ChatFocus::MessageInput => {
@@ -1629,6 +1654,7 @@ pub enum ChatKeyResult {
     EditMessage(crate::domain::entities::MessageId),
     DeleteMessage(crate::domain::entities::MessageId),
     OpenAttachments(crate::domain::entities::MessageId),
+    OpenLink(String),
     JumpToMessage(crate::domain::entities::MessageId),
     SendMessage {
         content: String,
