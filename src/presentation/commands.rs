@@ -248,8 +248,16 @@ impl Default for CommandRegistry {
             true,
         );
         register(
-            Action::YankId,
+            Action::CopyImage,
             KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::SHIFT),
+            true,
+        );
+        register(
+            Action::YankId,
+            KeyEvent::new(
+                KeyCode::Char('I'),
+                KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+            ),
             true,
         );
         register(

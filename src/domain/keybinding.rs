@@ -39,6 +39,7 @@ pub enum Action {
     EditMessage,
     DeleteMessage,
     CopyContent,
+    CopyImage,
     YankId,
     YankUrl,
     OpenAttachments,

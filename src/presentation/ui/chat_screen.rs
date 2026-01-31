@@ -660,6 +660,9 @@ impl ChatScreenState {
                 MessagePaneAction::YankContent(content) | MessagePaneAction::YankUrl(content) => {
                     return ChatKeyResult::CopyToClipboard(content);
                 }
+                MessagePaneAction::CopyImage(image_id) => {
+                    return ChatKeyResult::CopyImageToClipboard(image_id);
+                }
                 MessagePaneAction::YankId(id) => {
                     return ChatKeyResult::CopyToClipboard(id);
                 }
@@ -1625,6 +1628,7 @@ pub enum ChatKeyResult {
     Logout,
     SecureLogout,
     CopyToClipboard(String),
+    CopyImageToClipboard(crate::domain::entities::ImageId),
     LoadGuildChannels(GuildId),
     LoadChannelMessages {
         channel_id: ChannelId,
@@ -1780,6 +1784,7 @@ fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) 
                 (Action::EditMessage, "Edit Message"),
                 (Action::DeleteMessage, "Delete Message"),
                 (Action::CopyContent, "Copy Content"),
+                (Action::CopyImage, "Copy Image"),
                 (Action::YankId, "Copy Message ID"),
                 (Action::OpenAttachments, "Open Image"),
                 (Action::JumpToReply, "Jump to Reply"),

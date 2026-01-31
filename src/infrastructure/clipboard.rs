@@ -24,6 +24,19 @@ impl ClipboardService {
         });
     }
 
+    pub fn set_image(&self, image: arboard::ImageData<'static>) {
+        tokio::task::spawn_blocking(move || match Clipboard::new() {
+            Ok(mut cb) => {
+                if let Err(e) = cb.set_image(image) {
+                    error!("Failed to set clipboard image: {}", e);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to initialize clipboard for image copy: {}", e);
+            }
+        });
+    }
+
     pub fn get_text(&self) -> Option<String> {
         match Clipboard::new() {
             Ok(mut cb) => match cb.get_text() {

@@ -515,6 +515,49 @@ impl App {
                 self.clipboard_service.set_text(text);
                 self.show_notification("Copied to clipboard".to_string());
             }
+            ChatKeyResult::CopyImageToClipboard(image_id) => {
+                debug!(image_id = %image_id, "Copy image to clipboard requested");
+                if let CurrentScreen::Chat(state) = &self.screen {
+                    let mut found = false;
+                    for msg in state.message_pane_data().messages() {
+                        if let Some(attachment) =
+                            msg.image_attachments.iter().find(|a| a.id == image_id)
+                        {
+                            if let Some(image) = &attachment.image {
+                                let image = image.clone();
+                                let clipboard = self.clipboard_service.clone();
+                                let tx = self.action_tx.clone();
+
+                                tokio::task::spawn_blocking(move || {
+                                    let rgba = image.to_rgba8();
+                                    let width = rgba.width() as usize;
+                                    let height = rgba.height() as usize;
+                                    let bytes = std::borrow::Cow::Owned(rgba.into_raw());
+
+                                    let image_data = arboard::ImageData {
+                                        width,
+                                        height,
+                                        bytes,
+                                    };
+
+                                    clipboard.set_image(image_data);
+                                    let _ = tx.send(Action::ShowNotification(
+                                        "Copied image to clipboard".to_string(),
+                                    ));
+                                });
+                                found = true;
+                            } else {
+                                self.show_notification("Image not loaded yet".to_string());
+                                found = true;
+                            }
+                            break;
+                        }
+                    }
+                    if !found {
+                        self.show_notification("Image not found".to_string());
+                    }
+                }
+            }
             ChatKeyResult::LoadGuildChannels(guild_id) => {
                 self.load_guild_channels(guild_id);
             }
@@ -1573,204 +1616,14 @@ impl App {
                 }
             }
             Action::PasteTextLoaded(text) => {
-                if let CurrentScreen::Chat(state) = &mut self.screen {
-                    state.insert_text(&text);
-                } else if let CurrentScreen::Login(screen) = &mut self.screen {
-                    screen.paste_token(&text);
-                }
+                let _ = self.handle_terminal_event(&Event::Paste(text));
+            }
+            Action::ShowNotification(message) => {
+                self.show_notification(message);
             }
         }
     }
 
-    fn transition_to_login(&mut self) {
-        self.disconnect_gateway();
-
-        if let Some((mut token, _)) = self.pending_token.take() {
-            token.zeroize();
-        }
-
-        self.state = AppState::Login;
-        self.current_token = None;
-        self.token_source = None;
-        self.current_user_id = None;
-        self.pending_chat_state = None;
-        self.typing_manager = TypingIndicatorManager::new();
-        self.user_cache.clear();
-        self.screen = CurrentScreen::Login(LoginScreen::new().with_theme(self.theme));
-    }
-
-    fn handle_login_error(&mut self, error: &AuthError) {
-        if let CurrentScreen::Login(ref mut screen) = self.screen {
-            let message = match error {
-                AuthError::InvalidTokenFormat { .. } => {
-                    "Invalid token format. Please check your token.".to_string()
-                }
-                AuthError::TokenRejected { .. } => {
-                    "Token rejected. It may be invalid or expired.".to_string()
-                }
-                AuthError::NetworkError { message } => {
-                    format!("Network error: {message}")
-                }
-                AuthError::RateLimited { retry_after_ms } => {
-                    format!("Rate limited. Try again in {}s", retry_after_ms / 1000)
-                }
-                _ => error.to_string(),
-            };
-            screen.set_error(message);
-        }
-    }
-
-    fn handle_reply_to_message(
-        &mut self,
-        message_id: crate::domain::entities::MessageId,
-        mention: bool,
-    ) {
-        if let CurrentScreen::Chat(ref mut state) = self.screen
-            && let Some(author_name) = state.get_reply_author(message_id)
-        {
-            state.start_reply(message_id, author_name, mention);
-        }
-    }
-
-    fn handle_send_message(
-        &mut self,
-        content: String,
-        reply_to: Option<crate::domain::entities::MessageId>,
-        attachments: Vec<std::path::PathBuf>,
-    ) {
-        let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id)
-        } else {
-            None
-        };
-
-        let Some(channel_id) = channel_id else {
-            warn!("Cannot send message: no channel selected");
-            return;
-        };
-
-        let Some(ref token) = self.current_token else {
-            warn!("Cannot send message: no token available");
-            return;
-        };
-
-        let mut request = if let Some(reply_id) = reply_to {
-            SendMessageRequest::new(channel_id, content).with_reply(reply_id)
-        } else {
-            SendMessageRequest::new(channel_id, content)
-        };
-        request = request.with_attachments(attachments);
-
-        debug!(channel_id = %channel_id, has_reply = reply_to.is_some(), "Sending message");
-
-        let _ = self.command_tx.send(BackendCommand::SendMessage {
-            token: token.clone(),
-            request,
-        });
-
-        self.last_typing_sent = None;
-    }
-
-    fn handle_edit_message(
-        &mut self,
-        message_id: crate::domain::entities::MessageId,
-        content: String,
-    ) {
-        let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id)
-        } else {
-            None
-        };
-
-        let Some(channel_id) = channel_id else {
-            warn!("Cannot edit message: no channel selected");
-            return;
-        };
-
-        let Some(ref token) = self.current_token else {
-            warn!("Cannot edit message: no token available");
-            return;
-        };
-
-        let request = EditMessageRequest::new(channel_id, message_id, content);
-
-        debug!(channel_id = %channel_id, message_id = %message_id, "Editing message");
-
-        let _ = self.command_tx.send(BackendCommand::EditMessage {
-            token: token.clone(),
-            request,
-        });
-    }
-
-    fn handle_delete_message(&mut self, message_id: crate::domain::entities::MessageId) {
-        let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id)
-        } else {
-            None
-        };
-
-        let Some(channel_id) = channel_id else {
-            warn!("Cannot delete message: no channel selected");
-            return;
-        };
-
-        let Some(ref token) = self.current_token else {
-            warn!("Cannot delete message: no token available");
-            return;
-        };
-
-        debug!(channel_id = %channel_id, message_id = %message_id, "Deleting message");
-
-        let _ = self.command_tx.send(BackendCommand::DeleteMessage {
-            token: token.clone(),
-            channel_id,
-            message_id,
-        });
-    }
-
-    fn handle_start_typing(&mut self) {
-        let channel_id = if let CurrentScreen::Chat(ref state) = self.screen {
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id)
-        } else {
-            None
-        };
-
-        let Some(channel_id) = channel_id else {
-            return;
-        };
-
-        let should_send = match self.last_typing_sent {
-            Some((last_channel, last_time)) => {
-                last_channel != channel_id || last_time.elapsed() >= TYPING_THROTTLE_DURATION
-            }
-            None => true,
-        };
-
-        if !should_send {
-            return;
-        }
-
-        let Some(ref token) = self.current_token else {
-            return;
-        };
-
-        let _ = self.command_tx.send(BackendCommand::SendTypingIndicator {
-            channel_id,
-            token: token.clone(),
-        });
-
-        self.last_typing_sent = Some((channel_id, Instant::now()));
-    }
-
-    /// Handle an image load completion event.
     fn handle_image_loaded(&mut self, event: ImageLoadedEvent) {
         if let CurrentScreen::Chat(ref mut state) = self.screen {
             match event.result {
@@ -1800,6 +1653,113 @@ impl App {
         for (id, url) in needed {
             state.mark_image_downloading(&id);
             loader.load_async(id, url);
+        }
+    }
+
+    fn transition_to_login(&mut self) {
+        self.state = AppState::Login;
+        self.screen = CurrentScreen::Login(LoginScreen::new().with_theme(self.theme));
+        self.current_token = None;
+        self.gateway_ready = false;
+        self.disconnect_gateway();
+
+        self.token_source = None;
+        self.current_user_id = None;
+        self.pending_chat_state = None;
+        self.typing_manager = TypingIndicatorManager::new();
+        self.user_cache.clear();
+        
+        if let Some((mut token, _)) = self.pending_token.take() {
+            token.zeroize();
+        }
+    }
+
+    fn handle_reply_to_message(&mut self, message_id: MessageId, mention: bool) {
+        if let CurrentScreen::Chat(state) = &mut self.screen {
+            if let Some(author) = state.get_reply_author(message_id) {
+                state.start_reply(message_id, author, mention);
+            }
+        }
+    }
+
+    fn handle_edit_message(&mut self, message_id: MessageId, content: String) {
+        if let Some(ref token) = self.current_token
+            && let CurrentScreen::Chat(state) = &self.screen
+            && let Some(channel_id) = state.message_pane_data().channel_id()
+        {
+            let request = EditMessageRequest {
+                channel_id,
+                message_id,
+                content,
+            };
+            let _ = self.command_tx.send(BackendCommand::EditMessage {
+                token: token.clone(),
+                request,
+            });
+        }
+    }
+
+    fn handle_delete_message(&mut self, message_id: MessageId) {
+        if let Some(ref token) = self.current_token
+            && let CurrentScreen::Chat(state) = &self.screen
+            && let Some(channel_id) = state.message_pane_data().channel_id()
+        {
+            let _ = self.command_tx.send(BackendCommand::DeleteMessage {
+                token: token.clone(),
+                channel_id,
+                message_id,
+            });
+        }
+    }
+
+    fn handle_send_message(
+        &mut self,
+        content: String,
+        reply_to: Option<MessageId>,
+        attachments: Vec<std::path::PathBuf>,
+    ) {
+        if let Some(ref token) = self.current_token
+            && let CurrentScreen::Chat(state) = &self.screen
+            && let Some(channel_id) = state.message_pane_data().channel_id()
+        {
+            let request = SendMessageRequest {
+                channel_id,
+                content,
+                reply_to,
+                attachments,
+            };
+            let _ = self.command_tx.send(BackendCommand::SendMessage {
+                token: token.clone(),
+                request,
+            });
+        }
+    }
+
+    fn handle_start_typing(&mut self) {
+        let now = Instant::now();
+        if let CurrentScreen::Chat(state) = &self.screen
+            && let Some(channel_id) = state.message_pane_data().channel_id()
+            && let Some(ref token) = self.current_token
+        {
+            if let Some((last_cid, last_time)) = self.last_typing_sent {
+                if last_cid == channel_id
+                    && now.duration_since(last_time) < TYPING_THROTTLE_DURATION
+                {
+                    return;
+                }
+            }
+
+            self.last_typing_sent = Some((channel_id, now));
+            let _ = self.command_tx.send(BackendCommand::SendTypingIndicator {
+                channel_id,
+                token: token.clone(),
+            });
+        }
+    }
+
+    fn handle_login_error(&mut self, error: &AuthError) {
+        if let CurrentScreen::Login(screen) = &mut self.screen {
+            screen.set_error(error.to_string());
         }
     }
 

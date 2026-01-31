@@ -70,9 +70,9 @@ pub enum Action {
     ImageLoaderReady(Arc<ImageLoader>),
     PasteImageLoaded(std::path::PathBuf),
     PasteTextLoaded(String),
+    ShowNotification(String),
 }
 
-#[derive(Debug)]
 pub enum BackendCommand {
     LoadGuildChannels {
         guild_id: GuildId,

@@ -221,6 +221,7 @@ pub enum MessagePaneAction {
     Edit(MessageId),
     EditExternal(MessageId),
     Delete(MessageId),
+    CopyImage(ImageId),
     YankContent(String),
     YankUrl(String),
     YankId(String),
@@ -1072,6 +1073,16 @@ impl MessagePaneState {
             Some(Action::CopyContent) => self
                 .get_selected_message(data)
                 .map(|m| MessagePaneAction::YankContent(m.content().to_string())),
+            Some(Action::CopyImage) => self.get_selected_message(data).and_then(|m| {
+                data.ui_messages()
+                    .iter()
+                    .find(|ui| ui.message.id() == m.id())
+                    .and_then(|ui| {
+                        ui.image_attachments
+                            .first()
+                            .map(|img| MessagePaneAction::CopyImage(img.id.clone()))
+                    })
+            }),
             Some(Action::YankId) => self
                 .get_selected_message_id(data)
                 .map(|id| MessagePaneAction::YankId(id.to_string())),
@@ -2309,7 +2320,7 @@ fn wrap_styled_text(text: Text<'static>, width: u16) -> Text<'static> {
                             let mut split_w = 0;
                             for (idx, c) in remaining_word.char_indices() {
                                 let mut buf = [0u8; 4];
-                        let cw = UnicodeWidthStr::width(c.encode_utf8(&mut buf));
+                                let cw = UnicodeWidthStr::width(c.encode_utf8(&mut buf));
                                 if split_w + cw > available {
                                     break;
                                 }
