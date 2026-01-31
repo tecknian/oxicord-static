@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
 use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
+use tokio::sync::oneshot;
 
 use crate::domain::entities::{ImageId, ImageStatus};
 
@@ -17,6 +18,7 @@ pub struct ImageAttachment {
     pub url: String,
     pub image: Option<Arc<image::DynamicImage>>,
     pub protocol: Option<StatefulProtocol>,
+    pub protocol_receiver: Option<oneshot::Receiver<StatefulProtocol>>,
     pub status: ImageStatus,
 }
 
@@ -28,6 +30,7 @@ impl ImageAttachment {
             url,
             image: None,
             protocol: None,
+            protocol_receiver: None,
             status: ImageStatus::NotStarted,
         }
     }
@@ -46,6 +49,7 @@ impl ImageAttachment {
         self.image = Some(image);
         self.status = ImageStatus::Ready;
         self.protocol = None;
+        self.protocol_receiver = None;
     }
 
     pub fn set_downloading(&mut self) {
@@ -76,13 +80,37 @@ impl ImageAttachment {
             return;
         }
 
+        if let Some(rx) = &mut self.protocol_receiver {
+            match rx.try_recv() {
+                Ok(protocol) => {
+                    self.protocol = Some(protocol);
+                    self.protocol_receiver = None;
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(_) => {
+                    self.protocol_receiver = None;
+                }
+            }
+            return;
+        }
+
         if let Some(ref image) = self.image {
-            self.protocol = Some(picker.new_resize_protocol((**image).clone()));
+            let image_clone = image.clone();
+            let picker_clone = picker.clone();
+            let (tx, rx) = oneshot::channel();
+            self.protocol_receiver = Some(rx);
+
+            tokio::task::spawn_blocking(move || {
+                let dynamic_image = (*image_clone).clone();
+                let protocol = picker_clone.new_resize_protocol(dynamic_image);
+                let _ = tx.send(protocol);
+            });
         }
     }
 
     pub fn clear_protocol(&mut self) {
         self.protocol = None;
+        self.protocol_receiver = None;
     }
 
     #[must_use]
@@ -139,7 +167,19 @@ impl ImageManager {
             picker.set_protocol_type(ProtocolType::Sixel);
         }
 
+        if Self::is_inside_multiplexer() {
+            picker.set_protocol_type(ProtocolType::Halfblocks);
+        }
+
         Self { picker }
+    }
+
+    fn is_inside_multiplexer() -> bool {
+        std::env::var("TMUX").is_ok()
+            || std::env::var("ZELLIJ").is_ok()
+            || std::env::var("TERM_PROGRAM")
+                .map(|v| v.contains("tmux") || v.contains("zellij"))
+                .unwrap_or(false)
     }
 
     #[must_use]
@@ -292,5 +332,25 @@ mod tests {
 
         let needed = ImageManager::collect_needed_loads(&attachments, 1, 2);
         assert!(needed.len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_image_protocol_async_loading() {
+        let id = ImageId::new("test");
+        let mut attachment = ImageAttachment::new(id, "url".to_string());
+        let img = Arc::new(image::DynamicImage::new_rgb8(10, 10));
+        attachment.set_loaded(img);
+
+        let picker = Picker::halfblocks();
+
+        attachment.update_protocol_if_needed(&picker);
+        assert!(attachment.protocol.is_none());
+        assert!(attachment.protocol_receiver.is_some());
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        attachment.update_protocol_if_needed(&picker);
+        assert!(attachment.protocol.is_some());
+        assert!(attachment.protocol_receiver.is_none());
     }
 }

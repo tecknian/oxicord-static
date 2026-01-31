@@ -181,15 +181,12 @@ fn calculate_embed_layout(
     if let Some(description) = &embed.description {
         let text = markdown_service.render_markdown(description, None, false);
 
-        let mut lines_count = 0;
-        for line in &text.lines {
-            let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            lines_count += u16::try_from(wrap_text(&line_text, width as usize).len()).unwrap_or(0);
-        }
+        let wrapped_text = wrap_styled_text(text, width);
+        let content_lines = u16::try_from(wrapped_text.lines.len()).unwrap_or(0);
 
-        description_height = lines_count;
+        description_height = content_lines;
         height += description_height;
-        description_text = Some(text);
+        description_text = Some(wrapped_text);
     }
 
     let color = if let Some(c) = embed.color {
@@ -554,6 +551,7 @@ impl MessagePaneData {
         if !self.is_dirty
             && self.last_layout_width == Some(width)
             && self.last_show_spoilers == Some(show_spoilers)
+            && !self.messages.iter().any(|m| m.rendered_content.is_none())
         {
             return;
         }
@@ -563,108 +561,124 @@ impl MessagePaneData {
             .saturating_sub(indent_width)
             .saturating_sub(SCROLLBAR_MARGIN);
 
+        if content_width == 0 {
+            return;
+        }
+
         let authors = &self.authors;
         let channels = &self.channels;
         let resolver = HashMapResolver { authors, channels };
 
         for ui_msg in &mut self.messages {
-            let message = &ui_msg.message;
-
-            let text = markdown_service.render(
-                ui_msg.parsed_content.clone(),
-                Some(&resolver),
+            Self::layout_message(
+                ui_msg,
+                content_width,
+                markdown_service,
+                default_color,
                 show_spoilers,
+                &resolver,
+                authors,
+                self.use_display_name,
             );
-
-            let mut content_lines = 0;
-            for line in &text.lines {
-                let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-                content_lines +=
-                    u16::try_from(wrap_text(&line_text, content_width as usize).len()).unwrap_or(0);
-            }
-
-            ui_msg.rendered_content = Some(text);
-
-            let mut height = content_lines;
-
-            if ui_msg.group == MessageGroup::Start {
-                height += 1;
-            }
-
-            if message.is_reply() {
-                height += 1;
-            }
-
-            let non_image_attachments = message
-                .attachments()
-                .iter()
-                .filter(|a| !a.is_image())
-                .count();
-            height += u16::try_from(non_image_attachments).unwrap_or(0);
-
-            height += ui_msg.total_image_height(content_width);
-
-            let mut rendered_embeds = Vec::new();
-            for embed in message.embeds() {
-                let layout =
-                    calculate_embed_layout(embed, content_width, markdown_service, default_color);
-                height += layout.height;
-                rendered_embeds.push(layout);
-            }
-            ui_msg.rendered_embeds = rendered_embeds;
-
-            if message.is_reply() {
-                if let Some(referenced) = message.referenced() {
-                    static MENTION_RE: LazyLock<Regex> =
-                        LazyLock::new(|| Regex::new(r"<@!?(\d+)>").unwrap());
-
-                    let content = referenced.content();
-                    let resolved_content =
-                        MENTION_RE.replace_all(content, |caps: &regex::Captures| {
-                            let id = &caps[1];
-                            authors
-                                .get(id)
-                                .map_or_else(|| format!("@{id}"), |name| format!("@{name}"))
-                        });
-
-                    let snippet = truncate_string(&resolved_content, 50);
-
-                    let reply_style = Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC);
-                    let username_style = Style::default().fg(Color::Cyan);
-
-                    let spans = vec![
-                        Span::raw(" ".repeat(CONTENT_INDENT)),
-                        Span::styled("┌─ Replying to ", reply_style),
-                        Span::styled(
-                            IdentityService::get_preferred_name(
-                                referenced.author(),
-                                self.use_display_name,
-                            ),
-                            username_style,
-                        ),
-                        Span::styled(format!(": {snippet}"), reply_style),
-                    ];
-                    ui_msg.reply_preview = Some(Line::from(spans));
-                } else {
-                    let error_style = Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::ITALIC);
-                    let spans = vec![
-                        Span::raw(" ".repeat(CONTENT_INDENT)),
-                        Span::styled("┌─ Original message unavailable", error_style),
-                    ];
-                    ui_msg.reply_preview = Some(Line::from(spans));
-                }
-            }
-
-            ui_msg.estimated_height = height;
         }
 
         self.last_layout_width = Some(width);
         self.last_show_spoilers = Some(show_spoilers);
         self.is_dirty = false;
+    }
+
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    fn layout_message(
+        ui_msg: &mut UiMessage,
+        content_width: u16,
+        markdown_service: &MarkdownRenderer,
+        default_color: Color,
+        show_spoilers: bool,
+        resolver: &HashMapResolver<'_>,
+        authors: &HashMap<String, String>,
+        use_display_name: bool,
+    ) {
+        let message = &ui_msg.message;
+
+        let text =
+            markdown_service.render(ui_msg.parsed_content.clone(), Some(resolver), show_spoilers);
+
+        let wrapped_text = wrap_styled_text(text, content_width);
+        let content_lines = u16::try_from(wrapped_text.lines.len()).unwrap_or(0);
+
+        ui_msg.rendered_content = Some(wrapped_text);
+
+        let mut height = content_lines;
+
+        if ui_msg.group == MessageGroup::Start {
+            height += 1;
+        }
+
+        if message.is_reply() {
+            height += 1;
+        }
+
+        let non_image_attachments = message
+            .attachments()
+            .iter()
+            .filter(|a| !a.is_image())
+            .count();
+        height += u16::try_from(non_image_attachments).unwrap_or(0);
+
+        height += ui_msg.total_image_height(content_width);
+
+        let mut rendered_embeds = Vec::new();
+        for embed in message.embeds() {
+            let layout =
+                calculate_embed_layout(embed, content_width, markdown_service, default_color);
+            height += layout.height;
+            rendered_embeds.push(layout);
+        }
+        ui_msg.rendered_embeds = rendered_embeds;
+
+        if message.is_reply() {
+            if let Some(referenced) = message.referenced() {
+                static MENTION_RE: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"<@!?(\d+)>").unwrap());
+
+                let content = referenced.content();
+                let resolved_content = MENTION_RE.replace_all(content, |caps: &regex::Captures| {
+                    let id = &caps[1];
+                    authors
+                        .get(id)
+                        .map_or_else(|| format!("@{id}"), |name| format!("@{name}"))
+                });
+
+                let snippet = truncate_string(&resolved_content, 50);
+
+                let reply_style = Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC);
+                let username_style = Style::default().fg(Color::Cyan);
+
+                let spans = vec![
+                    Span::raw(" ".repeat(CONTENT_INDENT)),
+                    Span::styled("┌─ Replying to ", reply_style),
+                    Span::styled(
+                        IdentityService::get_preferred_name(referenced.author(), use_display_name),
+                        username_style,
+                    ),
+                    Span::styled(format!(": {snippet}"), reply_style),
+                ];
+                ui_msg.reply_preview = Some(Line::from(spans));
+            } else {
+                let error_style = Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::ITALIC);
+                let spans = vec![
+                    Span::raw(" ".repeat(CONTENT_INDENT)),
+                    Span::styled("┌─ Original message unavailable", error_style),
+                ];
+                ui_msg.reply_preview = Some(Line::from(spans));
+            }
+        }
+
+        ui_msg.estimated_height = height;
     }
 
     #[must_use]
@@ -878,7 +892,6 @@ impl MessagePaneState {
         self.view_mode = ViewMode::Messages;
     }
 
-
     #[allow(clippy::missing_const_for_fn)]
     pub fn scroll_down(&mut self) {
         self.flags.is_following = false;
@@ -1080,17 +1093,17 @@ impl MessagePaneState {
                         .find(|m| m.message.id() == msg.id())
                 {
                     for block in &ui_msg.parsed_content {
-                            if let MdBlock::Paragraph(inlines) = block {
-                                for inline in inlines {
-                                    if let MdInline::Channel(channel_id) = inline {
-                                        return Some(MessagePaneAction::OpenThread(ChannelId(
-                                            channel_id.parse().unwrap_or(0),
-                                        )));
-                                    }
+                        if let MdBlock::Paragraph(inlines) = block {
+                            for inline in inlines {
+                                if let MdInline::Channel(channel_id) = inline {
+                                    return Some(MessagePaneAction::OpenThread(ChannelId(
+                                        channel_id.parse().unwrap_or(0),
+                                    )));
                                 }
                             }
                         }
                     }
+                }
                 None
             }
             Some(Action::Select) => {
@@ -1412,6 +1425,42 @@ impl<'a> MessagePane<'a> {
 
         let authors = &data.authors;
         for (idx, ui_msg) in data.messages.iter_mut().enumerate() {
+            let indent_width = u16::try_from(CONTENT_INDENT).unwrap_or(0);
+            let content_width = inner_area
+                .width
+                .saturating_sub(indent_width)
+                .saturating_sub(SCROLLBAR_MARGIN);
+
+            let current_image_height = ui_msg.total_image_height(content_width);
+
+            let mut height: u16 = 0;
+            if ui_msg.group == MessageGroup::Start {
+                height += 1;
+            }
+            if ui_msg.message.is_reply() {
+                height += 1;
+            }
+
+            if let Some(t) = &ui_msg.rendered_content {
+                height += u16::try_from(t.lines.len()).unwrap_or(0);
+            }
+
+            let non_image_attachments = ui_msg
+                .message
+                .attachments()
+                .iter()
+                .filter(|a| !a.is_image())
+                .count();
+            height += u16::try_from(non_image_attachments).unwrap_or(0);
+
+            height += current_image_height;
+
+            for embed in &ui_msg.rendered_embeds {
+                height += embed.height;
+            }
+
+            ui_msg.estimated_height = height;
+
             let h = ui_msg.estimated_height as usize;
             let current_y_usize = usize::try_from(current_y).unwrap_or(0);
 
@@ -1932,28 +1981,11 @@ fn render_ui_message(
 
     let content_start_y = current_msg_y;
 
-    let mut content_height = i32::from(ui_msg.estimated_height);
-
-    if ui_msg.group == MessageGroup::Start {
-        content_height -= 1;
-    }
-
-    if message.is_reply() && message.referenced().is_some() {
-        content_height -= 1;
-    }
-    let non_image_count = message
-        .attachments()
-        .iter()
-        .filter(|a| !a.is_image())
-        .count();
-    content_height -= i32::try_from(non_image_count).unwrap_or(0);
-    content_height -= i32::from(ui_msg.total_image_height(max_image_width));
-
-    for embed in &ui_msg.rendered_embeds {
-        content_height -= i32::from(embed.height);
-    }
-
-    let content_height = content_height.max(0);
+    let content_height = if let Some(t) = &ui_msg.rendered_content {
+        i32::try_from(t.lines.len()).unwrap_or(0)
+    } else {
+        i32::from(!message.content().is_empty())
+    };
 
     if content_start_y + content_height > 0 && content_start_y < i32::from(area.height) {
         let top_clip = if content_start_y < 0 {
@@ -2065,6 +2097,10 @@ fn render_ui_message(
                         effective_width,
                         effective_height,
                     );
+
+                    let clear_area =
+                        Rect::new(area.x, area.y + target_y, area.width, effective_height);
+                    Clear.render(clear_area, buf);
 
                     if let Some(ref mut protocol) = img_attachment.protocol {
                         use ratatui_image::{Resize, StatefulImage};
@@ -2223,6 +2259,101 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+fn wrap_styled_text(text: Text<'static>, width: u16) -> Text<'static> {
+    if width == 0 {
+        return text;
+    }
+
+    let mut new_lines = Vec::new();
+
+    for line in text.lines {
+        if line.width() == 0 {
+            new_lines.push(Line::raw(""));
+            continue;
+        }
+
+        let mut current_line_spans = Vec::new();
+
+        let mut current_width = 0;
+
+        for span in line.spans {
+            let content = span.content.clone();
+            let style = span.style;
+
+            let words: Vec<&str> = content.split_inclusive(' ').collect();
+
+            for word in words {
+                let word_width = UnicodeWidthStr::width(word);
+
+                if word_width > width as usize {
+                    let mut remaining_word = word;
+                    while !remaining_word.is_empty() {
+                        if current_width + UnicodeWidthStr::width(remaining_word) <= width as usize
+                        {
+                            current_line_spans
+                                .push(Span::styled(remaining_word.to_string(), style));
+                            current_width += UnicodeWidthStr::width(remaining_word);
+                            remaining_word = "";
+                        } else {
+                            let available = (width as usize).saturating_sub(current_width);
+                            if available == 0 {
+                                new_lines.push(Line::from(current_line_spans));
+                                current_line_spans = Vec::new();
+                                current_width = 0;
+                                continue;
+                            }
+
+                            let mut split_idx = 0;
+                            let mut split_w = 0;
+                            for (idx, c) in remaining_word.char_indices() {
+                                let mut buf = [0u8; 4];
+                        let cw = UnicodeWidthStr::width(c.encode_utf8(&mut buf));
+                                if split_w + cw > available {
+                                    break;
+                                }
+                                split_w += cw;
+                                split_idx = idx + c.len_utf8();
+                            }
+
+                            if split_idx > 0 {
+                                current_line_spans.push(Span::styled(
+                                    remaining_word[..split_idx].to_string(),
+                                    style,
+                                ));
+                                remaining_word = &remaining_word[split_idx..];
+                            }
+
+                            new_lines.push(Line::from(current_line_spans));
+                            current_line_spans = Vec::new();
+                            current_width = 0;
+                        }
+                    }
+                    continue;
+                }
+
+                if current_width + word_width > width as usize {
+                    new_lines.push(Line::from(current_line_spans));
+                    current_line_spans = Vec::new();
+                    current_width = 0;
+                }
+
+                current_line_spans.push(Span::styled(word.to_string(), style));
+                current_width += word_width;
+            }
+        }
+
+        if !current_line_spans.is_empty() {
+            new_lines.push(Line::from(current_line_spans));
+        }
+    }
+
+    if new_lines.is_empty() {
+        new_lines.push(Line::raw(""));
+    }
+
+    Text::from(new_lines)
 }
 
 #[cfg(test)]
