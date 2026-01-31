@@ -1668,17 +1668,17 @@ impl App {
         self.pending_chat_state = None;
         self.typing_manager = TypingIndicatorManager::new();
         self.user_cache.clear();
-        
+
         if let Some((mut token, _)) = self.pending_token.take() {
             token.zeroize();
         }
     }
 
     fn handle_reply_to_message(&mut self, message_id: MessageId, mention: bool) {
-        if let CurrentScreen::Chat(state) = &mut self.screen {
-            if let Some(author) = state.get_reply_author(message_id) {
-                state.start_reply(message_id, author, mention);
-            }
+        if let CurrentScreen::Chat(state) = &mut self.screen
+            && let Some(author) = state.get_reply_author(message_id)
+        {
+            state.start_reply(message_id, author, mention);
         }
     }
 
@@ -1741,12 +1741,11 @@ impl App {
             && let Some(channel_id) = state.message_pane_data().channel_id()
             && let Some(ref token) = self.current_token
         {
-            if let Some((last_cid, last_time)) = self.last_typing_sent {
-                if last_cid == channel_id
-                    && now.duration_since(last_time) < TYPING_THROTTLE_DURATION
-                {
-                    return;
-                }
+            if let Some((last_cid, last_time)) = self.last_typing_sent
+                && last_cid == channel_id
+                && now.duration_since(last_time) < TYPING_THROTTLE_DURATION
+            {
+                return;
             }
 
             self.last_typing_sent = Some((channel_id, now));

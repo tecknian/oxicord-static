@@ -9,6 +9,7 @@ pub enum MessageContentAction {
 }
 
 impl MessageContentAction {
+    #[must_use]
     pub fn label(&self) -> Option<&'static str> {
         match self {
             Self::OpenImages => Some("Open Image"),
@@ -21,8 +22,13 @@ impl MessageContentAction {
 pub struct MessageContentService;
 
 impl MessageContentService {
+    #[must_use]
     pub fn resolve(message: &Message) -> MessageContentAction {
-        if message.attachments().iter().any(|a| a.is_image()) {
+        if message
+            .attachments()
+            .iter()
+            .any(crate::domain::entities::Attachment::is_image)
+        {
             return MessageContentAction::OpenImages;
         }
 

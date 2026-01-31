@@ -1,13 +1,12 @@
 //! Application configuration.
 
-use clap::Parser;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const APP_NAME: &str = "oxicord";
 const APP_QUALIFIER: &str = "com";
-const APP_ORGANIZATION: &str = "ayn2op";
+const APP_ORGANIZATION: &str = "linuxmobile";
 
 /// Log level configuration.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -53,72 +52,61 @@ impl std::fmt::Display for LogLevel {
 }
 
 /// Application configuration from CLI.
-#[derive(Debug, Parser, Serialize, Deserialize)]
-#[command(
-    name = "oxicord",
-    version,
-    about = "A lightweight, secure Discord terminal client",
-    long_about = None
-)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Discord authentication token.
-    #[arg(short, long, env = "OXICORD_TOKEN", hide_env_values = true)]
+    #[serde(skip)]
     pub token: Option<String>,
 
     /// Configuration file path.
-    #[arg(short, long, value_name = "PATH")]
+    #[serde(skip)]
     pub config: Option<PathBuf>,
 
     /// Log file path.
-    #[arg(long, value_name = "PATH")]
+    #[serde(skip)]
     pub log_path: Option<PathBuf>,
 
     /// Log verbosity level.
-    #[arg(long, value_enum, default_value_t = LogLevel::Info)]
+    #[serde(default)]
     pub log_level: LogLevel,
 
     /// Enable mouse support.
-    #[arg(long, default_value_t = true)]
+    #[serde(default = "default_true")]
     pub mouse: bool,
 
     /// Enable desktop notifications.
-    #[arg(long, default_value_t = true)]
     #[serde(default = "default_true")]
     pub enable_desktop_notifications: bool,
 
     /// Disable user colors (monochrome mode).
-    #[arg(long, default_value_t = false)]
+    #[serde(default)]
     pub disable_user_colors: bool,
 
     /// UI configuration.
-    #[command(flatten)]
     #[serde(default)]
     pub ui: UiConfig,
 
     /// Theme configuration.
-    #[command(flatten)]
+    #[serde(default)]
     pub theme: ThemeConfig,
 }
 
 /// UI configuration.
-#[derive(Debug, Clone, Default, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiConfig {
     /// Group guilds into folders.
-    #[arg(long, default_value_t = false)]
     #[serde(default)]
     pub group_guilds: bool,
 
     /// Use display name (Global Name) instead of username where available.
-    #[arg(long, default_value_t = true)]
     #[serde(default = "default_true")]
     pub use_display_name: bool,
 }
 
 /// Theme configuration.
-#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
     /// Accent color (name or hex code).
-    #[arg(long, default_value = "Yellow")]
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
 }
@@ -139,7 +127,43 @@ impl Default for ThemeConfig {
     }
 }
 
+use super::args::CliArgs;
+
 impl AppConfig {
+    /// Merges CLI arguments into the configuration.
+    pub fn merge_with_args(&mut self, args: CliArgs) {
+        if let Some(token) = args.token {
+            self.token = Some(token);
+        }
+        if let Some(config_path) = args.config {
+            self.config = Some(config_path);
+        }
+        if let Some(log_path) = args.log_path {
+            self.log_path = Some(log_path);
+        }
+        if let Some(log_level) = args.log_level {
+            self.log_level = log_level;
+        }
+        if let Some(mouse) = args.mouse {
+            self.mouse = mouse;
+        }
+        if let Some(notifications) = args.enable_desktop_notifications {
+            self.enable_desktop_notifications = notifications;
+        }
+        if let Some(disable_colors) = args.disable_user_colors {
+            self.disable_user_colors = disable_colors;
+        }
+        if let Some(group_guilds) = args.group_guilds {
+            self.ui.group_guilds = group_guilds;
+        }
+        if let Some(use_display_name) = args.use_display_name {
+            self.ui.use_display_name = use_display_name;
+        }
+        if let Some(accent_color) = args.accent_color {
+            self.theme.accent_color = accent_color;
+        }
+    }
+
     /// Returns default config directory.
     #[must_use]
     pub fn default_config_dir() -> Option<PathBuf> {

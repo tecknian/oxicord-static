@@ -15,7 +15,7 @@ pub mod state_store;
 pub mod storage;
 
 pub use clipboard::ClipboardService;
-pub use config::{AppConfig, LogLevel};
+pub use config::{AppConfig, CliArgs, LogLevel, StorageManager};
 pub use discord::{
     DiscordClient, DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand,
     GatewayEventKind, GatewayIntents, PresenceStatus, TypingIndicatorManager, TypingIndicatorState,

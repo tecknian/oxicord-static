@@ -6,7 +6,9 @@ use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use oxicord::application::dto::TokenSource;
-use oxicord::infrastructure::{AppConfig, DiscordClient, KeyringTokenStorage};
+use oxicord::infrastructure::{
+    AppConfig, CliArgs, DiscordClient, KeyringTokenStorage, StorageManager,
+};
 use oxicord::presentation::{App, Theme};
 
 fn init_logging(config: &AppConfig) -> Result<()> {
@@ -43,21 +45,28 @@ fn init_logging(config: &AppConfig) -> Result<()> {
 }
 
 fn create_app() -> Result<(App, Option<(String, TokenSource)>)> {
-    let config = AppConfig::parse();
+    let args = CliArgs::parse();
 
-    let external_token = if let Ok(env_token) = std::env::var("OXICORD_TOKEN") {
-        if let Some(ref token) = config.token {
-            if token == &env_token {
-                Some((token.clone(), TokenSource::Environment))
+    let storage = StorageManager::new()?;
+
+    let mut config = storage.load_config(args.config.as_deref())?;
+
+    config.merge_with_args(args);
+
+    let external_token: Option<(String, TokenSource)> =
+        if let Ok(env_token) = std::env::var("OXICORD_TOKEN") {
+            if let Some(ref token) = config.token {
+                if token == &env_token {
+                    Some((token.clone(), TokenSource::Environment))
+                } else {
+                    Some((token.clone(), TokenSource::CommandLine))
+                }
             } else {
-                Some((token.clone(), TokenSource::CommandLine))
+                Some((env_token, TokenSource::Environment))
             }
         } else {
-            Some((env_token, TokenSource::Environment))
-        }
-    } else {
-        config.token.clone().map(|t| (t, TokenSource::CommandLine))
-    };
+            config.token.clone().map(|t| (t, TokenSource::CommandLine))
+        };
 
     init_logging(&config)?;
 
