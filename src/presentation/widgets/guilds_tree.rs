@@ -307,7 +307,7 @@ impl GuildsTreeStyle {
             title_style: Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
-            selected_style: Style::default().bg(Color::DarkGray).fg(theme.accent),
+            selected_style: theme.selection_style,
             active_guild_style: Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),

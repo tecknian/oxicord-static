@@ -1476,14 +1476,15 @@ impl App {
                 chat_state.set_connection_status(self.connection_status);
 
                 for dm in &dms {
-                    self.user_cache.insert(crate::domain::entities::CachedUser::new(
-                        &dm.recipient_id,
-                        &dm.recipient_username,
-                        &dm.recipient_discriminator,
-                        None,
-                        dm.recipient_global_name.clone(),
-                        false,
-                    ));
+                    self.user_cache
+                        .insert(crate::domain::entities::CachedUser::new(
+                            &dm.recipient_id,
+                            &dm.recipient_username,
+                            &dm.recipient_discriminator,
+                            None,
+                            dm.recipient_global_name.clone(),
+                            false,
+                        ));
                 }
 
                 chat_state.set_dm_users(dms);
@@ -2042,7 +2043,7 @@ mod tests {
         let auth = Arc::new(MockAuthPort::new(true));
         let data = Arc::new(MockDiscordData);
         let storage = Arc::new(MockTokenStorage::new());
-        let theme = Theme::new("Orange");
+        let theme = Theme::new("Orange", None);
         let identity = Arc::new(ClientIdentity::new());
         let config = AppConfig {
             disable_user_colors: false,

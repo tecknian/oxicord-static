@@ -1157,6 +1157,7 @@ pub struct MessagePaneStyle {
     pub content_style: Style,
     pub edited_style: Style,
     pub selected_style: Style,
+    pub mention_style: Style,
     pub reply_style: Style,
     pub attachment_style: Style,
     pub system_message_style: Style,
@@ -1179,10 +1180,12 @@ impl MessagePaneStyle {
             author_style: Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
-            selected_style: Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            selected_style: theme.selection_style,
+            mention_style: theme.mention_style,
+            reply_style: Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+            timestamp_style: Style::default().fg(Color::DarkGray),
             loading_style: Style::default().fg(theme.accent),
             ..Self::default()
         }
@@ -1210,6 +1213,7 @@ impl Default for MessagePaneStyle {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
             selected_style: Style::default().bg(Color::DarkGray),
+            mention_style: Style::default().bg(Color::Rgb(50, 50, 20)),
             reply_style: Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
@@ -1233,6 +1237,7 @@ pub struct MessagePane<'a> {
     disable_user_colors: bool,
     image_preview: bool,
     timestamp_format: &'a str,
+    current_user_id: Option<String>,
 }
 
 impl<'a> MessagePane<'a> {
@@ -1244,6 +1249,7 @@ impl<'a> MessagePane<'a> {
             disable_user_colors: false,
             image_preview: true,
             timestamp_format: "%H:%M",
+            current_user_id: None,
         }
     }
 
@@ -1268,6 +1274,12 @@ impl<'a> MessagePane<'a> {
     #[must_use]
     pub const fn with_timestamp_format(mut self, format: &'a str) -> Self {
         self.timestamp_format = format;
+        self
+    }
+
+    #[must_use]
+    pub fn with_current_user_id(mut self, user_id: impl Into<String>) -> Self {
+        self.current_user_id = Some(user_id.into());
         self
     }
 
@@ -1388,6 +1400,7 @@ impl<'a> MessagePane<'a> {
             disable_user_colors,
             image_preview,
             timestamp_format,
+            current_user_id,
         } = self;
 
         match data.loading_state() {
@@ -1535,6 +1548,7 @@ impl<'a> MessagePane<'a> {
                     data.use_display_name,
                     *image_preview,
                     timestamp_format,
+                    current_user_id.as_deref(),
                 );
             }
             current_y += i32::try_from(h).unwrap_or(0);
@@ -1901,13 +1915,21 @@ fn render_ui_message(
     use_display_name: bool,
     image_preview: bool,
     timestamp_format: &str,
+    current_user_id: Option<&str>,
 ) {
     let message = &ui_msg.message;
     let is_selected = state.selected_index == Some(index);
+    let is_mentioned = if let Some(id) = current_user_id {
+        message.mentions().iter().any(|u| u.id_str() == id)
+    } else {
+        false
+    };
     let mut current_msg_y = render_y;
 
     let base_style = if is_selected {
         style.selected_style
+    } else if is_mentioned {
+        style.mention_style
     } else {
         Style::default()
     };
@@ -1917,30 +1939,40 @@ fn render_ui_message(
             && current_msg_y < i32::from(area.height)
             && let Some(preview) = &ui_msg.reply_preview
         {
-            let render_line = if is_selected {
-                let mut spans = preview.spans.clone();
+            let render_line = if is_selected || is_mentioned {
+                let mut spans = preview.clone().spans;
                 if spans.len() == 4 {
-                    let username_content = spans[2].content.clone();
-                    let indent_content = spans[0].content.clone();
-
-                    for span in &mut spans {
-                        if span.content == username_content {
-                            span.style = style
-                                .selected_style
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD);
-                        } else if span.content != indent_content {
-                            span.style = style.selected_style.fg(Color::White);
-                        }
-                    }
+                    // 0: indent, 1: "Replying to ", 2: username, 3: content
+                    // Set "Replying to" to white
+                    spans[1].style = Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::ITALIC);
+                    // Set username to cyan/teal (already set by default but ensuring) and italic
+                    spans[2].style = Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+                    // Set content to dim white/gray and italic
+                    spans[3].style = Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::ITALIC);
                 } else {
+                    // Fallback for other structures
                     for span in &mut spans {
-                        span.style = style.selected_style.fg(Color::White);
+                        span.style = span.style.add_modifier(Modifier::ITALIC);
+                        if span.content.trim() == "Replying to" {
+                            span.style = span.style.fg(Color::White);
+                        } else {
+                            span.style = span.style.fg(Color::White);
+                        }
                     }
                 }
                 Line::from(spans)
             } else {
-                preview.clone()
+                let mut spans = preview.clone().spans;
+                for span in &mut spans {
+                    span.style = span.style.add_modifier(Modifier::ITALIC);
+                }
+                Line::from(spans)
             };
 
             let reply_para = Paragraph::new(render_line).style(base_style);
@@ -1958,7 +1990,7 @@ fn render_ui_message(
 
     if ui_msg.group == MessageGroup::Start {
         if current_msg_y >= 0 && current_msg_y < i32::from(area.height) {
-            let (timestamp_style, edited_style) = if is_selected {
+            let (timestamp_style, edited_style) = if is_selected || is_mentioned {
                 (
                     Style::default().fg(Color::White),
                     Style::default()

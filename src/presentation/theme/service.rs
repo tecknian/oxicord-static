@@ -1,24 +1,56 @@
-use ratatui::style::Color;
+use super::adapter::ColorConverter;
+use ratatui::style::{Color, Style};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub accent: Color,
-}
-
-impl Theme {
-    #[must_use]
-    pub fn new(accent_color: &str) -> Self {
-        Self {
-            accent: parse_color(accent_color),
-        }
-    }
+    pub mention_style: Style,
+    pub selection_style: Style,
+    pub dimmed_style: Style,
+    pub base_style: Style,
 }
 
 impl Default for Theme {
     fn default() -> Self {
+        Self::new("Yellow", None)
+    }
+}
+
+impl Theme {
+    pub fn new(accent_color_str: &str, mention_color_str: Option<&str>) -> Self {
+        let accent = parse_color(accent_color_str);
+        let mention = mention_color_str.map(parse_color);
+        Self::from_color(accent, mention)
+    }
+
+    #[must_use]
+    pub fn from_color(accent: Color, mention_color: Option<Color>) -> Self {
+        let accent_hsl = ColorConverter::to_hsl(accent);
+
+        let mention_base = mention_color.unwrap_or(Color::Blue);
+        let mut mention_bg_hsl = ColorConverter::to_hsl(mention_base);
+        mention_bg_hsl.l = 0.1;
+        mention_bg_hsl.s = 0.5;
+        let mention_bg = ColorConverter::to_ratatui(mention_bg_hsl);
+
+        let mention_style = Style::default().bg(mention_bg).fg(Color::White);
+
+        let mut selection_bg_hsl = accent_hsl;
+        selection_bg_hsl.l = 0.2;
+        selection_bg_hsl.s = 0.3;
+        let selection_bg = ColorConverter::to_ratatui(selection_bg_hsl);
+
+        let selection_style = Style::default().bg(selection_bg).fg(Color::White);
+
+        let dimmed_style = Style::default().fg(Color::DarkGray);
+
         Self {
-            accent: Color::Yellow,
+            accent,
+            mention_style,
+            selection_style,
+            dimmed_style,
+            base_style: Style::default().fg(Color::Reset),
         }
     }
 }

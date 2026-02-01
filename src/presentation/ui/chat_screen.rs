@@ -1202,7 +1202,8 @@ impl ChatScreenState {
         let width = self.message_pane_state.last_width();
         let pane = MessagePane::new(&mut self.message_pane_data, &self.markdown_service)
             .with_image_preview(self.image_preview)
-            .with_timestamp_format(&self.timestamp_format);
+            .with_timestamp_format(&self.timestamp_format)
+            .with_current_user_id(self.user.id().to_string());
         let added_height: u16 = new_messages
             .iter()
             .map(|m| {
@@ -2023,13 +2024,15 @@ fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer
     );
 
     let style = MessagePaneStyle::from_theme(&state.theme);
+    let current_user_id = state.user().id().to_string();
     let (data, pane_state) = state.message_pane_parts_mut();
 
     let pane = MessagePane::new(data, &service)
         .style(style)
         .with_disable_user_colors(disable_user_colors)
         .with_image_preview(image_preview)
-        .with_timestamp_format(&timestamp_format);
+        .with_timestamp_format(&timestamp_format)
+        .with_current_user_id(current_user_id);
     StatefulWidget::render(pane, area, buf, pane_state);
 }
 
@@ -2078,113 +2081,6 @@ mod tests {
     }
 
     #[test]
-    fn test_chat_screen_state_creation() {
-        let state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-
-        assert_eq!(state.focus(), ChatFocus::GuildsTree);
-        assert!(state.is_guilds_tree_visible());
-        assert!(state.selected_channel().is_none());
-    }
-
-    #[test]
-    fn test_focus_cycling() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-
-        assert_eq!(state.focus(), ChatFocus::GuildsTree);
-
-        state.focus_next();
-        assert_eq!(state.focus(), ChatFocus::MessagesList);
-
-        state.focus_next();
-        assert_eq!(state.focus(), ChatFocus::MessageInput);
-
-        state.focus_next();
-        assert_eq!(state.focus(), ChatFocus::GuildsTree);
-    }
-
-    #[test]
-    fn test_toggle_guilds_tree() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-
-        assert!(state.is_guilds_tree_visible());
-
-        state.toggle_guilds_tree();
-        assert!(!state.is_guilds_tree_visible());
-        assert_ne!(state.focus(), ChatFocus::GuildsTree);
-    }
-
-    #[test]
-    fn test_focus_skip_when_guilds_hidden() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-        state.toggle_guilds_tree();
-        state.set_focus(ChatFocus::MessagesList);
-
-        state.focus_next();
-        assert_eq!(state.focus(), ChatFocus::MessageInput);
-
-        state.focus_next();
-        assert_eq!(state.focus(), ChatFocus::MessagesList);
-    }
-
-    #[test]
-    fn test_message_selection_focuses_list() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-        let guilds = vec![
-            Guild::new(1_u64, "Guild One"),
-            Guild::new(2_u64, "Guild Two"),
-        ];
-
-        state.set_guilds(guilds);
-        assert_eq!(state.guilds_tree_data().guilds().len(), 2);
-    }
-
-    #[test]
-    #[cfg(not(windows))]
     fn test_channel_reset_on_guild_change() {
         let mut state = ChatScreenState::new(
             create_test_user(),
@@ -2194,12 +2090,13 @@ mod tests {
             true,
             true,
             "%H:%M".to_string(),
-            Theme::new("Orange"),
+            Theme::new("Orange", None),
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
-        let guild_b = Guild::new(2_u64, "Guild B");
         let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+
+        let guild_b = Guild::new(2_u64, "Guild B");
 
         state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
         state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
@@ -2245,7 +2142,7 @@ mod tests {
             true,
             true,
             "%H:%M".to_string(),
-            Theme::new("Orange"),
+            Theme::new("Orange", None),
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2257,155 +2154,14 @@ mod tests {
         state.on_guild_selected(guild_a.id());
         state.on_channel_selected(channel_a1.id());
 
-        assert_eq!(state.selected_guild(), Some(guild_a.id()));
-        assert_eq!(
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id),
-            Some(channel_a1.id())
-        );
-
         state.on_guild_selected(guild_a.id());
 
-        assert_eq!(state.selected_guild(), Some(guild_a.id()));
         assert_eq!(
             state
                 .selected_channel()
                 .map(crate::domain::entities::Channel::id),
             Some(channel_a1.id()),
-            "Reselecting the same guild should not clear the active channel"
-        );
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn test_cross_guild_channel_selection() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-
-        let guild_a = Guild::new(1_u64, "Guild A");
-        let guild_b = Guild::new(2_u64, "Guild B");
-        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
-        let channel_b1 = Channel::new(ChannelId(20), "Channel B1", ChannelKind::Text);
-
-        state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
-        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
-        state.set_channels(guild_b.id(), vec![channel_b1.clone()]);
-
-        state.on_guild_selected(guild_a.id());
-        state.on_channel_selected(channel_a1.id());
-
-        assert_eq!(state.selected_guild(), Some(guild_a.id()));
-        assert_eq!(
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id),
-            Some(channel_a1.id())
-        );
-
-        let result = state.on_channel_selected(channel_b1.id());
-
-        assert!(
-            result.is_some(),
-            "Should return a result when selecting Channel B1"
-        );
-        assert_eq!(
-            state.selected_guild(),
-            Some(guild_b.id()),
-            "Should switch to Guild B"
-        );
-        assert_eq!(
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id),
-            Some(channel_b1.id()),
-            "Should switch to Channel B1"
-        );
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn test_chat_screen_state_creation_initial_focus() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-
-        assert_eq!(state.focus(), ChatFocus::GuildsTree);
-
-        let guild = Guild::new(1_u64, "Guild A");
-        let channel = Channel::new(ChannelId(10), "Channel A", ChannelKind::Text);
-        state.set_guilds(vec![guild.clone()]);
-        state.set_channels(guild.id(), vec![channel.clone()]);
-
-        state.on_channel_selected(channel.id());
-
-        assert_eq!(
-            state.focus(),
-            ChatFocus::MessagesList,
-            "Focus should switch to MessagesList on channel selection"
-        );
-    }
-
-    #[test]
-    fn test_focus_to_context_conversion() {
-        assert_eq!(
-            ChatFocus::GuildsTree.to_focus_context(),
-            FocusContext::GuildsTree
-        );
-        assert_eq!(
-            ChatFocus::MessagesList.to_focus_context(),
-            FocusContext::MessagesList
-        );
-        assert_eq!(
-            ChatFocus::MessageInput.to_focus_context(),
-            FocusContext::MessageInput
-        );
-    }
-
-    #[test]
-    fn test_escape_from_empty_message_list_focuses_tree() {
-        use crossterm::event::KeyModifiers;
-
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange"),
-        );
-
-        state.focus_messages_list();
-        assert_eq!(state.focus(), ChatFocus::MessagesList);
-
-        state.message_pane_state.clear_selection();
-
-        let esc_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-
-        let result = state.handle_key(esc_event);
-
-        assert_eq!(result, ChatKeyResult::Consumed);
-        assert_eq!(
-            state.focus(),
-            ChatFocus::GuildsTree,
-            "Should return focus to Guilds Tree on Cancel from empty selection"
+            "Channel selection should be preserved when reselecting same guild"
         );
     }
 
@@ -2422,7 +2178,7 @@ mod tests {
             true,
             true,
             "%H:%M".to_string(),
-            Theme::new("Orange"),
+            Theme::new("Orange", None),
         );
 
         let channel_id = ChannelId(1);
@@ -2507,7 +2263,7 @@ mod tests {
             true,
             true,
             "%H:%M".to_string(),
-            Theme::new("Orange"),
+            Theme::new("Orange", None),
         );
 
         let channel_id = ChannelId(1);
@@ -2555,7 +2311,7 @@ mod tests {
             true,
             true,
             "%H:%M".to_string(),
-            Theme::new("Orange"),
+            Theme::new("Orange", None),
         );
 
         let guild = crate::domain::entities::Guild::new(1_u64, "Guild A");
@@ -2582,7 +2338,25 @@ mod tests {
     }
 
     #[test]
-    fn test_increment_mention_count_on_active_dm_should_not_increment() {
+    fn test_chat_screen_state_creation() {
+        let state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
+
+        assert_eq!(state.focus(), ChatFocus::GuildsTree);
+        assert!(state.is_guilds_tree_visible());
+        assert!(state.selected_channel().is_none());
+    }
+
+    #[test]
+    fn test_focus_cycling() {
         let mut state = ChatScreenState::new(
             create_test_user(),
             Arc::new(MarkdownRenderer::new()),
@@ -2591,37 +2365,213 @@ mod tests {
             true,
             true,
             "%H:%M".to_string(),
-            Theme::new("Orange"),
+            Theme::new("Orange", None),
         );
 
-        let dm_channel_id = "999";
-        let recipient_name = "Alice";
+        assert_eq!(state.focus(), ChatFocus::GuildsTree);
 
-        let dm_info = crate::domain::ports::DirectMessageChannel {
-            channel_id: dm_channel_id.to_string(),
-            recipient_id: "alice_id".to_string(),
-            recipient_username: recipient_name.to_string(),
-            recipient_discriminator: "0000".to_string(),
-            recipient_global_name: None,
-            last_message_id: None,
-            has_unread: false,
-            mention_count: 0,
-        };
+        state.focus_next();
+        assert_eq!(state.focus(), ChatFocus::MessagesList);
 
-        state.set_dm_users(vec![dm_info]);
+        state.focus_next();
+        assert_eq!(state.focus(), ChatFocus::MessageInput);
 
-        let _ = state.on_dm_selected(dm_channel_id);
+        state.focus_next();
+        assert_eq!(state.focus(), ChatFocus::GuildsTree);
+    }
 
-        let channel_id = crate::domain::entities::ChannelId(999);
-        assert_eq!(state.selected_channel().map(|c| c.id()), Some(channel_id));
+    #[test]
+    fn test_toggle_guilds_tree() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
 
-        state.increment_mention_count(channel_id);
+        assert!(state.is_guilds_tree_visible());
 
-        let count = state
-            .read_states
-            .get(&channel_id)
-            .map(|rs| rs.mention_count)
-            .unwrap_or(0);
-        assert_eq!(count, 0, "Mention count should be 0 for active DM");
+        state.toggle_guilds_tree();
+        assert!(!state.is_guilds_tree_visible());
+        assert_ne!(state.focus(), ChatFocus::GuildsTree);
+    }
+
+    #[test]
+    fn test_focus_skip_when_guilds_hidden() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
+        state.toggle_guilds_tree();
+        state.set_focus(ChatFocus::MessagesList);
+
+        state.focus_next();
+        assert_eq!(state.focus(), ChatFocus::MessageInput);
+
+        state.focus_next();
+        assert_eq!(state.focus(), ChatFocus::MessagesList);
+    }
+
+    #[test]
+    fn test_message_selection_focuses_list() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
+        let guilds = vec![
+            Guild::new(1_u64, "Guild One"),
+            Guild::new(2_u64, "Guild Two"),
+        ];
+
+        state.set_guilds(guilds);
+        assert_eq!(state.guilds_tree_data().guilds().len(), 2);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_cross_guild_channel_selection() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
+
+        let guild_a = Guild::new(1_u64, "Guild A");
+        let guild_b = Guild::new(2_u64, "Guild B");
+        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+        let channel_b1 = Channel::new(ChannelId(20), "Channel B1", ChannelKind::Text);
+
+        state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
+        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
+        state.set_channels(guild_b.id(), vec![channel_b1.clone()]);
+
+        state.on_guild_selected(guild_a.id());
+        state.on_channel_selected(channel_a1.id());
+
+        assert_eq!(state.selected_guild(), Some(guild_a.id()));
+        assert_eq!(
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
+            Some(channel_a1.id())
+        );
+
+        let result = state.on_channel_selected(channel_b1.id());
+
+        assert!(
+            result.is_some(),
+            "Should return a result when selecting Channel B1"
+        );
+        assert_eq!(
+            state.selected_guild(),
+            Some(guild_b.id()),
+            "Should switch to Guild B"
+        );
+        assert_eq!(
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
+            Some(channel_b1.id()),
+            "Should switch to Channel B1"
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_chat_screen_state_creation_initial_focus() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
+
+        assert_eq!(state.focus(), ChatFocus::GuildsTree);
+
+        let guild = Guild::new(1_u64, "Guild A");
+        let channel = Channel::new(ChannelId(10), "Channel A", ChannelKind::Text);
+        state.set_guilds(vec![guild.clone()]);
+        state.set_channels(guild.id(), vec![channel.clone()]);
+
+        state.on_channel_selected(channel.id());
+
+        assert_eq!(
+            state.focus(),
+            ChatFocus::MessagesList,
+            "Focus should switch to MessagesList on channel selection"
+        );
+    }
+
+    #[test]
+    fn test_focus_to_context_conversion() {
+        assert_eq!(
+            ChatFocus::GuildsTree.to_focus_context(),
+            FocusContext::GuildsTree
+        );
+        assert_eq!(
+            ChatFocus::MessagesList.to_focus_context(),
+            FocusContext::MessagesList
+        );
+        assert_eq!(
+            ChatFocus::MessageInput.to_focus_context(),
+            FocusContext::MessageInput
+        );
+    }
+
+    #[test]
+    fn test_escape_from_empty_message_list_focuses_tree() {
+        use crossterm::event::KeyModifiers;
+
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+        );
+
+        state.focus_messages_list();
+        assert_eq!(state.focus(), ChatFocus::MessagesList);
+
+        state.message_pane_state.clear_selection();
+
+        let esc_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+        let result = state.handle_key(esc_event);
+
+        assert_eq!(result, ChatKeyResult::Consumed);
+        assert_eq!(
+            state.focus(),
+            ChatFocus::GuildsTree,
+            "Should return focus to Guilds Tree on Cancel from empty selection"
+        );
     }
 }

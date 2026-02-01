@@ -75,7 +75,10 @@ fn create_app() -> Result<(App, Option<(String, TokenSource)>)> {
     let discord_client = Arc::new(DiscordClient::new()?);
     let identity = discord_client.identity.clone();
     let token_storage = Arc::new(KeyringTokenStorage::new());
-    let theme = Theme::new(&config.theme.accent_color);
+    let theme = Theme::new(
+        &config.theme.accent_color,
+        config.theme.mention_color.as_deref(),
+    );
 
     let app_config = oxicord::presentation::AppConfig {
         disable_user_colors: config.disable_user_colors,

@@ -156,12 +156,33 @@ impl Default for NotificationsConfig {
     }
 }
 
+/// Theme mode configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Dark mode (default).
+    #[default]
+    Dark,
+    /// Light mode.
+    Light,
+    /// Auto detect from system.
+    Auto,
+}
+
 /// Theme configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
     /// Accent color (name or hex code).
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
+
+    /// Mention background color (name or hex code).
+    #[serde(default)]
+    pub mention_color: Option<String>,
+
+    /// Theme mode (Dark, Light, Auto).
+    #[serde(default)]
+    pub mode: ThemeMode,
 }
 
 fn default_accent_color() -> String {
@@ -184,6 +205,8 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             accent_color: default_accent_color(),
+            mention_color: None,
+            mode: ThemeMode::default(),
         }
     }
 }

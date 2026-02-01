@@ -1118,7 +1118,7 @@ mod tests {
         state.handle_key(key, &registry);
 
         assert_eq!(state.value(), "Hello ");
-        
+
         assert!(!state.mentions.contains_key("@Antonio"));
     }
 
