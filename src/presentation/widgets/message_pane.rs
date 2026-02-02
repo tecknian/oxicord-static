@@ -189,6 +189,10 @@ fn calculate_embed_layout(
         description_text = Some(wrapped_text);
     }
 
+    if height > 0 {
+        height += 2;
+    }
+
     let color = if let Some(c) = embed.color {
         Color::Rgb(
             u8::try_from((c >> 16) & 0xFF).unwrap_or(0),
@@ -1798,12 +1802,27 @@ impl StatefulWidget for MessagePane<'_> {
     }
 }
 
+fn draw_embed_border(
+    buf: &mut Buffer,
+    x: u16,
+    y_offset: i32,
+    area_y: u16,
+    area_height: u16,
+    color: Color,
+) {
+    if y_offset >= 0 && y_offset < i32::from(area_height) {
+        let y = u16::try_from(y_offset).unwrap_or(0);
+        if let Some(cell) = buf.cell_mut((x, area_y + y)) {
+            cell.set_symbol("▎").set_fg(color);
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffer) -> i32 {
     let mut current_y = start_y;
     let indent = u16::try_from(EMBED_INDENT).unwrap_or(0);
-
     let border_color = embed.color;
-
     let content_x = area.x.saturating_add(indent);
     let content_width = area
         .width
@@ -1811,29 +1830,21 @@ fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffe
         .saturating_sub(SCROLLBAR_MARGIN)
         .saturating_sub(2);
 
-    let mut render_line = |text: Line, is_bold: bool| {
+    if embed.height > 0 {
+        draw_embed_border(buf, content_x, current_y, area.y, area.height, border_color);
+        current_y += 1;
+    }
+
+    if let Some(name) = &embed.provider {
+        let span = Span::styled(name, Style::default().fg(Color::DarkGray));
+        draw_embed_border(buf, content_x, current_y, area.y, area.height, border_color);
         if current_y >= 0 && current_y < i32::from(area.height) {
             let y = u16::try_from(current_y).unwrap_or(0);
-
-            if let Some(cell) = buf.cell_mut((content_x, area.y + y)) {
-                cell.set_symbol("▎").set_fg(border_color);
-            }
-
-            let mut style = Style::default();
-            if is_bold {
-                style = style.add_modifier(Modifier::BOLD);
-            }
-
-            let para = Paragraph::new(text).style(style);
+            let para = Paragraph::new(Line::from(span)).style(Style::default());
             let text_area = Rect::new(content_x + 2, area.y + y, content_width, 1);
             para.render(text_area, buf);
         }
         current_y += 1;
-    };
-
-    if let Some(name) = &embed.provider {
-        let span = Span::styled(name, Style::default().fg(Color::DarkGray));
-        render_line(Line::from(span), false);
     }
 
     if !embed.title.is_empty() {
@@ -1845,7 +1856,15 @@ fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffe
         }
         for line in &embed.title {
             let span = Span::styled(line, style);
-            render_line(Line::from(span), true);
+            draw_embed_border(buf, content_x, current_y, area.y, area.height, border_color);
+            if current_y >= 0 && current_y < i32::from(area.height) {
+                let y = u16::try_from(current_y).unwrap_or(0);
+                let para = Paragraph::new(Line::from(span))
+                    .style(Style::default().add_modifier(Modifier::BOLD));
+                let text_area = Rect::new(content_x + 2, area.y + y, content_width, 1);
+                para.render(text_area, buf);
+            }
+            current_y += 1;
         }
     }
 
@@ -1854,13 +1873,14 @@ fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffe
 
         if current_y + desc_height > 0 && current_y < i32::from(area.height) {
             for i in 0..desc_height {
-                let y = current_y + i;
-                if y >= 0 && y < i32::from(area.height) {
-                    let y_u16 = u16::try_from(y).unwrap_or(0);
-                    if let Some(cell) = buf.cell_mut((content_x, area.y + y_u16)) {
-                        cell.set_symbol("▎").set_fg(border_color);
-                    }
-                }
+                draw_embed_border(
+                    buf,
+                    content_x,
+                    current_y + i,
+                    area.y,
+                    area.height,
+                    border_color,
+                );
             }
 
             let top_clip = if current_y < 0 {
@@ -1892,6 +1912,11 @@ fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffe
             }
         }
         current_y += desc_height;
+    }
+
+    if embed.height > 0 {
+        draw_embed_border(buf, content_x, current_y, area.y, area.height, border_color);
+        current_y += 1;
     }
 
     current_y - start_y
@@ -1942,28 +1967,19 @@ fn render_ui_message(
             let render_line = if is_selected || is_mentioned {
                 let mut spans = preview.clone().spans;
                 if spans.len() == 4 {
-                    // 0: indent, 1: "Replying to ", 2: username, 3: content
-                    // Set "Replying to" to white
                     spans[1].style = Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::ITALIC);
-                    // Set username to cyan/teal (already set by default but ensuring) and italic
                     spans[2].style = Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD | Modifier::ITALIC);
-                    // Set content to dim white/gray and italic
                     spans[3].style = Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::ITALIC);
                 } else {
-                    // Fallback for other structures
                     for span in &mut spans {
                         span.style = span.style.add_modifier(Modifier::ITALIC);
-                        if span.content.trim() == "Replying to" {
-                            span.style = span.style.fg(Color::White);
-                        } else {
-                            span.style = span.style.fg(Color::White);
-                        }
+                        span.style = span.style.fg(Color::White);
                     }
                 }
                 Line::from(spans)
@@ -2712,5 +2728,24 @@ mod tests {
         let mut buf = Buffer::empty(area);
 
         pane.render(area, &mut buf, &mut state);
+    }
+
+    #[test]
+    fn test_embed_height_calculation_padding() {
+        use crate::domain::entities::Embed;
+        use crate::presentation::services::markdown_renderer::MarkdownRenderer;
+
+        let mut data = MessagePaneData::new(true);
+        let markdown = MarkdownRenderer::new();
+        let pane = MessagePane::new(&mut data, &markdown);
+
+        let mut embed = Embed::new();
+        embed.title = Some("Test Title".to_string());
+        embed.description = Some("Test Description".to_string());
+
+        let message = create_test_message(1, "Content").with_embeds(vec![embed]);
+
+        let height = pane.calculate_message_height(&message, 100, &markdown, Color::Yellow);
+        assert_eq!(height, 6, "Height should be 6 with padding changes");
     }
 }

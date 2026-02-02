@@ -337,8 +337,8 @@ impl App {
 
                 Some(Ok(event)) = terminal_event => {
                     let is_release_event = matches!(
-                        event, 
-                        crossterm::event::Event::Key(key) 
+                        event,
+                        crossterm::event::Event::Key(key)
                         if key.kind == crossterm::event::KeyEventKind::Release
                     );
 
