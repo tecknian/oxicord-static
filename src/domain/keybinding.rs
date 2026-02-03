@@ -61,6 +61,7 @@ pub struct Keybind {
     pub action: Action,
     pub label: Cow<'static, str>,
     pub visible_in_bar: bool,
+    pub key_display: Option<String>,
 }
 
 impl Keybind {
@@ -70,7 +71,14 @@ impl Keybind {
             action,
             label: label.into(),
             visible_in_bar: true,
+            key_display: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_display(mut self, display: impl Into<String>) -> Self {
+        self.key_display = Some(display.into());
+        self
     }
 
     #[must_use]

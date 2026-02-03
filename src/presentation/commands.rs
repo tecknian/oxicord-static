@@ -39,12 +39,12 @@ impl Default for CommandRegistry {
         );
         register(
             Action::ToggleHelp,
-            KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
             true,
         );
         register(
             Action::ToggleHelp,
-            KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
             false,
         );
         register(
@@ -126,17 +126,12 @@ impl Default for CommandRegistry {
 
         register(
             Action::NavigateUp,
-            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
-            true,
-        );
-        register(
-            Action::NavigateUp,
             KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
             true,
         );
         register(
-            Action::NavigateDown,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            Action::NavigateUp,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
             true,
         );
         register(
@@ -145,8 +140,8 @@ impl Default for CommandRegistry {
             true,
         );
         register(
-            Action::NavigateLeft,
-            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            Action::NavigateDown,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
             true,
         );
         register(
@@ -155,13 +150,18 @@ impl Default for CommandRegistry {
             true,
         );
         register(
-            Action::NavigateRight,
-            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            Action::NavigateLeft,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
             true,
         );
         register(
             Action::NavigateRight,
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+            true,
+        );
+        register(
+            Action::NavigateRight,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
             true,
         );
 

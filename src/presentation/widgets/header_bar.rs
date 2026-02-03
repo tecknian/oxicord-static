@@ -46,9 +46,37 @@ pub struct HeaderBarStyle {
 impl HeaderBarStyle {
     #[must_use]
     pub fn from_theme(theme: &Theme) -> Self {
+        use crate::presentation::theme::adapter::ColorConverter;
+
+        let accent = theme.accent;
+        let accent_hsl = ColorConverter::to_hsl(accent);
+
+        let mut version_bg_hsl = accent_hsl;
+        version_bg_hsl.l = 0.08;
+        version_bg_hsl.s = 0.5;
+        let version_bg = ColorConverter::to_ratatui(version_bg_hsl);
+
         Self {
             app_name: Style::default()
-                .fg(theme.accent)
+                .bg(accent)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+            version: Style::default().bg(version_bg).fg(Color::White),
+            status_connected: Style::default()
+                .bg(Color::Green)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+            status_disconnected: Style::default()
+                .bg(Color::Red)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            status_connecting: Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+            status_error: Style::default()
+                .bg(Color::Red)
+                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
             ..Self::default()
         }
@@ -120,13 +148,10 @@ impl<'a> HeaderBar<'a> {
         let indicator = self.connection_status.indicator().to_string();
         let status_text = self.connection_status.display_text().to_string();
 
-        let spans = vec![
-            Span::styled(indicator.clone(), status_style),
-            Span::raw(" "),
-            Span::styled(status_text.clone(), status_style),
-        ];
+        let text = format!(" {indicator} {status_text} ");
+        let width = text.chars().count() as u16;
+        let spans = vec![Span::styled(text, status_style)];
 
-        let width = (indicator.chars().count() + 1 + status_text.chars().count()) as u16;
         (spans, width)
     }
 }
@@ -145,13 +170,17 @@ impl Widget for HeaderBar<'_> {
         }
 
         let left_spans = vec![
-            Span::styled(self.app_name.to_uppercase(), self.style.app_name),
-            Span::raw("  "),
-            Span::styled(format!("v{}", self.version), self.style.version),
+            Span::styled(
+                format!(" {} ", self.app_name.to_uppercase()),
+                self.style.app_name,
+            ),
+            Span::raw(" "),
+            Span::styled(format!(" v{} ", self.version), self.style.version),
         ];
 
         let left_line = Line::from(left_spans);
-        let left_width = (self.app_name.len() + 2 + self.version.len() + 1) as u16;
+        // Calculate width: " APP " (len+2) + " " (1) + " vVER " (len+3)
+        let left_width = (self.app_name.len() + 2 + 1 + self.version.len() + 3) as u16;
         let left_area = Rect::new(area.x, area.y, left_width.min(area.width), 1);
         Paragraph::new(left_line).render(left_area, buf);
 

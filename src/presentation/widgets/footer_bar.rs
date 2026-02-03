@@ -32,9 +32,8 @@ impl FocusContext {
 
 pub struct FooterBarStyle {
     pub background: Style,
-    pub key_bracket: Style,
-    pub key: Style,
-    pub action: Style,
+    pub label_style: Style,
+    pub key_style: Style,
     pub info: Style,
     pub focus_indicator: Style,
 }
@@ -42,12 +41,25 @@ pub struct FooterBarStyle {
 impl FooterBarStyle {
     #[must_use]
     pub fn from_theme(theme: &Theme) -> Self {
+        use crate::presentation::theme::adapter::ColorConverter;
+
+        let accent = theme.accent;
+        let accent_hsl = ColorConverter::to_hsl(accent);
+
+        let mut key_bg_hsl = accent_hsl;
+        key_bg_hsl.l = 0.08;
+        key_bg_hsl.s = 0.5;
+        let key_bg = ColorConverter::to_ratatui(key_bg_hsl);
+
         Self {
-            key: Style::default()
-                .fg(theme.accent)
+            label_style: Style::default()
+                .bg(accent)
+                .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
+            key_style: Style::default().bg(key_bg).fg(Color::White),
             focus_indicator: Style::default()
-                .fg(theme.accent)
+                .bg(key_bg)
+                .fg(accent)
                 .add_modifier(Modifier::BOLD),
             ..Self::default()
         }
@@ -58,11 +70,11 @@ impl Default for FooterBarStyle {
     fn default() -> Self {
         Self {
             background: Style::default(),
-            key_bracket: Style::default().fg(Color::DarkGray),
-            key: Style::default()
-                .fg(Color::Cyan)
+            label_style: Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-            action: Style::default().fg(Color::Gray),
+            key_style: Style::default().fg(Color::White).bg(Color::DarkGray),
             info: Style::default().fg(Color::DarkGray),
             focus_indicator: Style::default()
                 .fg(Color::Yellow)
@@ -145,10 +157,10 @@ impl<'a> FooterBar<'a> {
 
         if let Some(context) = self.focus_context {
             spans.push(Span::styled(
-                context.display_name(),
+                format!(" {} ", context.display_name()),
                 self.style.focus_indicator,
             ));
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(" "));
         }
 
         for (i, binding) in self
@@ -158,13 +170,20 @@ impl<'a> FooterBar<'a> {
             .enumerate()
         {
             if i > 0 {
-                spans.push(Span::raw("  "));
+                spans.push(Span::raw(" "));
             }
-            spans.push(Span::styled("[", self.style.key_bracket));
-            spans.push(Span::styled(Self::format_key(&binding.key), self.style.key));
-            spans.push(Span::styled("]", self.style.key_bracket));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(binding.label.as_ref(), self.style.action));
+
+            spans.push(Span::styled(
+                format!(" {} ", binding.label),
+                self.style.label_style,
+            ));
+
+            let key_text = binding
+                .key_display
+                .as_deref()
+                .map_or_else(|| Self::format_key(&binding.key), ToString::to_string);
+
+            spans.push(Span::styled(format!(" {key_text} "), self.style.key_style));
         }
 
         spans

@@ -28,7 +28,8 @@ use crate::presentation::widgets::{
     ConfirmationModal, FileExplorerAction, FileExplorerComponent, FocusContext, FooterBar,
     ForumState, GuildsTree, GuildsTreeAction, GuildsTreeData, GuildsTreeState, HeaderBar,
     ImageManager, MentionPopup, MessageInput, MessageInputAction, MessageInputMode,
-    MessageInputState, MessagePane, MessagePaneAction, MessagePaneData, MessagePaneState, ViewMode,
+    MessageInputState, MessagePane, MessagePaneAction, MessagePaneData, MessagePaneState,
+    TreeNodeId, ViewMode,
 };
 use ratatui::{
     buffer::Buffer,
@@ -92,6 +93,508 @@ impl ChatFocus {
             Self::MessageInput => FocusContext::MessageInput,
             Self::ConfirmationModal => FocusContext::ConfirmationModal,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatKeyResult {
+    Consumed,
+    Ignored,
+    Quit,
+    Logout,
+    SecureLogout,
+    CopyToClipboard(String),
+    CopyImageToClipboard(crate::domain::entities::ImageId),
+    LoadGuildChannels(GuildId),
+    LoadChannelMessages {
+        channel_id: ChannelId,
+        guild_id: Option<GuildId>,
+    },
+    LoadForumThreads {
+        channel_id: ChannelId,
+        guild_id: Option<GuildId>,
+        offset: u32,
+    },
+    LoadDmMessages {
+        channel_id: ChannelId,
+        recipient_name: String,
+    },
+    ReplyToMessage {
+        message_id: crate::domain::entities::MessageId,
+        mention: bool,
+    },
+    SubmitEdit {
+        message_id: crate::domain::entities::MessageId,
+        content: String,
+    },
+    LoadHistory {
+        channel_id: ChannelId,
+        before_message_id: MessageId,
+    },
+    EditMessage(crate::domain::entities::MessageId),
+    DeleteMessage(crate::domain::entities::MessageId),
+    OpenAttachments(crate::domain::entities::MessageId),
+    OpenLink(String),
+    JumpToMessage(crate::domain::entities::MessageId),
+    SendMessage {
+        content: String,
+        reply_to: Option<MessageId>,
+        attachments: Vec<std::path::PathBuf>,
+    },
+    StartTyping,
+    OpenEditor {
+        initial_content: String,
+        message_id: Option<crate::domain::entities::MessageId>,
+    },
+    Paste,
+    ToggleHelp,
+    ToggleDisplayName,
+    JumpToChannel(ChannelId),
+    RequestChannelFetch(Vec<ChannelId>),
+    ShowNotification(String),
+}
+
+pub struct ChatScreen;
+
+impl ChatScreen {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ChatScreen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StatefulWidget for ChatScreen {
+    type State = ChatScreenState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let main_layout = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ]);
+        let [header_area, content_area, footer_area] = main_layout.areas(area);
+
+        render_header_bar(state, header_area, buf);
+        render_content_area(state, content_area, buf);
+        render_footer_bar(state, footer_area, buf);
+
+        if state.show_file_explorer {
+            render_explorer_popup(state, area, buf);
+        }
+
+        if state.show_quick_switcher {
+            let widget = QuickSwitcherWidget::new(&state.quick_switcher, &state.theme);
+            widget.render(area, buf);
+        }
+
+        if state.focus == ChatFocus::ConfirmationModal {
+            let modal = ConfirmationModal::new(
+                "Delete Message",
+                "Are you sure you want to delete this message?",
+                state.theme,
+            );
+            modal.render(area, buf);
+        }
+
+        if state.show_help {
+            render_help_popup(state, area, buf);
+        }
+
+        if !state.has_entered {
+            let duration = state.pending_duration;
+            state.pending_duration = Duration::ZERO;
+
+            let overflow = state.entrance_effect.process(duration.into(), buf, area);
+            if overflow.is_some() {
+                state.has_entered = true;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::domain::keybinding::Action;
+    use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+    use ratatui::style::Style;
+    use ratatui::widgets::{Block, Borders, Cell, Clear, Row, Table, Widget};
+
+    let accent = state.theme.accent;
+    let key_style = Style::default()
+        .bg(accent)
+        .fg(ratatui::style::Color::Black)
+        .add_modifier(ratatui::style::Modifier::BOLD);
+
+    let desc_style = Style::default().fg(ratatui::style::Color::Gray);
+    let header_style = Style::default()
+        .fg(accent)
+        .add_modifier(ratatui::style::Modifier::BOLD);
+
+    let width = 90;
+    let height = 38;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width.min(area.width), height.min(area.height));
+
+    Clear.render(popup_area, buf);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Keyboard Shortcuts ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(accent));
+
+    let inner_area = block.inner(popup_area);
+    block.render(popup_area, buf);
+
+
+    let v_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(23), Constraint::Min(0)])
+        .split(inner_area);
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(v_chunks[0]);
+
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(v_chunks[1]);
+
+    // Data Definition
+    let global_bindings = [(
+        "GLOBAL",
+        vec![
+            (Action::Quit, "Quit Application"),
+            (Action::Logout, "Logout"),
+            (Action::ToggleHelp, "Toggle Help"),
+            (Action::FocusGuilds, "Focus Guilds"),
+            (Action::FocusMessages, "Focus Messages"),
+            (Action::FocusInput, "Focus Input"),
+            (Action::ToggleGuildsTree, "Toggle Guilds Tree"),
+            (Action::ToggleQuickSwitcher, "Quick Switcher"),
+        ],
+    )];
+
+    let nav_bindings = [(
+        "NAVIGATION",
+        vec![
+            (Action::NavigateLeft, "Left"),
+            (Action::NavigateDown, "Down"),
+            (Action::NavigateUp, "Up"),
+            (Action::NavigateRight, "Right"),
+            (Action::NextTab, "Next Pane"),
+            (Action::FocusPrevious, "Previous Pane"),
+        ],
+    )];
+
+    let msg_bindings = [(
+        "MESSAGES",
+        vec![
+            (Action::Reply, "Reply"),
+            (Action::ReplyNoMention, "Reply (no mention)"),
+            (Action::EditMessage, "Edit Message"),
+            (Action::DeleteMessage, "Delete Message"),
+            (Action::CopyContent, "Copy Content"),
+            (Action::CopyImage, "Copy Image"),
+            (Action::YankId, "Copy Message ID"),
+            (Action::OpenAttachments, "Open Image"),
+            (Action::JumpToReply, "Jump to Reply"),
+            (Action::ToggleDisplayName, "Toggle Display Name"),
+        ],
+    )];
+
+    let input_bindings = [(
+        "INPUT",
+        vec![
+            (Action::ToggleFileExplorer, "Attachments"),
+            (Action::SendMessage, "Send Message"),
+            (Action::Paste, "Paste (Text/Image)"),
+            (Action::OpenEditor, "Open External Editor"),
+            (Action::ClearInput, "Clear Input"),
+            (Action::Cancel, "Cancel Reply / Exit"),
+        ],
+    )];
+
+    let format_key = |action: Action| -> String {
+        state.registry.get(action).map_or_else(
+            || "N/A".to_string(),
+            |keys| {
+                keys.iter()
+                    .map(|k| {
+                        use std::fmt::Write;
+                        let mut s = String::new();
+                        if k.modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                        {
+                            s.push_str("Ctrl+");
+                        }
+                        if k.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+                            s.push_str("Alt+");
+                        }
+                        if k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                            match k.code {
+                                KeyCode::Char(c) if c.is_ascii_uppercase() => {}
+                                _ => s.push_str("Shift+"),
+                            }
+                        }
+
+                        match k.code {
+                            KeyCode::Char(c) => s.push(c),
+                            KeyCode::Enter => s.push_str("Enter"),
+                            KeyCode::Tab | KeyCode::BackTab => s.push_str("Tab"),
+                            KeyCode::Esc => s.push_str("Esc"),
+                            KeyCode::Backspace => s.push_str("Backspace"),
+                            KeyCode::Up => s.push_str("Up"),
+                            KeyCode::Down => s.push_str("Down"),
+                            KeyCode::Left => s.push_str("Left"),
+                            KeyCode::Right => s.push_str("Right"),
+                            KeyCode::F(n) => write!(s, "F{n}").unwrap(),
+                            _ => write!(s, "{k:?}").unwrap(),
+                        }
+                        s
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        )
+    };
+
+    let render_col = |bindings: &[(&str, Vec<(Action, &str)>)], area: Rect, buf: &mut Buffer| {
+        let mut rows = Vec::new();
+        for (category, keys) in bindings {
+            rows.push(Row::new(vec![
+                Cell::from(format!(" {category} ")).style(header_style),
+                Cell::from(""),
+            ]));
+            rows.push(Row::new(vec!["", ""]));
+
+            for (action, desc) in keys {
+                let key_text = format_key(*action);
+                let key_display = format!(" {key_text} ");
+
+                rows.push(Row::new(vec![
+                    Cell::from(ratatui::text::Span::styled(key_display, key_style)),
+                    Cell::from(*desc).style(desc_style),
+                ]));
+                rows.push(Row::new(vec!["", ""]));
+            }
+            rows.push(Row::new(vec!["", ""]));
+        }
+
+        let table = Table::new(
+            rows,
+            [Constraint::Percentage(45), Constraint::Percentage(55)],
+        )
+        .column_spacing(1);
+
+        Widget::render(table, area, buf);
+    };
+
+    let top_left = Rect::new(
+        top_chunks[0].x + 1,
+        top_chunks[0].y + 1,
+        top_chunks[0].width.saturating_sub(2),
+        top_chunks[0].height,
+    );
+    let top_right = Rect::new(
+        top_chunks[1].x + 1,
+        top_chunks[1].y + 1,
+        top_chunks[1].width.saturating_sub(2),
+        top_chunks[1].height,
+    );
+    let bot_left = Rect::new(
+        bottom_chunks[0].x + 1,
+        bottom_chunks[0].y,
+        bottom_chunks[0].width.saturating_sub(2),
+        bottom_chunks[0].height,
+    );
+    let bot_right = Rect::new(
+        bottom_chunks[1].x + 1,
+        bottom_chunks[1].y,
+        bottom_chunks[1].width.saturating_sub(2),
+        bottom_chunks[1].height,
+    );
+
+    render_col(&global_bindings, top_left, buf);
+    render_col(&msg_bindings, top_right, buf);
+    render_col(&nav_bindings, bot_left, buf);
+    render_col(&input_bindings, bot_right, buf);
+}
+
+fn render_explorer_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    if let Some(explorer) = &mut state.file_explorer {
+        let content_area = if state.guilds_tree_visible {
+            let chunks = Layout::horizontal([
+                Constraint::Percentage(GUILDS_TREE_WIDTH_PERCENT),
+                Constraint::Min(0),
+            ])
+            .split(area);
+            chunks[1]
+        } else {
+            area
+        };
+
+        let base_area = if content_area.width < GUILDS_TREE_MIN_WIDTH {
+            area
+        } else {
+            content_area
+        };
+
+        let width = base_area.width * 40 / 100;
+        let height = base_area.height * 25 / 100;
+
+        let x = base_area.x;
+        let bottom_anchor = area.height.saturating_sub(4);
+        let y = bottom_anchor.saturating_sub(height);
+
+        let popup_area = Rect::new(x, y, width, height);
+        explorer.render(popup_area, buf);
+    }
+}
+
+fn render_header_bar(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::presentation::widgets::HeaderBarStyle;
+
+    let style = HeaderBarStyle::from_theme(&state.theme);
+    let header = HeaderBar::new(NAME, VERSION)
+        .style(style)
+        .connection_status(state.connection_status());
+    Widget::render(header, area, buf);
+}
+
+fn render_footer_bar(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::presentation::widgets::FooterBarStyle;
+
+    let focus_context = state.focus().to_focus_context();
+    let message_count = state.message_pane_data().message_count();
+
+    let right_info = if message_count > 0 {
+        format!("{message_count} messages")
+    } else {
+        String::new()
+    };
+
+    let commands = state.get_commands(&state.registry);
+
+    let style = FooterBarStyle::from_theme(&state.theme);
+    let footer = FooterBar::new(&commands)
+        .style(style)
+        .focus_context(focus_context)
+        .right_info(if right_info.is_empty() {
+            None
+        } else {
+            Some(Box::leak(right_info.into_boxed_str()))
+        });
+    Widget::render(footer, area, buf);
+}
+
+fn render_content_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    if state.guilds_tree_visible {
+        let content_layout = Layout::horizontal([
+            Constraint::Percentage(GUILDS_TREE_WIDTH_PERCENT),
+            Constraint::Min(0),
+        ]);
+        let [guilds_area, messages_area] = content_layout.areas(area);
+
+        let guilds_area = if guilds_area.width < GUILDS_TREE_MIN_WIDTH {
+            Rect {
+                width: GUILDS_TREE_MIN_WIDTH,
+                ..guilds_area
+            }
+        } else {
+            guilds_area
+        };
+
+        render_guilds_tree(state, guilds_area, buf);
+        render_messages_area(state, messages_area, buf);
+    } else {
+        render_messages_area(state, area, buf);
+    }
+}
+
+fn render_guilds_tree(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::presentation::widgets::GuildsTreeStyle;
+
+    let style = GuildsTreeStyle::from_theme(&state.theme);
+    let use_display_name = state.use_display_name;
+    let (data, tree_state) = state.guilds_tree_parts_mut();
+    let tree = GuildsTree::new(data)
+        .style(style)
+        .use_display_name(use_display_name);
+    StatefulWidget::render(tree, area, buf, tree_state);
+}
+
+fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::presentation::widgets::MessagePaneStyle;
+
+    let service = state.markdown_service.clone();
+    let disable_user_colors = state.disable_user_colors;
+    let image_preview = state.image_preview;
+    let timestamp_format = state.timestamp_format.clone();
+
+    let inner_width = area.width.saturating_sub(2);
+    state.message_pane_data.update_layout(
+        inner_width,
+        &service,
+        state.theme.accent,
+        state.message_pane_state.show_spoilers,
+        image_preview,
+    );
+
+    let style = MessagePaneStyle::from_theme(&state.theme);
+    let current_user_id = state.user().id().to_string();
+    let (data, pane_state) = state.message_pane_parts_mut();
+
+    let pane = MessagePane::new(data, &service)
+        .style(style)
+        .with_disable_user_colors(disable_user_colors)
+        .with_image_preview(image_preview)
+        .with_timestamp_format(&timestamp_format)
+        .with_current_user_id(current_user_id);
+    StatefulWidget::render(pane, area, buf, pane_state);
+}
+
+fn render_message_input(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    use crate::presentation::widgets::MessageInputStyle;
+
+    let style = MessageInputStyle::from_theme(&state.theme);
+    MessageInput::new()
+        .style(style)
+        .render(state.message_input_parts_mut(), area, buf);
+}
+
+fn render_messages_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
+    let layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
+    let [messages_area, input_area] = layout.areas(area);
+
+    render_message_pane(state, messages_area, buf);
+    render_message_input(state, input_area, buf);
+
+    if state.autocomplete_service.state().active {
+        let popup_height =
+            u16::try_from(state.autocomplete_service.state().results.len().min(5)).unwrap_or(0) + 2;
+        let popup_width = 30;
+        let popup_area = Rect::new(
+            input_area.x,
+            input_area.y.saturating_sub(popup_height),
+            popup_width,
+            popup_height,
+        );
+        let mut autocomplete_state = state.autocomplete_service.state().clone();
+        MentionPopup::new(IdentityResolver::with_preference(state.use_display_name)).render(
+            popup_area,
+            buf,
+            &mut autocomplete_state,
+        );
     }
 }
 
@@ -1708,9 +2211,29 @@ impl HasCommands for ChatScreenState {
         let mut commands = Vec::new();
 
         if self.show_help {
-            if let Some(key) = registry.get_first(Action::ToggleHelp) {
-                commands.push(Keybind::new(key, Action::ToggleHelp, "Close Help"));
-            }
+            commands.push(Keybind::new(
+                KeyEvent::from(KeyCode::Esc),
+                Action::ToggleHelp,
+                "Close",
+            ));
+            return commands;
+        }
+
+        if self.show_quick_switcher {
+            commands.push(
+                Keybind::new(KeyEvent::from(KeyCode::Up), Action::NavigateUp, "Nav")
+                    .with_display("Ctrl+k/j"),
+            );
+            commands.push(Keybind::new(
+                KeyEvent::from(KeyCode::Enter),
+                Action::Select,
+                "Select",
+            ));
+            commands.push(Keybind::new(
+                KeyEvent::from(KeyCode::Esc),
+                Action::Cancel,
+                "Close",
+            ));
             return commands;
         }
 
@@ -1729,59 +2252,13 @@ impl HasCommands for ChatScreenState {
         } else {
             match self.focus {
                 ChatFocus::GuildsTree => {
-                    if let Some(key) = registry.get_first(Action::NavigateUp) {
-                        commands.push(Keybind::new(key, Action::NavigateUp, "Nav"));
-                    }
-                    if let Some(key) = registry.get_first(Action::Select) {
-                        commands.push(Keybind::new(key, Action::Select, "Select"));
-                    }
-                    if let Some(key) = registry.get_first(Action::NavigateRight) {
-                        commands.push(Keybind::new(key, Action::NavigateRight, "Expand"));
-                    }
+                    commands.extend(self.get_guilds_tree_commands(registry));
                 }
                 ChatFocus::MessagesList => {
-                    if let Some(key) = registry.get_first(Action::NavigateUp) {
-                        commands.push(Keybind::new(key, Action::NavigateUp, "Nav"));
-                    }
-                    if let Some(key) = registry.get_first(Action::Reply) {
-                        commands.push(Keybind::new(key, Action::Reply, "Reply"));
-                    }
-                    if let Some(key) = registry.get_first(Action::EditMessage) {
-                        let can_edit = self
-                            .message_pane_state
-                            .selected_index()
-                            .and_then(|idx| self.message_pane_data.get_message(idx))
-                            .is_some_and(|m| m.can_be_edited_by(&self.user));
-
-                        if can_edit {
-                            commands.push(Keybind::new(key, Action::EditMessage, "Edit"));
-                        }
-                    }
-                    if let Some(key) = registry.get_first(Action::DeleteMessage) {
-                        commands.push(Keybind::new(key, Action::DeleteMessage, "Del"));
-                    }
-                    if let Some(key) = registry.get_first(Action::OpenAttachments) {
-                        let label = self
-                            .message_pane_state
-                            .selected_index()
-                            .and_then(|idx| self.message_pane_data.get_message(idx))
-                            .and_then(|m| MessageContentService::resolve(m).label());
-
-                        if let Some(label) = label {
-                            commands.push(Keybind::new(key, Action::OpenAttachments, label));
-                        }
-                    }
+                    commands.extend(self.get_messages_list_commands(registry));
                 }
                 ChatFocus::MessageInput => {
-                    if let Some(key) = registry.get_first(Action::SendMessage) {
-                        commands.push(Keybind::new(key, Action::SendMessage, "Send"));
-                    }
-                    if let Some(key) = registry.get_first(Action::OpenEditor) {
-                        commands.push(Keybind::new(key, Action::OpenEditor, "Editor"));
-                    }
-                    if let Some(key) = registry.get_first(Action::Cancel) {
-                        commands.push(Keybind::new(key, Action::Cancel, "Cancel"));
-                    }
+                    commands.extend(self.get_message_input_commands(registry));
                 }
                 ChatFocus::ConfirmationModal => {
                     commands.push(Keybind::new(
@@ -1794,14 +2271,10 @@ impl HasCommands for ChatScreenState {
                         Action::Cancel,
                         "Cancel",
                     ));
+                    if let Some(key) = registry.get_first(Action::ToggleHelp) {
+                        commands.push(Keybind::new(key, Action::ToggleHelp, "Help"));
+                    }
                 }
-            }
-
-            if let Some(key) = registry.get_first(Action::NextTab) {
-                commands.push(Keybind::new(key, Action::NextTab, "Next"));
-            }
-            if let Some(key) = registry.get_first(Action::ToggleHelp) {
-                commands.push(Keybind::new(key, Action::ToggleHelp, "Help"));
             }
         }
 
@@ -1809,443 +2282,149 @@ impl HasCommands for ChatScreenState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChatKeyResult {
-    Consumed,
-    Ignored,
-    Quit,
-    Logout,
-    SecureLogout,
-    CopyToClipboard(String),
-    CopyImageToClipboard(crate::domain::entities::ImageId),
-    LoadGuildChannels(GuildId),
-    LoadChannelMessages {
-        channel_id: ChannelId,
-        guild_id: Option<GuildId>,
-    },
-    LoadForumThreads {
-        channel_id: ChannelId,
-        guild_id: Option<GuildId>,
-        offset: u32,
-    },
-    LoadDmMessages {
-        channel_id: ChannelId,
-        recipient_name: String,
-    },
-    ReplyToMessage {
-        message_id: crate::domain::entities::MessageId,
-        mention: bool,
-    },
-    SubmitEdit {
-        message_id: crate::domain::entities::MessageId,
-        content: String,
-    },
-    LoadHistory {
-        channel_id: ChannelId,
-        before_message_id: MessageId,
-    },
-    EditMessage(crate::domain::entities::MessageId),
-    DeleteMessage(crate::domain::entities::MessageId),
-    OpenAttachments(crate::domain::entities::MessageId),
-    OpenLink(String),
-    JumpToMessage(crate::domain::entities::MessageId),
-    SendMessage {
-        content: String,
-        reply_to: Option<MessageId>,
-        attachments: Vec<std::path::PathBuf>,
-    },
-    StartTyping,
-    OpenEditor {
-        initial_content: String,
-        message_id: Option<crate::domain::entities::MessageId>,
-    },
-    Paste,
-    ToggleHelp,
-    ToggleDisplayName,
-    JumpToChannel(ChannelId),
-    RequestChannelFetch(Vec<ChannelId>),
-    ShowNotification(String),
-}
-
-pub struct ChatScreen;
-
-impl ChatScreen {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for ChatScreen {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StatefulWidget for ChatScreen {
-    type State = ChatScreenState;
-
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let main_layout = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ]);
-        let [header_area, content_area, footer_area] = main_layout.areas(area);
-
-        render_header_bar(state, header_area, buf);
-        render_content_area(state, content_area, buf);
-        render_footer_bar(state, footer_area, buf);
-
-        if state.show_file_explorer {
-            render_explorer_popup(state, area, buf);
+impl ChatScreenState {
+    #[allow(clippy::unused_self)]
+    fn get_guilds_tree_commands(&self, registry: &CommandRegistry) -> Vec<Keybind> {
+        let mut commands = Vec::new();
+        if let Some(key) = registry.get_first(Action::NavigateDown) {
+            let mut bind = Keybind::new(key, Action::NavigateDown, "Nav");
+            if let KeyCode::Char('j') = key.code {
+                bind = bind.with_display("j/k");
+            }
+            commands.push(bind);
         }
 
-        if state.show_quick_switcher {
-            let widget = QuickSwitcherWidget::new(&state.quick_switcher, &state.theme);
-            widget.render(area, buf);
-        }
-
-        if state.focus == ChatFocus::ConfirmationModal {
-            let modal = ConfirmationModal::new(
-                "Delete Message",
-                "Are you sure you want to delete this message?",
-                state.theme,
+        if let Some(selected_id) = self.guilds_tree_state.selected() {
+            let is_expanded = self.guilds_tree_state.is_expanded(selected_id);
+            let can_expand = matches!(
+                selected_id,
+                TreeNodeId::Guild(_)
+                    | TreeNodeId::Category(_)
+                    | TreeNodeId::DirectMessages
+                    | TreeNodeId::Folder(_)
             );
-            modal.render(area, buf);
+
+            if can_expand {
+                if is_expanded {
+                    if let Some(key) = registry.get_first(Action::NavigateLeft) {
+                        commands.push(Keybind::new(key, Action::NavigateLeft, "Collapse"));
+                    }
+                } else if let Some(key) = registry.get_first(Action::NavigateRight) {
+                    commands.push(Keybind::new(key, Action::NavigateRight, "Expand"));
+                }
+            } else if let Some(key) = registry.get_first(Action::NavigateLeft) {
+                commands.push(Keybind::new(key, Action::NavigateLeft, "Back"));
+            }
+        } else if let Some(key) = registry.get_first(Action::NavigateRight) {
+            commands.push(Keybind::new(key, Action::NavigateRight, "Expand"));
         }
 
-        if state.show_help {
-            render_help_popup(state, area, buf);
+        if let Some(key) = registry.get_first(Action::Select) {
+            commands.push(Keybind::new(key, Action::Select, "Select"));
         }
+        if let Some(key) = registry.get_first(Action::ToggleGuildsTree) {
+            commands.push(Keybind::new(key, Action::ToggleGuildsTree, "Toggle Tree"));
+        }
+        if let Some(key) = registry.get_first(Action::FocusMessages) {
+            commands.push(Keybind::new(key, Action::FocusMessages, "Msgs"));
+        }
+        if let Some(key) = registry.get_first(Action::NextTab) {
+            commands.push(Keybind::new(key, Action::NextTab, "Next"));
+        }
+        if let Some(key) = registry.get_first(Action::ToggleHelp) {
+            commands.push(Keybind::new(key, Action::ToggleHelp, "Help"));
+        }
+        commands
+    }
 
-        if !state.has_entered {
-            let duration = state.pending_duration;
-            state.pending_duration = Duration::ZERO;
+    fn get_messages_list_commands(&self, registry: &CommandRegistry) -> Vec<Keybind> {
+        let mut commands = Vec::new();
+        if let Some(key) = registry.get_first(Action::NavigateDown) {
+            let mut bind = Keybind::new(key, Action::NavigateDown, "Nav");
+            if let KeyCode::Char('j') = key.code {
+                bind = bind.with_display("j/k");
+            }
+            commands.push(bind);
+        }
+        if let Some(key) = registry.get_first(Action::Reply) {
+            commands.push(Keybind::new(key, Action::Reply, "Reply"));
+        }
+        if let Some(key) = registry.get_first(Action::EditMessage) {
+            let can_edit = self
+                .message_pane_state
+                .selected_index()
+                .and_then(|idx| self.message_pane_data.get_message(idx))
+                .is_some_and(|m| m.can_be_edited_by(&self.user));
 
-            let overflow = state.entrance_effect.process(duration.into(), buf, area);
-            if overflow.is_some() {
-                state.has_entered = true;
+            if can_edit {
+                commands.push(Keybind::new(key, Action::EditMessage, "Edit"));
             }
         }
-    }
-}
+        if let Some(key) = registry.get_first(Action::DeleteMessage) {
+            let can_delete = self
+                .message_pane_state
+                .selected_index()
+                .and_then(|idx| self.message_pane_data.get_message(idx))
+                .is_some_and(|m| m.can_be_edited_by(&self.user));
 
-#[allow(clippy::too_many_lines)]
-fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    use crate::domain::keybinding::Action;
-    use ratatui::layout::Alignment;
-    use ratatui::style::Style;
-    use ratatui::widgets::{Block, Borders, Cell, Clear, Row, Table};
-
-    let width = 80;
-    let height = 36;
-    let x = (area.width.saturating_sub(width)) / 2;
-    let y = (area.height.saturating_sub(height)) / 2;
-    let popup_area = Rect::new(x, y, width.min(area.width), height.min(area.height));
-
-    Clear.render(popup_area, buf);
-
-    let bindings = [
-        (
-            "GLOBAL",
-            vec![
-                (Action::Quit, "Quit Application"),
-                (Action::Logout, "Logout"),
-                (Action::ToggleHelp, "Toggle Help"),
-                (Action::FocusGuilds, "Focus Guilds"),
-                (Action::FocusMessages, "Focus Messages"),
-                (Action::FocusInput, "Focus Input"),
-                (Action::ToggleGuildsTree, "Toggle Guilds Tree"),
-                (Action::ToggleQuickSwitcher, "Quick Switcher"),
-            ],
-        ),
-        (
-            "NAVIGATION",
-            vec![
-                (Action::NavigateLeft, "Left"),
-                (Action::NavigateDown, "Down"),
-                (Action::NavigateUp, "Up"),
-                (Action::NavigateRight, "Right"),
-                (Action::NextTab, "Next Pane"),
-                (Action::FocusPrevious, "Previous Pane"),
-            ],
-        ),
-        (
-            "MESSAGES",
-            vec![
-                (Action::Reply, "Reply"),
-                (Action::ReplyNoMention, "Reply (no mention)"),
-                (Action::EditMessage, "Edit Message"),
-                (Action::DeleteMessage, "Delete Message"),
-                (Action::CopyContent, "Copy Content"),
-                (Action::CopyImage, "Copy Image"),
-                (Action::YankId, "Copy Message ID"),
-                (Action::OpenAttachments, "Open Image"),
-                (Action::JumpToReply, "Jump to Reply"),
-                (Action::ToggleDisplayName, "Toggle Display Name"),
-            ],
-        ),
-        (
-            "INPUT",
-            vec![
-                (Action::ToggleFileExplorer, "Attachments"),
-                (Action::SendMessage, "Send Message"),
-                (Action::Paste, "Paste (Text/Image)"),
-                (Action::OpenEditor, "Open External Editor"),
-                (Action::ClearInput, "Clear Input"),
-                (Action::Cancel, "Cancel Reply / Exit"),
-            ],
-        ),
-    ];
-
-    let format_key = |action: Action| -> String {
-        state.registry.get(action).map_or_else(
-            || "N/A".to_string(),
-            |keys| {
-                keys.iter()
-                    .map(|k| {
-                        use std::fmt::Write;
-                        let mut s = String::new();
-                        if k.modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        {
-                            s.push_str("Ctrl+");
-                        }
-                        if k.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
-                            s.push_str("Alt+");
-                        }
-                        if k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-                            match k.code {
-                                KeyCode::Char(c) if c.is_ascii_uppercase() => {}
-                                _ => s.push_str("Shift+"),
-                            }
-                        }
-
-                        match k.code {
-                            KeyCode::Char(c) => s.push(c),
-                            KeyCode::Enter => s.push_str("Enter"),
-                            KeyCode::Tab | KeyCode::BackTab => s.push_str("Tab"),
-                            KeyCode::Esc => s.push_str("Esc"),
-                            KeyCode::Backspace => s.push_str("Backspace"),
-                            KeyCode::Up => s.push_str("Up"),
-                            KeyCode::Down => s.push_str("Down"),
-                            KeyCode::Left => s.push_str("Left"),
-                            KeyCode::Right => s.push_str("Right"),
-                            KeyCode::F(n) => write!(s, "F{n}").unwrap(),
-                            _ => write!(s, "{k:?}").unwrap(),
-                        }
-                        s
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        )
-    };
-
-    let mut rows = Vec::new();
-
-    for (category, keys) in &bindings {
-        rows.push(Row::new(vec![
-            Cell::from(format!(" {category} ")).style(
-                Style::default()
-                    .fg(ratatui::style::Color::Yellow)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Cell::from(""),
-        ]));
-
-        for (action, desc) in keys {
-            rows.push(Row::new(vec![
-                Cell::from(format!("  {}", format_key(*action)))
-                    .style(Style::default().fg(ratatui::style::Color::Cyan)),
-                Cell::from(*desc).style(Style::default().fg(ratatui::style::Color::Gray)),
-            ]));
-        }
-        rows.push(Row::new(vec!["", ""]));
-    }
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Keyboard Shortcuts ")
-        .title_alignment(Alignment::Center)
-        .border_style(Style::default().fg(ratatui::style::Color::Cyan));
-
-    let table = Table::new(
-        rows,
-        [Constraint::Percentage(40), Constraint::Percentage(60)],
-    )
-    .block(block)
-    .column_spacing(2);
-
-    Widget::render(table, popup_area, buf);
-}
-
-fn render_explorer_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    if let Some(explorer) = &mut state.file_explorer {
-        let content_area = if state.guilds_tree_visible {
-            let chunks = Layout::horizontal([
-                Constraint::Percentage(GUILDS_TREE_WIDTH_PERCENT),
-                Constraint::Min(0),
-            ])
-            .split(area);
-            chunks[1]
-        } else {
-            area
-        };
-
-        let base_area = if content_area.width < GUILDS_TREE_MIN_WIDTH {
-            area
-        } else {
-            content_area
-        };
-
-        let width = base_area.width * 40 / 100;
-        let height = base_area.height * 25 / 100;
-
-        let x = base_area.x;
-        let bottom_anchor = area.height.saturating_sub(4);
-        let y = bottom_anchor.saturating_sub(height);
-
-        let popup_area = Rect::new(x, y, width, height);
-        explorer.render(popup_area, buf);
-    }
-}
-
-fn render_header_bar(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
-    use crate::presentation::widgets::HeaderBarStyle;
-
-    let style = HeaderBarStyle::from_theme(&state.theme);
-    let header = HeaderBar::new(NAME, VERSION)
-        .style(style)
-        .connection_status(state.connection_status());
-    Widget::render(header, area, buf);
-}
-
-fn render_footer_bar(state: &ChatScreenState, area: Rect, buf: &mut Buffer) {
-    use crate::presentation::widgets::FooterBarStyle;
-
-    let focus_context = state.focus().to_focus_context();
-    let message_count = state.message_pane_data().message_count();
-
-    let right_info = if message_count > 0 {
-        format!("{message_count} messages")
-    } else {
-        String::new()
-    };
-
-    let commands = state.get_commands(&state.registry);
-
-    let style = FooterBarStyle::from_theme(&state.theme);
-    let footer = FooterBar::new(&commands)
-        .style(style)
-        .focus_context(focus_context)
-        .right_info(if right_info.is_empty() {
-            None
-        } else {
-            Some(Box::leak(right_info.into_boxed_str()))
-        });
-    Widget::render(footer, area, buf);
-}
-
-fn render_content_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    if state.guilds_tree_visible {
-        let content_layout = Layout::horizontal([
-            Constraint::Percentage(GUILDS_TREE_WIDTH_PERCENT),
-            Constraint::Min(0),
-        ]);
-        let [guilds_area, messages_area] = content_layout.areas(area);
-
-        let guilds_area = if guilds_area.width < GUILDS_TREE_MIN_WIDTH {
-            Rect {
-                width: GUILDS_TREE_MIN_WIDTH,
-                ..guilds_area
+            if can_delete {
+                commands.push(Keybind::new(key, Action::DeleteMessage, "Delete"));
             }
-        } else {
-            guilds_area
-        };
+        }
+        if let Some(key) = registry.get_first(Action::OpenAttachments) {
+            let label = self
+                .message_pane_state
+                .selected_index()
+                .and_then(|idx| self.message_pane_data.get_message(idx))
+                .and_then(|m| MessageContentService::resolve(m).label());
 
-        render_guilds_tree(state, guilds_area, buf);
-        render_messages_area(state, messages_area, buf);
-    } else {
-        render_messages_area(state, area, buf);
+            if let Some(label) = label {
+                commands.push(Keybind::new(key, Action::OpenAttachments, label));
+            } else {
+                commands.push(Keybind::new(key, Action::OpenAttachments, "Open"));
+            }
+        }
+        if let Some(key) = registry.get_first(Action::CopyContent) {
+            commands.push(Keybind::new(key, Action::CopyContent, "Copy"));
+        }
+        if let Some(key) = registry.get_first(Action::JumpToReply) {
+            commands.push(Keybind::new(key, Action::JumpToReply, "Jump"));
+        }
+        if let Some(key) = registry.get_first(Action::FocusInput) {
+            commands.push(Keybind::new(key, Action::FocusInput, "Focus Input"));
+        }
+        if let Some(key) = registry.get_first(Action::ToggleHelp) {
+            commands.push(Keybind::new(key, Action::ToggleHelp, "Help"));
+        }
+        commands
     }
-}
 
-fn render_guilds_tree(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    use crate::presentation::widgets::GuildsTreeStyle;
+    #[allow(clippy::unused_self)]
+    fn get_message_input_commands(&self, registry: &CommandRegistry) -> Vec<Keybind> {
+        let mut commands = Vec::new();
+        if let Some(key) = registry.get_first(Action::SendMessage) {
+            commands.push(Keybind::new(key, Action::SendMessage, "Send"));
+        }
+        if let Some(key) = registry.get_first(Action::OpenEditor) {
+            commands.push(Keybind::new(key, Action::OpenEditor, "Editor"));
+        }
+        if let Some(key) = registry.get_first(Action::ToggleFileExplorer) {
+            commands.push(Keybind::new(key, Action::ToggleFileExplorer, "Attach"));
+        }
+        if let Some(key) = registry.get_first(Action::Paste) {
+            commands.push(Keybind::new(key, Action::Paste, "Paste"));
+        }
+        if let Some(key) = registry.get_first(Action::Cancel) {
+            commands.push(Keybind::new(key, Action::Cancel, "Cancel"));
+        }
 
-    let style = GuildsTreeStyle::from_theme(&state.theme);
-    let use_display_name = state.use_display_name;
-    let (data, tree_state) = state.guilds_tree_parts_mut();
-    let tree = GuildsTree::new(data)
-        .style(style)
-        .use_display_name(use_display_name);
-    StatefulWidget::render(tree, area, buf, tree_state);
-}
+        commands.push(Keybind::new(
+            KeyEvent::from(KeyCode::F(1)),
+            Action::ToggleHelp,
+            "Help",
+        ));
 
-fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    use crate::presentation::widgets::MessagePaneStyle;
-
-    let service = state.markdown_service.clone();
-    let disable_user_colors = state.disable_user_colors;
-    let image_preview = state.image_preview;
-    let timestamp_format = state.timestamp_format.clone();
-
-    let inner_width = area.width.saturating_sub(2);
-    state.message_pane_data.update_layout(
-        inner_width,
-        &service,
-        state.theme.accent,
-        state.message_pane_state.show_spoilers,
-        image_preview,
-    );
-
-    let style = MessagePaneStyle::from_theme(&state.theme);
-    let current_user_id = state.user().id().to_string();
-    let (data, pane_state) = state.message_pane_parts_mut();
-
-    let pane = MessagePane::new(data, &service)
-        .style(style)
-        .with_disable_user_colors(disable_user_colors)
-        .with_image_preview(image_preview)
-        .with_timestamp_format(&timestamp_format)
-        .with_current_user_id(current_user_id);
-    StatefulWidget::render(pane, area, buf, pane_state);
-}
-
-fn render_message_input(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    use crate::presentation::widgets::MessageInputStyle;
-
-    let style = MessageInputStyle::from_theme(&state.theme);
-    MessageInput::new()
-        .style(style)
-        .render(state.message_input_parts_mut(), area, buf);
-}
-
-fn render_messages_area(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) {
-    let layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
-    let [messages_area, input_area] = layout.areas(area);
-
-    render_message_pane(state, messages_area, buf);
-    render_message_input(state, input_area, buf);
-
-    if state.autocomplete_service.state().active {
-        let popup_height =
-            u16::try_from(state.autocomplete_service.state().results.len().min(5)).unwrap_or(0) + 2;
-        let popup_width = 30;
-        let popup_area = Rect::new(
-            input_area.x,
-            input_area.y.saturating_sub(popup_height),
-            popup_width,
-            popup_height,
-        );
-        let mut autocomplete_state = state.autocomplete_service.state().clone();
-        MentionPopup::new(IdentityResolver::with_preference(state.use_display_name)).render(
-            popup_area,
-            buf,
-            &mut autocomplete_state,
-        );
+        commands
     }
 }
 
@@ -2256,60 +2435,6 @@ mod tests {
 
     fn create_test_user() -> User {
         User::new("123", "testuser", "0", None, false, None)
-    }
-
-    #[test]
-    fn test_channel_reset_on_guild_change() {
-        let mut state = ChatScreenState::new(
-            create_test_user(),
-            Arc::new(MarkdownRenderer::new()),
-            UserCache::new(),
-            false,
-            true,
-            true,
-            "%H:%M".to_string(),
-            Theme::new("Orange", None),
-            true,
-            CommandRegistry::default(),
-        );
-
-        let guild_a = Guild::new(1_u64, "Guild A");
-        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
-
-        let guild_b = Guild::new(2_u64, "Guild B");
-
-        state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
-        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
-        state.set_channels(guild_b.id(), vec![]);
-
-        state.on_guild_selected(guild_a.id());
-        assert_eq!(state.selected_guild(), Some(guild_a.id()));
-
-        state.on_channel_selected(channel_a1.id());
-        assert_eq!(
-            state
-                .selected_channel()
-                .map(crate::domain::entities::Channel::id),
-            Some(channel_a1.id())
-        );
-        assert_eq!(
-            state.guilds_tree_data().active_channel_id(),
-            Some(channel_a1.id())
-        );
-
-        state.on_guild_selected(guild_b.id());
-
-        assert_eq!(state.selected_guild(), Some(guild_b.id()));
-        assert_eq!(
-            state.selected_channel(),
-            None,
-            "Selected channel should be cleared"
-        );
-        assert_eq!(
-            state.guilds_tree_data().active_channel_id(),
-            None,
-            "Active channel ID in tree data should be cleared"
-        );
     }
 
     #[test]
