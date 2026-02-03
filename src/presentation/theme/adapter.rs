@@ -86,9 +86,9 @@ mod tests {
         let back = ColorConverter::to_ratatui(hsl);
 
         if let Color::Rgb(r, g, b) = back {
-            assert!((r as i16 - 100).abs() <= 1);
-            assert!((g as i16 - 150).abs() <= 1);
-            assert!((b as i16 - 200).abs() <= 1);
+            assert!((i16::from(r) - 100).abs() <= 1);
+            assert!((i16::from(g) - 150).abs() <= 1);
+            assert!((i16::from(b) - 200).abs() <= 1);
         } else {
             panic!("Expected RGB color");
         }
@@ -100,8 +100,8 @@ mod tests {
         let hsl = ColorConverter::to_hsl(red);
         let rgb: Rgb = hsl.to_rgb();
         assert!((i16::from(rgb.r) - 170).abs() <= 1);
-        assert!((i16::from(rgb.g) - 0).abs() <= 1);
-        assert!((i16::from(rgb.b) - 0).abs() <= 1);
+        assert!((i16::from(rgb.g)).abs() <= 1);
+        assert!((i16::from(rgb.b)).abs() <= 1);
     }
 
     #[test]

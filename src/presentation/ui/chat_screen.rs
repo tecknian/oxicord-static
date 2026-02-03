@@ -162,6 +162,7 @@ pub struct ChatScreenState {
 impl ChatScreenState {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::fn_params_excessive_bools)]
     pub fn new(
         user: User,
         markdown_service: Arc<MarkdownRenderer>,
@@ -171,9 +172,17 @@ impl ChatScreenState {
         image_preview: bool,
         timestamp_format: String,
         theme: Theme,
+        enable_animations: bool,
+        registry: CommandRegistry,
     ) -> Self {
         let mut guilds_tree_state = GuildsTreeState::new();
         guilds_tree_state.set_focused(true);
+
+        let entrance_effect = if enable_animations {
+            fx::coalesce((800, Interpolation::SineOut))
+        } else {
+            fx::sleep(0)
+        };
 
         Self {
             user,
@@ -195,8 +204,8 @@ impl ChatScreenState {
             file_explorer: None,
             show_file_explorer: false,
             show_help: false,
-            registry: CommandRegistry::default(),
-            entrance_effect: fx::coalesce((800, Interpolation::SineOut)),
+            registry,
+            entrance_effect,
             pending_duration: Duration::ZERO,
             has_entered: false,
             image_manager: ImageManager::new(),
@@ -207,7 +216,7 @@ impl ChatScreenState {
             theme,
             forum_states: std::collections::HashMap::new(),
             pending_deletion_id: None,
-            quick_switcher: QuickSwitcher::new(),
+            quick_switcher: QuickSwitcher::default(),
             show_quick_switcher: false,
         }
     }
@@ -2260,6 +2269,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2312,6 +2323,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2348,6 +2361,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         let channel_id = ChannelId(1);
@@ -2400,7 +2415,7 @@ mod tests {
             ChatKeyResult::ShowNotification(msg) => {
                 assert_eq!(msg, "You can only edit your own messages");
             }
-            _ => panic!("Expected ShowNotification, got {:?}", result),
+            _ => panic!("Expected ShowNotification, got {result:?}"),
         }
 
         state.message_pane_state.jump_to_index(0);
@@ -2433,6 +2448,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         let channel_id = ChannelId(1);
@@ -2466,7 +2483,7 @@ mod tests {
             ChatKeyResult::ShowNotification(msg) => {
                 assert_eq!(msg, "You can only edit your own messages");
             }
-            _ => panic!("Expected ShowNotification, got {:?}", result),
+            _ => panic!("Expected ShowNotification, got {result:?}"),
         }
     }
 
@@ -2481,6 +2498,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         let guild = crate::domain::entities::Guild::new(1_u64, "Guild A");
@@ -2494,15 +2513,19 @@ mod tests {
         state.set_channels(guild.id(), vec![channel.clone()]);
 
         state.on_channel_selected(channel.id());
-        assert_eq!(state.selected_channel().map(|c| c.id()), Some(channel.id()));
+        assert_eq!(
+            state
+                .selected_channel()
+                .map(crate::domain::entities::Channel::id),
+            Some(channel.id())
+        );
 
         state.increment_mention_count(channel.id());
 
         let count = state
             .read_states
             .get(&channel.id())
-            .map(|rs| rs.mention_count)
-            .unwrap_or(0);
+            .map_or(0, |rs| rs.mention_count);
         assert_eq!(count, 0, "Mention count should be 0 for active channel");
     }
 
@@ -2517,6 +2540,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2535,6 +2560,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2560,6 +2587,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         assert!(state.is_guilds_tree_visible());
@@ -2580,6 +2609,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
         state.toggle_guilds_tree();
         state.set_focus(ChatFocus::MessagesList);
@@ -2602,6 +2633,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
         let guilds = vec![
             Guild::new(1_u64, "Guild One"),
@@ -2624,29 +2657,31 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
         let guild_b = Guild::new(2_u64, "Guild B");
-        let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
-        let channel_b1 = Channel::new(ChannelId(20), "Channel B1", ChannelKind::Text);
+        let channel_a = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
+        let channel_b = Channel::new(ChannelId(20), "Channel B1", ChannelKind::Text);
 
         state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
-        state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
-        state.set_channels(guild_b.id(), vec![channel_b1.clone()]);
+        state.set_channels(guild_a.id(), vec![channel_a.clone()]);
+        state.set_channels(guild_b.id(), vec![channel_b.clone()]);
 
         state.on_guild_selected(guild_a.id());
-        state.on_channel_selected(channel_a1.id());
+        state.on_channel_selected(channel_a.id());
 
         assert_eq!(state.selected_guild(), Some(guild_a.id()));
         assert_eq!(
             state
                 .selected_channel()
                 .map(crate::domain::entities::Channel::id),
-            Some(channel_a1.id())
+            Some(channel_a.id())
         );
 
-        let result = state.on_channel_selected(channel_b1.id());
+        let result = state.on_channel_selected(channel_b.id());
 
         assert!(
             result.is_some(),
@@ -2661,7 +2696,7 @@ mod tests {
             state
                 .selected_channel()
                 .map(crate::domain::entities::Channel::id),
-            Some(channel_b1.id()),
+            Some(channel_b.id()),
             "Should switch to Channel B1"
         );
     }
@@ -2678,6 +2713,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2725,6 +2762,8 @@ mod tests {
             true,
             "%H:%M".to_string(),
             Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
         );
 
         state.focus_messages_list();

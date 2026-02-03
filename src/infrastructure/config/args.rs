@@ -50,6 +50,18 @@ pub struct CliArgs {
     #[arg(long)]
     pub notification_duration: Option<u64>,
 
+    /// Show typing indicators.
+    #[arg(long)]
+    pub show_typing: Option<bool>,
+
+    /// Enable internal TUI notifications.
+    #[arg(long)]
+    pub internal_notifications: Option<bool>,
+
+    /// Enable `TachyonFX` animations.
+    #[arg(long)]
+    pub enable_animations: Option<bool>,
+
     /// Accent color (name or hex code).
     #[arg(long)]
     pub accent_color: Option<String>,

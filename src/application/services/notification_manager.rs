@@ -97,7 +97,7 @@ mod tests {
         manager.tick();
 
         manager.queue.front_mut().unwrap().displayed_at =
-            Some(Instant::now() - Duration::from_secs(10));
+            Some(Instant::now().checked_sub(Duration::from_secs(10)).unwrap());
 
         manager.tick();
 

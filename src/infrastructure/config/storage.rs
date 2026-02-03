@@ -173,7 +173,7 @@ mod tests {
         let manager = StorageManager::with_dir(dir.path().to_path_buf());
 
         let config = manager.load_config(None).unwrap();
-        assert_eq!(config.mouse, true); // Default value
+        assert!(config.mouse); // Default value
 
         let config_file = dir.path().join(CONFIG_FILE_NAME);
         assert!(config_file.exists());
@@ -188,7 +188,7 @@ mod tests {
         fs::write(&config_file, "invalid_toml = [").unwrap();
 
         let config = manager.load_config(None).unwrap();
-        assert_eq!(config.mouse, true);
+        assert!(config.mouse);
         let content = fs::read_to_string(&config_file).unwrap();
         assert_eq!(content, "invalid_toml = [");
     }
@@ -198,8 +198,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let manager = StorageManager::with_dir(dir.path().to_path_buf());
 
-        let mut state = StateConfig::default();
-        state.last_channel_id = Some("123".to_string());
+        let state = StateConfig {
+            last_channel_id: Some("123".to_string()),
+            ..StateConfig::default()
+        };
 
         manager.save_state(&state).unwrap();
 

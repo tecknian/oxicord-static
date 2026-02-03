@@ -1,7 +1,9 @@
 use crate::domain::keybinding::{Action, Keybind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
+use tracing::warn;
 
+#[derive(Clone)]
 pub struct CommandRegistry {
     display_bindings: HashMap<Action, Vec<KeyEvent>>,
     input_bindings: Vec<(KeyEvent, Action)>,
@@ -367,8 +369,173 @@ impl CommandRegistry {
             .find(|(k, _)| k.code == key.code && k.modifiers == key.modifiers)
             .map(|(_, a)| *a)
     }
+
+    pub fn apply_overrides(&mut self, overrides: &HashMap<String, Action>) {
+        for (key_str, action) in overrides {
+            if let Some(key_event) = parse_key_event(key_str) {
+                self.input_bindings.retain(|(k, _)| *k != key_event);
+
+                self.input_bindings.insert(0, (key_event, *action));
+
+                // Update display bindings
+                self.display_bindings
+                    .entry(*action)
+                    .or_default()
+                    .insert(0, key_event);
+            } else {
+                warn!("Failed to parse keybinding: {}", key_str);
+            }
+        }
+    }
+}
+
+fn parse_key_event(s: &str) -> Option<KeyEvent> {
+    let mut parts: Vec<&str> = s.split('+').collect();
+    let mut modifiers = KeyModifiers::NONE;
+    let mut code = KeyCode::Null;
+
+    if parts.len() >= 2
+        && parts.last().is_some_and(|p| p.is_empty())
+        && parts[parts.len() - 2].is_empty()
+    {
+        code = KeyCode::Char('+');
+        while let Some(last) = parts.last() {
+            if last.is_empty() {
+                parts.pop();
+            } else {
+                break;
+            }
+        }
+    } else if s == "+" {
+        code = KeyCode::Char('+');
+        parts.clear();
+    }
+
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        match part.to_lowercase().as_str() {
+            "ctrl" | "control" => modifiers.insert(KeyModifiers::CONTROL),
+            "alt" => modifiers.insert(KeyModifiers::ALT),
+            "shift" => modifiers.insert(KeyModifiers::SHIFT),
+            key => {
+                code = match key {
+                    "esc" | "escape" => KeyCode::Esc,
+                    "enter" | "return" => KeyCode::Enter,
+                    "tab" => KeyCode::Tab,
+                    "backtab" => KeyCode::BackTab,
+                    "backspace" => KeyCode::Backspace,
+                    "delete" | "del" => KeyCode::Delete,
+                    "insert" | "ins" => KeyCode::Insert,
+                    "home" => KeyCode::Home,
+                    "end" => KeyCode::End,
+                    "pageup" | "pgup" => KeyCode::PageUp,
+                    "pagedown" | "pgdn" => KeyCode::PageDown,
+                    "up" => KeyCode::Up,
+                    "down" => KeyCode::Down,
+                    "left" => KeyCode::Left,
+                    "right" => KeyCode::Right,
+                    "space" => KeyCode::Char(' '),
+                    c if c.len() == 1 => {
+                        let char_code = c.chars().next().unwrap();
+                        if modifiers.contains(KeyModifiers::SHIFT) && char_code.is_ascii_lowercase()
+                        {
+                            KeyCode::Char(char_code.to_ascii_uppercase())
+                        } else if part.len() == 1 {
+                            let original_char = part.chars().next().unwrap();
+                            if original_char.is_ascii_uppercase() {
+                                modifiers.insert(KeyModifiers::SHIFT);
+                            }
+                            KeyCode::Char(original_char)
+                        } else {
+                            KeyCode::Char(char_code)
+                        }
+                    }
+                    f if f.starts_with('f') => {
+                        if let Ok(n) = f[1..].parse::<u8>() {
+                            KeyCode::F(n)
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                };
+            }
+        }
+    }
+
+    if code == KeyCode::Null {
+        return None;
+    }
+
+    Some(KeyEvent::new(code, modifiers))
 }
 
 pub trait HasCommands {
     fn get_commands(&self, registry: &CommandRegistry) -> Vec<Keybind>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn test_parse_simple_char() {
+        assert_eq!(
+            parse_key_event("a"),
+            Some(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE))
+        );
+    }
+
+    #[test]
+    fn test_parse_uppercase_char() {
+        assert_eq!(
+            parse_key_event("A"),
+            Some(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT))
+        );
+    }
+
+    #[test]
+    fn test_parse_ctrl_char() {
+        assert_eq!(
+            parse_key_event("Ctrl+c"),
+            Some(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        );
+    }
+
+    #[test]
+    fn test_parse_shift_char() {
+        assert_eq!(
+            parse_key_event("Shift+a"),
+            Some(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT))
+        );
+    }
+
+    #[test]
+    fn test_parse_plus_key() {
+        assert_eq!(
+            parse_key_event("+"),
+            Some(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE))
+        );
+    }
+
+    #[test]
+    fn test_parse_ctrl_plus() {
+        assert_eq!(
+            parse_key_event("Ctrl++"),
+            Some(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::CONTROL))
+        );
+    }
+
+    #[test]
+    fn test_parse_function_key() {
+        assert_eq!(
+            parse_key_event("F1"),
+            Some(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE))
+        );
+    }
 }

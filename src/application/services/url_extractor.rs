@@ -1,45 +1,3 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_markdown_images() {
-        let content = "Here is an image ![alt text](https://example.com/image.png)";
-        let urls = UrlExtractor::extract_image_urls(content);
-        assert_eq!(urls, vec!["https://example.com/image.png"]);
-    }
-
-    #[test]
-    fn test_extract_direct_images() {
-        let content = "Check this out https://example.com/pic.jpg cool right?";
-        let urls = UrlExtractor::extract_image_urls(content);
-        assert_eq!(urls, vec!["https://example.com/pic.jpg"]);
-    }
-
-    #[test]
-    fn test_extract_mixed_images() {
-        let content = "![img](https://a.com/1.png) and https://b.com/2.jpg";
-        let urls = UrlExtractor::extract_image_urls(content);
-        assert!(urls.contains(&"https://a.com/1.png".to_string()));
-        assert!(urls.contains(&"https://b.com/2.jpg".to_string()));
-        assert_eq!(urls.len(), 2);
-    }
-
-    #[test]
-    fn test_deduplication() {
-        let content = "https://a.com/1.png and https://a.com/1.png";
-        let urls = UrlExtractor::extract_image_urls(content);
-        assert_eq!(urls.len(), 1);
-    }
-
-    #[test]
-    fn test_no_images() {
-        let content = "Just some text with no images.";
-        let urls = UrlExtractor::extract_image_urls(content);
-        assert!(urls.is_empty());
-    }
-}
-
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -94,5 +52,47 @@ impl UrlExtractor {
                     .to_string()
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_markdown_images() {
+        let content = "Here is an image ![alt text](https://example.com/image.png)";
+        let urls = UrlExtractor::extract_image_urls(content);
+        assert_eq!(urls, vec!["https://example.com/image.png"]);
+    }
+
+    #[test]
+    fn test_extract_direct_images() {
+        let content = "Check this out https://example.com/pic.jpg cool right?";
+        let urls = UrlExtractor::extract_image_urls(content);
+        assert_eq!(urls, vec!["https://example.com/pic.jpg"]);
+    }
+
+    #[test]
+    fn test_extract_mixed_images() {
+        let content = "![img](https://a.com/1.png) and https://b.com/2.jpg";
+        let urls = UrlExtractor::extract_image_urls(content);
+        assert!(urls.contains(&"https://a.com/1.png".to_string()));
+        assert!(urls.contains(&"https://b.com/2.jpg".to_string()));
+        assert_eq!(urls.len(), 2);
+    }
+
+    #[test]
+    fn test_deduplication() {
+        let content = "https://a.com/1.png and https://a.com/1.png";
+        let urls = UrlExtractor::extract_image_urls(content);
+        assert_eq!(urls.len(), 1);
+    }
+
+    #[test]
+    fn test_no_images() {
+        let content = "Just some text with no images.";
+        let urls = UrlExtractor::extract_image_urls(content);
+        assert!(urls.is_empty());
     }
 }

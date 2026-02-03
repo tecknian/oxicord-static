@@ -1,0 +1,135 @@
+# Application configuration
+#
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+# Enable mouse support
+mouse = true
+
+# Enable desktop notifications
+enable_desktop_notifications = true
+
+# Disable user colors (monochrome mode)
+disable_user_colors = false
+
+# Editor command to use for file viewing/editing.
+# Overrides $EDITOR environment variable.
+# Examples:
+# editor = "nvim"
+# editor = "code -w"
+# editor = "nano"
+
+[keybindings]
+# Custom keybindings configuration
+# Format: "Key+Modifier" = "Action"
+#
+# Supported Modifiers:
+# - Ctrl (or Control)
+# - Alt
+# - Shift
+#
+# Supported Special Keys:
+# - Esc, Enter, Tab, BackTab, Backspace, Delete, Insert
+# - Home, End, PageUp, PageDown
+# - Up, Down, Left, Right
+# - F1 to F12
+# - Space
+#
+# Examples:
+# "Ctrl+q" = "Quit"
+# "Alt+Enter" = "SendMessage"
+# "Ctrl+k" = "ToggleQuickSwitcher"
+# "Shift+Up" = "ScrollUp"
+
+# --- Available Actions ---
+#
+# General:
+# "Quit"
+# "Logout"
+# "SecureLogout"
+# "ToggleHelp"
+# "ToggleGuildsTree"
+# "ToggleFileExplorer"
+# "ToggleHiddenFiles"
+# "ToggleDisplayName"
+# "ToggleQuickSwitcher"
+# "NextTab"
+# "Cancel"
+#
+# Navigation & Focus:
+# "FocusGuilds"
+# "FocusMessages"
+# "FocusInput"
+# "FocusNext"
+# "FocusPrevious"
+# "NavigateUp"
+# "NavigateDown"
+# "NavigateLeft"
+# "NavigateRight"
+# "Select"
+# "SelectFirst"
+# "SelectLast"
+# "Collapse"
+# "MoveToParent"
+#
+# Scrolling:
+# "ScrollDown"
+# "ScrollUp"
+# "ScrollToTop"
+# "ScrollToBottom"
+#
+# Messages & Chat:
+# "SendMessage"
+# "Reply"
+# "ReplyNoMention"
+# "EditMessage"
+# "DeleteMessage"
+# "CopyContent"
+# "CopyImage"
+# "YankId"
+# "YankUrl"
+# "OpenAttachments"
+# "JumpToReply"
+# "LoadHistory"
+# "ClearSelection"
+#
+# Input:
+# "OpenEditor"
+# "ClearInput"
+# "Paste"
+
+[ui]
+# Group guilds into folders
+group_guilds = false
+
+# Use display name (Global Name) instead of username where available
+use_display_name = true
+
+# Show image previews in chat
+image_preview = true
+
+# Timestamp format string (chrono format)
+timestamp_format = "%H:%M"
+
+# Show typing indicators
+show_typing = true
+
+# Enable TachyonFX animations
+enable_animations = true
+
+# Notification duration in seconds
+notification_duration = 5
+
+[notifications]
+# Enable notifications globally
+enabled = true
+
+# Enable internal TUI notifications
+internal_notifications = true
+
+[theme]
+# Accent color (name or hex code)
+accent_color = "Yellow"
+
+# Theme mode: dark, light, auto
+mode = "dark"

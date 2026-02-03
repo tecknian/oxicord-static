@@ -89,7 +89,10 @@ fn create_app() -> Result<(App, Option<(String, TokenSource)>)> {
         image_preview: config.ui.image_preview,
         timestamp_format: config.ui.timestamp_format.clone(),
         show_typing: config.ui.show_typing,
-        internal_notifications: config.ui.internal_notifications,
+        internal_notifications: config.notifications.internal_notifications,
+        enable_animations: config.ui.enable_animations,
+        editor: config.editor.clone(),
+        keybindings: config.keybindings.clone(),
         notification_duration: config.ui.notification_duration,
         theme,
     };

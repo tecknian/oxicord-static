@@ -1,7 +1,9 @@
 //! Application configuration.
 
+use crate::domain::keybinding::Action;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const APP_NAME: &str = "oxicord";
@@ -82,6 +84,15 @@ pub struct AppConfig {
     #[serde(default)]
     pub disable_user_colors: bool,
 
+    /// Editor command to use for file viewing/editing.
+    /// Overrides $EDITOR environment variable.
+    #[serde(default)]
+    pub editor: Option<String>,
+
+    /// Custom keybindings.
+    #[serde(default)]
+    pub keybindings: HashMap<String, Action>,
+
     /// UI configuration.
     #[serde(default)]
     pub ui: UiConfig,
@@ -119,9 +130,9 @@ pub struct UiConfig {
     #[serde(default = "default_true")]
     pub show_typing: bool,
 
-    /// Enable internal TUI notifications.
+    /// Enable `TachyonFX` animations.
     #[serde(default = "default_true")]
-    pub internal_notifications: bool,
+    pub enable_animations: bool,
 
     /// Notification duration in seconds.
     #[serde(default = "default_notification_duration")]
@@ -136,7 +147,7 @@ impl Default for UiConfig {
             image_preview: true,
             timestamp_format: default_timestamp_format(),
             show_typing: true,
-            internal_notifications: true,
+            enable_animations: true,
             notification_duration: 5,
         }
     }
@@ -148,11 +159,18 @@ pub struct NotificationsConfig {
     /// Enable notifications globally.
     #[serde(default = "default_true")]
     pub enabled: bool,
+
+    /// Enable internal TUI notifications.
+    #[serde(default = "default_true")]
+    pub internal_notifications: bool,
 }
 
 impl Default for NotificationsConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            internal_notifications: true,
+        }
     }
 }
 
@@ -249,6 +267,15 @@ impl AppConfig {
         if let Some(accent_color) = args.accent_color {
             self.theme.accent_color = accent_color;
         }
+        if let Some(show_typing) = args.show_typing {
+            self.ui.show_typing = show_typing;
+        }
+        if let Some(internal_notifications) = args.internal_notifications {
+            self.notifications.internal_notifications = internal_notifications;
+        }
+        if let Some(enable_animations) = args.enable_animations {
+            self.ui.enable_animations = enable_animations;
+        }
     }
 
     /// Returns default config directory.
@@ -294,9 +321,57 @@ impl Default for AppConfig {
             mouse: true,
             enable_desktop_notifications: true,
             disable_user_colors: false,
+            editor: None,
+            keybindings: HashMap::new(),
             ui: UiConfig::default(),
             notifications: NotificationsConfig::default(),
             theme: ThemeConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::keybinding::Action;
+
+    #[test]
+    fn test_parse_config_with_new_fields() {
+        let toml_content = r#"
+            editor = "nvim"
+            
+            [ui]
+            enable_animations = false
+            
+            [notifications]
+            internal_notifications = false
+
+            [keybindings]
+            "Ctrl+q" = "Quit"
+            "Alt+Enter" = "SendMessage"
+        "#;
+
+        let config: AppConfig = toml::from_str(toml_content).expect("Failed to parse config");
+
+        assert_eq!(config.editor, Some("nvim".to_string()));
+        assert!(!config.ui.enable_animations);
+        assert!(!config.notifications.internal_notifications);
+
+        assert_eq!(config.keybindings.len(), 2);
+        assert_eq!(config.keybindings.get("Ctrl+q"), Some(&Action::Quit));
+        assert_eq!(
+            config.keybindings.get("Alt+Enter"),
+            Some(&Action::SendMessage)
+        );
+    }
+
+    #[test]
+    fn test_default_config() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.editor, None);
+        assert!(config.keybindings.is_empty());
+        assert!(config.ui.enable_animations); // default_true
+        assert!(config.notifications.internal_notifications); // default_true
     }
 }

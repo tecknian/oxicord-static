@@ -1,5 +1,8 @@
 //! Main application orchestrator.
 
+use crate::domain::keybinding::Action as KeyAction;
+use crate::presentation::commands::CommandRegistry;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -69,6 +72,9 @@ pub struct AppConfig {
     pub show_typing: bool,
     pub internal_notifications: bool,
     pub notification_duration: u64,
+    pub enable_animations: bool,
+    pub editor: Option<String>,
+    pub keybindings: HashMap<String, KeyAction>,
     pub theme: Theme,
 }
 
@@ -112,6 +118,9 @@ pub struct App {
     timestamp_format: String,
     show_typing: bool,
     internal_notifications: bool,
+    enable_animations: bool,
+    editor: Option<String>,
+    command_registry: CommandRegistry,
     theme: Theme,
     identity: Arc<ClientIdentity>,
     state_store: StateStore,
@@ -151,6 +160,9 @@ impl App {
         let (state_save_tx, mut state_save_rx) =
             mpsc::unbounded_channel::<(Option<GuildId>, Option<ChannelId>)>();
         let store = state_store.clone();
+
+        let mut command_registry = CommandRegistry::new();
+        command_registry.apply_overrides(&config.keybindings);
 
         tokio::spawn(async move {
             const DEBOUNCE_DURATION: Duration = Duration::from_secs(1);
@@ -214,6 +226,9 @@ impl App {
             timestamp_format: config.timestamp_format,
             show_typing: config.show_typing,
             internal_notifications: config.internal_notifications,
+            enable_animations: config.enable_animations,
+            editor: config.editor,
+            command_registry,
             theme: config.theme,
             identity,
             state_store,
@@ -1479,6 +1494,8 @@ impl App {
                     self.image_preview,
                     self.timestamp_format.clone(),
                     self.theme,
+                    self.enable_animations,
+                    self.command_registry.clone(),
                 );
 
                 chat_state.set_connection_status(self.connection_status);
@@ -1838,9 +1855,12 @@ impl App {
         write!(temp_file, "{initial_content}")?;
         let temp_path = temp_file.path().to_owned();
 
-        let editor = std::env::var("EDITOR")
-            .or_else(|_| std::env::var("VISUAL"))
-            .unwrap_or_else(|_| {
+        let editor = self
+            .editor
+            .clone()
+            .or_else(|| std::env::var("EDITOR").ok())
+            .or_else(|| std::env::var("VISUAL").ok())
+            .unwrap_or_else(|| {
                 for editor in &["nvim", "vim", "nano", "vi"] {
                     if std::process::Command::new("which")
                         .arg(editor)
@@ -1863,7 +1883,18 @@ impl App {
             crossterm::cursor::Show
         )?;
 
-        let status = std::process::Command::new(&editor).arg(&temp_path).status();
+        let mut parts = editor.split_whitespace();
+        let status = if let Some(cmd) = parts.next() {
+            std::process::Command::new(cmd)
+                .args(parts)
+                .arg(&temp_path)
+                .status()
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Empty editor command",
+            ))
+        };
 
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(
@@ -2067,6 +2098,9 @@ mod tests {
             timestamp_format: "%H:%M".to_string(),
             show_typing: true,
             internal_notifications: true,
+            enable_animations: true,
+            editor: None,
+            keybindings: std::collections::HashMap::new(),
             notification_duration: 5,
             theme,
         };
