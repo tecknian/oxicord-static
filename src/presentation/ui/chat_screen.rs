@@ -551,6 +551,8 @@ fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer
         image_preview,
     );
 
+    state.update_visible_image_protocols(inner_width);
+
     let style = MessagePaneStyle::from_theme(&state.theme);
     let current_user_id = state.user().id().to_string();
     let (data, pane_state) = state.message_pane_parts_mut();
@@ -665,6 +667,7 @@ pub struct ChatScreenState {
     show_quick_switcher: bool,
     relationship_state: RelationshipState,
     hide_blocked_completely: bool,
+    last_scroll_state: Option<(usize, u16)>,
 }
 
 impl ChatScreenState {
@@ -730,6 +733,7 @@ impl ChatScreenState {
             show_quick_switcher: false,
             relationship_state,
             hide_blocked_completely,
+            last_scroll_state: None,
         }
     }
 
@@ -1968,6 +1972,7 @@ impl ChatScreenState {
     /// Updates image protocols for visible messages.
     /// Should be called before rendering.
     /// Only processes images that need protocol updates.
+    /// Uses a dirty check on scroll position to avoid expensive O(N) iteration.
     pub fn update_visible_image_protocols(&mut self, terminal_width: u16) {
         if self.message_pane_data.is_empty() || !self.image_preview {
             return;
@@ -1975,19 +1980,69 @@ impl ChatScreenState {
 
         self.image_manager.set_width(terminal_width);
 
-        let visible_range = self.calculate_visible_range();
+        let current_scroll = self.message_pane_state.vertical_scroll;
+        let current_height = self.message_pane_state.viewport_height();
+
+        let scroll_changed = self.last_scroll_state != Some((current_scroll, current_height));
+
+        let (visible_start, visible_end) = self.calculate_visible_range();
         let buffer = super::super::widgets::LOAD_BUFFER;
-        let start = visible_range.0.saturating_sub(buffer);
-        let end = (visible_range.1 + buffer).min(self.message_pane_data.message_count());
 
+        let protocol_start = visible_start.saturating_sub(buffer);
+        let protocol_end = visible_end + buffer;
         let picker = self.image_manager.picker();
-
         let mut dirty = false;
-        for idx in start..end {
-            if let Some(ui_msg) = self.message_pane_data.ui_messages_mut().get_mut(idx) {
+
+        if scroll_changed {
+            let memory_buffer = buffer * 3;
+            let keep_start = visible_start.saturating_sub(memory_buffer);
+            let keep_end = visible_end + memory_buffer;
+
+            for (idx, ui_msg) in self
+                .message_pane_data
+                .ui_messages_mut()
+                .iter_mut()
+                .enumerate()
+            {
+                let is_in_protocol_range = idx >= protocol_start && idx <= protocol_end;
+                let is_in_memory_range = idx >= keep_start && idx <= keep_end;
+
                 for attachment in &mut ui_msg.image_attachments {
-                    if attachment.is_ready() && attachment.update_protocol_if_needed(picker) {
-                        dirty = true;
+                    if is_in_protocol_range {
+                        if attachment.is_ready() && attachment.update_protocol_if_needed(picker) {
+                            dirty = true;
+                        }
+                    } else if attachment.protocol.is_some() {
+                        attachment.clear_protocol();
+                    }
+
+                    if !is_in_memory_range && attachment.image.is_some() {
+                        attachment.image = None;
+                        if matches!(
+                            attachment.status,
+                            crate::domain::entities::ImageStatus::Ready
+                        ) {
+                            attachment.status = crate::domain::entities::ImageStatus::NotStarted;
+                        }
+                    }
+                }
+            }
+            self.last_scroll_state = Some((current_scroll, current_height));
+        } else {
+            let max_idx = self.message_pane_data.message_count();
+            let effective_end = protocol_end.min(max_idx);
+            let effective_start = protocol_start.min(max_idx);
+
+            if effective_start < max_idx {
+                let messages = self.message_pane_data.ui_messages_mut();
+                for idx in effective_start..effective_end {
+                    if let Some(ui_msg) = messages.get_mut(idx) {
+                        for attachment in &mut ui_msg.image_attachments {
+                            if attachment.is_ready() && attachment.update_protocol_if_needed(picker)
+                            {
+                                dirty = true;
+                            }
+                        }
                     }
                 }
             }
@@ -1998,7 +2053,6 @@ impl ChatScreenState {
         }
     }
 
-    /// Marks an image as downloading.
     pub fn mark_image_downloading(&mut self, id: &crate::domain::entities::ImageId) {
         for ui_msg in self.message_pane_data.ui_messages_mut() {
             for attachment in &mut ui_msg.image_attachments {
@@ -2009,7 +2063,6 @@ impl ChatScreenState {
         }
     }
 
-    /// Marks an image as failed.
     pub fn mark_image_failed(&mut self, id: &crate::domain::entities::ImageId, error: &str) {
         for ui_msg in self.message_pane_data.ui_messages_mut() {
             for attachment in &mut ui_msg.image_attachments {

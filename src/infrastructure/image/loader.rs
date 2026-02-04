@@ -53,10 +53,16 @@ pub struct ImageLoader {
     memory_cache: Arc<MemoryImageCache>,
     disk_cache: Arc<DiskImageCache>,
     pending_loads: Arc<RwLock<HashSet<ImageId>>>,
-    event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
+    request_tx: mpsc::UnboundedSender<LoaderCommand>,
     config: ImageLoaderConfig,
     http_client: reqwest::Client,
-    semaphore: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+enum LoaderCommand {
+    Load { id: ImageId, url: String },
+    Cancel { id: ImageId },
+    CancelAll,
 }
 
 impl std::fmt::Debug for ImageLoader {
@@ -65,6 +71,17 @@ impl std::fmt::Debug for ImageLoader {
             .field("config", &self.config)
             .finish_non_exhaustive()
     }
+}
+
+/// State for the background worker loop.
+struct WorkerState {
+    memory_cache: Arc<MemoryImageCache>,
+    disk_cache: Arc<DiskImageCache>,
+    pending_loads: Arc<RwLock<HashSet<ImageId>>>,
+    event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
+    http_client: reqwest::Client,
+    semaphore: Arc<Semaphore>,
+    request_rx: mpsc::UnboundedReceiver<LoaderCommand>,
 }
 
 impl ImageLoader {
@@ -84,17 +101,92 @@ impl ImageLoader {
             .build()
             .map_err(|e| CacheError::NetworkError(format!("Failed to create HTTP client: {e}")))?;
 
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_downloads));
+        let pending_loads = Arc::new(RwLock::new(HashSet::new()));
+
+        let worker_state = WorkerState {
+            memory_cache: memory_cache.clone(),
+            disk_cache: disk_cache.clone(),
+            pending_loads: pending_loads.clone(),
+            event_tx: event_tx.clone(),
+            http_client: http_client.clone(),
+            semaphore,
+            request_rx,
+        };
+
+        tokio::spawn(Self::run_worker_loop(worker_state));
 
         Ok(Self {
             memory_cache,
             disk_cache,
-            pending_loads: Arc::new(RwLock::new(HashSet::new())),
-            event_tx,
+            pending_loads,
+            request_tx,
             config,
             http_client,
-            semaphore,
         })
+    }
+
+    /// Worker loop to handle download requests and throttling.
+    async fn run_worker_loop(mut state: WorkerState) {
+        let mut queue: std::collections::VecDeque<(ImageId, String)> =
+            std::collections::VecDeque::new();
+
+        loop {
+            tokio::select! {
+                cmd = state.request_rx.recv() => {
+                    match cmd {
+                        Some(LoaderCommand::Load { id, url }) => {
+                            if !queue.iter().any(|(qid, _)| *qid == id) {
+                                queue.push_front((id, url));
+                            }
+                        }
+                        Some(LoaderCommand::Cancel { id }) => {
+                            queue.retain(|(qid, _)| *qid != id);
+                        }
+                        Some(LoaderCommand::CancelAll) => {
+                            queue.clear();
+                        }
+                        None => break,
+                    }
+                }
+                Ok(permit) = state.semaphore.clone().acquire_owned(), if !queue.is_empty() => {
+                    if let Some((id, url)) = queue.pop_front() {
+                        let handle = ImageLoaderHandle {
+                            memory_cache: state.memory_cache.clone(),
+                            disk_cache: state.disk_cache.clone(),
+                            pending_loads: state.pending_loads.clone(),
+                            event_tx: state.event_tx.clone(),
+                            http_client: state.http_client.clone(),
+                        };
+
+                        tokio::spawn(async move {
+                            {
+                                let mut pending = handle.pending_loads.write().await;
+                                if pending.contains(&id) {
+                                    return;
+                                }
+                                pending.insert(id.clone());
+                            }
+
+                            let result = handle.load_image(&id, &url).await;
+
+                            {
+                                let mut pending = handle.pending_loads.write().await;
+                                pending.remove(&id);
+                            }
+
+                            let event = ImageLoadedEvent {
+                                id: id.clone(),
+                                result,
+                            };
+                            let _ = handle.event_tx.send(event);
+                            drop(permit);
+                        });
+                    }
+                }
+            }
+        }
     }
 
     /// Creates a loader with default configuration.
@@ -169,47 +261,9 @@ impl ImageLoader {
     /// Starts loading an image asynchronously.
     /// The result will be sent via the event channel.
     pub fn load_async(&self, id: ImageId, url: String) {
-        let loader = ImageLoaderHandle {
-            memory_cache: self.memory_cache.clone(),
-            disk_cache: self.disk_cache.clone(),
-            pending_loads: self.pending_loads.clone(),
-            event_tx: self.event_tx.clone(),
-            http_client: self.http_client.clone(),
-            semaphore: self.semaphore.clone(),
-        };
-
-        tokio::spawn(async move {
-            {
-                let mut pending = loader.pending_loads.write().await;
-                if pending.contains(&id) {
-                    trace!(id = %id, "Image already loading, skipping");
-                    return;
-                }
-                pending.insert(id.clone());
-            }
-
-            let Ok(permit) = loader.semaphore.acquire().await else {
-                error!("Semaphore closed, cancelling load");
-                return;
-            };
-
-            let result = loader.load_image(&id, &url).await;
-
-            drop(permit);
-
-            {
-                let mut pending = loader.pending_loads.write().await;
-                pending.remove(&id);
-            }
-
-            let event = ImageLoadedEvent {
-                id: id.clone(),
-                result,
-            };
-            if let Err(e) = loader.event_tx.send(event) {
-                error!(error = %e, "Failed to send image loaded event");
-            }
-        });
+        if let Err(e) = self.request_tx.send(LoaderCommand::Load { id, url }) {
+            error!("Failed to send load request: {}", e);
+        }
     }
 
     /// Prefetches multiple images into cache.
@@ -221,6 +275,12 @@ impl ImageLoader {
 
     /// Cancels a pending load.
     pub async fn cancel(&self, id: &ImageId) {
+        if let Err(e) = self
+            .request_tx
+            .send(LoaderCommand::Cancel { id: id.clone() })
+        {
+            error!("Failed to send cancel request: {}", e);
+        }
         let mut pending = self.pending_loads.write().await;
         pending.remove(id);
         debug!(id = %id, "Cancelled image load");
@@ -228,6 +288,9 @@ impl ImageLoader {
 
     /// Cancels all pending loads.
     pub async fn cancel_all(&self) {
+        if let Err(e) = self.request_tx.send(LoaderCommand::CancelAll) {
+            error!("Failed to send cancel all request: {}", e);
+        }
         let mut pending = self.pending_loads.write().await;
         let count = pending.len();
         pending.clear();
@@ -370,7 +433,6 @@ struct ImageLoaderHandle {
     pending_loads: Arc<RwLock<HashSet<ImageId>>>,
     event_tx: mpsc::UnboundedSender<ImageLoadedEvent>,
     http_client: reqwest::Client,
-    semaphore: Arc<Semaphore>,
 }
 
 impl ImageLoaderHandle {
@@ -417,8 +479,8 @@ impl ImageLoaderHandle {
                 let img = image::load_from_memory(&bytes_clone)
                     .map_err(|e| format!("Decode failed: {e}"))?;
 
-                if img.width() > 800 {
-                    Ok(img.resize(800, 600, image::imageops::FilterType::Lanczos3))
+                if img.width() > 400 {
+                    Ok(img.resize(400, 300, image::imageops::FilterType::Lanczos3))
                 } else {
                     Ok(img)
                 }

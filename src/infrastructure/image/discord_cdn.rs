@@ -1,10 +1,10 @@
 //! Discord CDN URL optimization.
 
 /// Default target width for optimized images.
-pub const DEFAULT_WIDTH: u32 = 800;
+pub const DEFAULT_WIDTH: u32 = 400;
 
 /// Default target height for optimized images.
-pub const DEFAULT_HEIGHT: u32 = 600;
+pub const DEFAULT_HEIGHT: u32 = 300;
 
 /// Optimizes a Discord CDN URL by adding format and size parameters.
 /// This significantly reduces bandwidth usage and RAM consumption.
@@ -136,8 +136,8 @@ mod tests {
         let optimized = optimize_cdn_url_default(url);
 
         assert!(optimized.contains("format=webp"));
-        assert!(optimized.contains("width=800"));
-        assert!(optimized.contains("height=600"));
+        assert!(optimized.contains("width=400"));
+        assert!(optimized.contains("height=300"));
         assert!(optimized.contains("quality=low"));
     }
 
