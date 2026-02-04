@@ -2178,7 +2178,9 @@ impl ChatScreenState {
                 if let Some(guild_channels) = self.guilds_tree_data.channels(guild.id()) {
                     for channel in guild_channels.iter() {
                         let include = match prefix {
-                            SearchPrefix::Text => !channel.kind().is_voice(),
+                            SearchPrefix::Text => {
+                                !channel.kind().is_voice() && !channel.kind().is_thread()
+                            }
                             SearchPrefix::Voice => channel.kind().is_voice(),
                             SearchPrefix::Thread => channel.kind().is_thread(),
                             _ => true,
@@ -2198,29 +2200,38 @@ impl ChatScreenState {
                 }
             }
 
-            for (channel_id, state) in &self.forum_states {
-                if let Some(parent_channel) = self.guilds_tree_data.get_channel(*channel_id) {
-                    let guild_name = parent_channel
-                        .guild_id()
-                        .and_then(|gid| {
-                            self.guilds_tree_data
-                                .guilds()
-                                .iter()
-                                .find(|g| g.id() == gid)
-                        })
-                        .map_or(String::new(), |g| g.name().to_string());
+            if matches!(prefix, SearchPrefix::None | SearchPrefix::Thread) {
+                for (channel_id, state) in &self.forum_states {
+                    if let Some(parent_channel) = self.guilds_tree_data.get_channel(*channel_id) {
+                        let guild_name = parent_channel
+                            .guild_id()
+                            .and_then(|gid| {
+                                self.guilds_tree_data
+                                    .guilds()
+                                    .iter()
+                                    .find(|g| g.id() == gid)
+                            })
+                            .map_or(String::new(), |g| g.name().to_string());
 
-                    let parent_name = parent_channel.name().to_string();
+                        let parent_name = parent_channel.name().to_string();
 
-                    for thread in &state.threads {
-                        if !added_ids.contains(&thread.id) {
-                            let channel =
-                                Channel::new(thread.id, &thread.name, ChannelKind::PublicThread)
-                                    .with_guild(parent_channel.guild_id().unwrap_or(GuildId(0)))
-                                    .with_parent(parent_channel.id());
+                        for thread in &state.threads {
+                            if !added_ids.contains(&thread.id) {
+                                let channel = Channel::new(
+                                    thread.id,
+                                    &thread.name,
+                                    ChannelKind::PublicThread,
+                                )
+                                .with_guild(parent_channel.guild_id().unwrap_or(GuildId(0)))
+                                .with_parent(parent_channel.id());
 
-                            channels.push((guild_name.clone(), channel, Some(parent_name.clone())));
-                            added_ids.insert(thread.id);
+                                channels.push((
+                                    guild_name.clone(),
+                                    channel,
+                                    Some(parent_name.clone()),
+                                ));
+                                added_ids.insert(thread.id);
+                            }
                         }
                     }
                 }

@@ -53,6 +53,7 @@ impl ChannelSearchProvider {
 impl SearchProvider for ChannelSearchProvider {
     async fn search(&self, query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
+        let query_lower = query.to_lowercase();
 
         for (guild_name, channel, parent_name) in &self.channels {
             let search_text = if guild_name.is_empty() {
@@ -73,33 +74,73 @@ impl SearchProvider for ChannelSearchProvider {
                 format!("{} {} {}", guild_name, channel.name(), guild_name)
             };
 
-            if let Some(score) = self.searcher.score(&search_text, query) {
-                let kind = if channel.kind() == ChannelKind::Forum {
-                    SearchKind::Forum
-                } else if channel.kind().is_thread() {
-                    SearchKind::Thread
-                } else if channel.kind().is_voice() {
-                    SearchKind::Voice
-                } else {
-                    SearchKind::Channel
-                };
+            let name_score = self.searcher.score(channel.name(), query);
+            let context_score = self.searcher.score(&search_text, query);
 
-                let mut result = SearchResult::new(channel.id().to_string(), channel.name(), kind)
-                    .with_score(score);
+            let mut score = match (name_score, context_score) {
+                (Some(n), Some(c)) => n + (c / 5),
+                (Some(n), None) => n,
+                (None, Some(c)) => {
+                    let mut hits_name = false;
+                    if query.contains(' ') {
+                        for word in query.split_whitespace() {
+                            if self.searcher.score(channel.name(), word).is_some() {
+                                hits_name = true;
+                                break;
+                            }
+                        }
+                    }
 
-                if !guild_name.is_empty()
-                    && let Some(gid) = channel.guild_id()
-                {
-                    result = result.with_guild(gid.to_string(), guild_name);
+                    if hits_name {
+                        c / 2
+                    } else if channel.kind().is_thread() {
+                        c / 2
+                    } else {
+                        c / 10
+                    }
                 }
+                (None, None) => continue,
+            };
 
-                if let Some(p_name) = parent_name {
-                    result = result.with_parent_name(p_name);
-                }
-
-                results.push(result);
+            if channel.name().eq_ignore_ascii_case(query) {
+                score += 100;
+            } else if channel.name().to_lowercase().starts_with(&query_lower) {
+                score += 20;
             }
+
+            // MIN_SCORE_THRESHOLD
+            if score < 40 {
+                continue;
+            }
+
+            let kind = if channel.kind() == ChannelKind::Forum {
+                SearchKind::Forum
+            } else if channel.kind().is_thread() {
+                SearchKind::Thread
+            } else if channel.kind().is_voice() {
+                SearchKind::Voice
+            } else {
+                SearchKind::Channel
+            };
+
+            let mut result =
+                SearchResult::new(channel.id().to_string(), channel.name(), kind).with_score(score);
+
+            if !guild_name.is_empty()
+                && let Some(gid) = channel.guild_id()
+            {
+                result = result.with_guild(gid.to_string(), guild_name);
+            }
+
+            if let Some(p_name) = parent_name {
+                result = result.with_parent_name(p_name);
+            }
+
+            results.push(result);
         }
+
+        results.sort_by(|a, b| b.score.cmp(&a.score));
+        results.truncate(10);
 
         results
     }
@@ -127,6 +168,7 @@ impl DmSearchProvider {
 impl SearchProvider for DmSearchProvider {
     async fn search(&self, query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
+        let query_lower = query.to_lowercase();
 
         for dm in &self.dms {
             let name = if self.use_display_name {
@@ -137,7 +179,13 @@ impl SearchProvider for DmSearchProvider {
                 &dm.recipient_username
             };
 
-            if let Some(score) = self.searcher.score(name, query) {
+            if let Some(mut score) = self.searcher.score(name, query) {
+                if name.eq_ignore_ascii_case(query) {
+                    score += 100;
+                } else if name.to_lowercase().starts_with(&query_lower) {
+                    score += 20;
+                }
+
                 results.push(
                     SearchResult::new(dm.channel_id.clone(), name, SearchKind::DM)
                         .with_score(score),
@@ -205,5 +253,116 @@ mod tests {
         let results = provider.search("General").await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "cool-thread");
+    }
+}
+
+#[cfg(test)]
+mod scoring {
+    use super::*;
+    use crate::domain::entities::{Channel, ChannelId, ChannelKind};
+    use crate::domain::search::SearchProvider;
+
+    fn create_channel(name: &str, kind: ChannelKind) -> Channel {
+        Channel::new(ChannelId(1), name, kind)
+    }
+
+    #[tokio::test]
+    async fn test_scoring_crash_vs_housekeeping() {
+        let crash = create_channel("crash-course", ChannelKind::Text);
+        let housekeeping = create_channel("house-keeping", ChannelKind::Text);
+
+        let channels = vec![
+            (
+                "Rust Server".to_string(),
+                crash.clone(),
+                Some("General".to_string()),
+            ),
+            (
+                "Rust Server".to_string(),
+                housekeeping.clone(),
+                Some("Crash Reports".to_string()),
+            ),
+        ];
+
+        let provider = ChannelSearchProvider::new(channels);
+        let results = provider.search("crash").await;
+
+        let crash_res = results.iter().find(|r| r.name == "crash-course");
+        assert!(crash_res.is_some());
+
+        let hk_res = results.iter().find(|r| r.name == "house-keeping");
+        assert!(hk_res.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_min_score_threshold() {
+        let crash = create_channel("crash-course", ChannelKind::Text);
+        let random = create_channel("random", ChannelKind::Text);
+
+        let channels = vec![
+            ("Guild".to_string(), crash, None),
+            ("Guild".to_string(), random, None),
+        ];
+
+        let provider = ChannelSearchProvider::new(channels);
+        let results = provider.search("crash").await;
+
+        assert!(results.iter().any(|r| r.name == "crash-course"));
+        assert!(!results.iter().any(|r| r.name == "random"));
+    }
+
+    #[tokio::test]
+    async fn test_result_limit_top_10() {
+        let mut channels = Vec::new();
+        for i in 0..20 {
+            let ch = create_channel(&format!("test-channel-{i}"), ChannelKind::Text);
+            channels.push(("Guild".to_string(), ch, None));
+        }
+
+        let provider = ChannelSearchProvider::new(channels);
+        let results = provider.search("test").await;
+
+        assert_eq!(results.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_multi_word_query_matches_name_partial() {
+        let general = create_channel("general", ChannelKind::Text);
+
+        let channels = vec![(
+            "Noctalia".to_string(),
+            general.clone(),
+            Some("Chat".to_string()),
+        )];
+
+        let provider = ChannelSearchProvider::new(channels);
+        let results = provider.search("noctalia gene").await;
+
+        let res = results.iter().find(|r| r.name == "general");
+        assert!(res.is_some());
+
+        if let Some(r) = res {
+            assert!(r.score > 40);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_multi_word_query_fails_if_name_unmatched() {
+        let hk = create_channel("house-keeping", ChannelKind::Text);
+        let channels = vec![(
+            "Rust Server".to_string(),
+            hk.clone(),
+            Some("Crash Reports".to_string()),
+        )];
+
+        let provider = ChannelSearchProvider::new(channels);
+        let results = provider.search("Rust Crash").await;
+
+        let res = results.iter().find(|r| r.name == "house-keeping");
+        if let Some(r) = res {
+            assert!(r.score < 40);
+        } else {
+            assert!(res.is_none());
+        }
     }
 }
