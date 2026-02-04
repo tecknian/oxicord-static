@@ -375,15 +375,19 @@ pub struct CategoryNode {
 pub struct SortedGuildChannels {
     pub orphans: Vec<Channel>,
     pub categories: Vec<CategoryNode>,
+    pub threads: Vec<Channel>,
 }
 
 impl SortedGuildChannels {
     pub fn iter(&self) -> impl Iterator<Item = &Channel> {
-        self.orphans.iter().chain(
-            self.categories
-                .iter()
-                .flat_map(|cat| std::iter::once(&cat.category).chain(cat.children.iter())),
-        )
+        self.orphans
+            .iter()
+            .chain(
+                self.categories
+                    .iter()
+                    .flat_map(|cat| std::iter::once(&cat.category).chain(cat.children.iter())),
+            )
+            .chain(self.threads.iter())
     }
 }
 
@@ -461,6 +465,7 @@ impl GuildsTreeData {
         );
 
         let mut orphans = Vec::new();
+        let mut threads = Vec::new();
         let mut category_map: std::collections::HashMap<ChannelId, (Channel, Vec<Channel>)> =
             std::collections::HashMap::new();
 
@@ -468,7 +473,9 @@ impl GuildsTreeData {
         let mut potential_children = Vec::new();
 
         for channel in temp_channels {
-            if channel.kind().is_category() {
+            if channel.kind().is_thread() {
+                threads.push(channel);
+            } else if channel.kind().is_category() {
                 category_map.insert(channel.id(), (channel, Vec::new()));
             } else {
                 potential_children.push(channel);
@@ -505,6 +512,7 @@ impl GuildsTreeData {
         };
 
         orphans.sort_by(sort_fn);
+        threads.sort_by(sort_fn);
 
         let mut categories: Vec<CategoryNode> = category_map
             .into_values()
@@ -521,6 +529,7 @@ impl GuildsTreeData {
             SortedGuildChannels {
                 orphans,
                 categories,
+                threads,
             },
         );
     }
@@ -585,6 +594,9 @@ impl GuildsTreeData {
             if sorted.orphans.iter().any(|c| c.id() == channel_id) {
                 return Some(*guild_id);
             }
+            if sorted.threads.iter().any(|c| c.id() == channel_id) {
+                return Some(*guild_id);
+            }
             for cat in &sorted.categories {
                 if cat.category.id() == channel_id {
                     return Some(*guild_id);
@@ -600,6 +612,9 @@ impl GuildsTreeData {
     pub fn get_channel_mut(&mut self, channel_id: ChannelId) -> Option<&mut Channel> {
         for sorted in self.channels_by_guild.values_mut() {
             if let Some(channel) = sorted.orphans.iter_mut().find(|c| c.id() == channel_id) {
+                return Some(channel);
+            }
+            if let Some(channel) = sorted.threads.iter_mut().find(|c| c.id() == channel_id) {
                 return Some(channel);
             }
             for cat in &mut sorted.categories {
@@ -618,6 +633,9 @@ impl GuildsTreeData {
     pub fn get_channel(&self, channel_id: ChannelId) -> Option<&Channel> {
         for sorted in self.channels_by_guild.values() {
             if let Some(channel) = sorted.orphans.iter().find(|c| c.id() == channel_id) {
+                return Some(channel);
+            }
+            if let Some(channel) = sorted.threads.iter().find(|c| c.id() == channel_id) {
                 return Some(channel);
             }
             for cat in &sorted.categories {
@@ -750,6 +768,9 @@ impl GuildsTreeData {
             for channel in &mut sorted.orphans {
                 update_channel(channel);
             }
+            for channel in &mut sorted.threads {
+                update_channel(channel);
+            }
             for cat in &mut sorted.categories {
                 update_channel(&mut cat.category);
                 for channel in &mut cat.children {
@@ -771,6 +792,9 @@ impl GuildsTreeData {
                 };
 
                 for channel in &sorted.orphans {
+                    check_channel(channel);
+                }
+                for channel in &sorted.threads {
                     check_channel(channel);
                 }
                 for cat in &sorted.categories {
@@ -1616,5 +1640,53 @@ mod tests {
 
         println!("Flattened {} nodes in {:?}", nodes.len(), duration);
         assert!(duration < std::time::Duration::from_millis(5));
+    }
+
+    #[test]
+    fn test_thread_exclusion_from_tree() {
+        let mut data = GuildsTreeData::new();
+        let guild_id = GuildId(1);
+        let guild = Guild::new(guild_id, "Test Guild");
+        data.set_guilds(vec![guild]);
+
+        let channels = vec![
+            Channel::new(10_u64, "general", ChannelKind::Text).with_guild(guild_id),
+            Channel::new(20_u64, "thread", ChannelKind::PublicThread)
+                .with_guild(guild_id)
+                .with_parent(10_u64),
+            Channel::new(30_u64, "voice", ChannelKind::Voice).with_guild(guild_id),
+        ];
+
+        data.set_channels(guild_id, channels);
+
+        let sorted = data.channels(guild_id).expect("Should have channels");
+
+        assert!(!sorted.orphans.iter().any(|c| c.kind().is_thread()));
+
+        for cat in &sorted.categories {
+            assert!(!cat.category.kind().is_thread());
+            assert!(!cat.children.iter().any(|c| c.kind().is_thread()));
+        }
+
+        assert!(sorted.threads.iter().any(|c| c.id().as_u64() == 20));
+
+        let mut state = GuildsTreeState::new();
+        state.expand(TreeNodeId::Guild(guild_id));
+
+        let style = GuildsTreeStyle::default();
+        let flattened = data.flatten(&state, 100, &style, true);
+
+        let has_thread_flattened = flattened.iter().any(|node| {
+            if let TreeNodeId::Channel(id) = node.id {
+                id.as_u64() == 20
+            } else {
+                false
+            }
+        });
+
+        assert!(
+            !has_thread_flattened,
+            "Thread should not appear in the flattened tree"
+        );
     }
 }

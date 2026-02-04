@@ -188,17 +188,14 @@ impl ImageLoader {
                 pending.insert(id.clone());
             }
 
-            let _permit = match loader.semaphore.acquire().await {
-                Ok(permit) => permit,
-                Err(_) => {
-                    error!("Semaphore closed, cancelling load");
-                    return;
-                }
+            let Ok(permit) = loader.semaphore.acquire().await else {
+                error!("Semaphore closed, cancelling load");
+                return;
             };
 
             let result = loader.load_image(&id, &url).await;
 
-            drop(_permit);
+            drop(permit);
 
             {
                 let mut pending = loader.pending_loads.write().await;
