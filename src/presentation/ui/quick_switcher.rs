@@ -174,17 +174,27 @@ impl<'a> QuickSwitcherWidget<'a> {
 
                 let name = clean_text(&res.name);
 
-                let left_part_1 = format!(" {:<9} ", type_label);
+                let left_part_1 = format!(" {type_label:<9} ");
                 let left_part_2 = format!(" {icon} ");
                 let left_part_3 = format!(" {name} ");
 
-                let left_len = left_part_1.len() + left_part_2.chars().count() + left_part_3.len();
+                let mut left_len =
+                    left_part_1.len() + left_part_2.chars().count() + left_part_3.len();
 
                 let mut spans = vec![
                     Span::styled(left_part_1, Style::default().fg(Color::DarkGray)),
                     Span::styled(left_part_2, Style::default().fg(self.theme.accent)),
                     Span::styled(left_part_3, Style::default().fg(Color::White)),
                 ];
+
+                if let Some(parent) = &res.parent_name {
+                    let parent_text = format!("({}) ", clean_text(parent));
+                    left_len += parent_text.len();
+                    spans.push(Span::styled(
+                        parent_text,
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
 
                 if let Some(guild_name) = &res.guild_name {
                     let right_part = format!(" {guild_name} ");
@@ -265,10 +275,11 @@ impl Widget for QuickSwitcherWidget<'_> {
         let footer_style = FooterBarStyle::from_theme(self.theme);
 
         let prefixes = [
-            ("*", "Search servers"),
-            ("#", "Search channels"),
-            ("!", "Search voice channels"),
-            ("@", "Search users"),
+            ("*", "Servers"),
+            ("#", "Channels"),
+            ("!", "Voice"),
+            ("@", "Users"),
+            ("^", "Threads"),
         ];
 
         let mut footer_spans = Vec::new();

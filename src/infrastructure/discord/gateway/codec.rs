@@ -180,6 +180,7 @@ impl EventParser {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_ready(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
         let ready: ReadyPayload = serde_json::from_value(data)
             .map_err(|e| GatewayError::serialization(format!("Failed to parse Ready: {e}")))?;
@@ -188,7 +189,7 @@ impl EventParser {
 
         for g in &ready.guilds {
             if let Ok(guild_id) = g.id.parse::<u64>()
-                && !g.channels.is_empty()
+                && (!g.channels.is_empty() || !g.threads.is_empty())
             {
                 let mut channels = Vec::new();
                 for channel_payload in &g.channels {
@@ -220,6 +221,32 @@ impl EventParser {
                         channels.push(channel);
                     }
                 }
+
+                for thread_payload in &g.threads {
+                    if let Ok(id) = thread_payload.id.parse::<u64>() {
+                        let kind = crate::domain::entities::ChannelKind::from(thread_payload.kind);
+                        let name = thread_payload.name.clone().unwrap_or_default();
+
+                        let mut thread =
+                            crate::domain::entities::Channel::new(ChannelId(id), name, kind)
+                                .with_guild(guild_id);
+
+                        if let Some(parent_id) = &thread_payload.parent_id
+                            && let Ok(pid) = parent_id.parse::<u64>()
+                        {
+                            thread = thread.with_parent(pid);
+                        }
+
+                        if let Some(last_message_id) = &thread_payload.last_message_id
+                            && let Ok(lmid) = last_message_id.parse::<u64>()
+                        {
+                            thread = thread.with_last_message_id(Some(lmid.into()));
+                        }
+
+                        channels.push(thread);
+                    }
+                }
+
                 initial_guild_channels.insert(GuildId(guild_id), channels);
             }
         }
@@ -621,11 +648,40 @@ impl EventParser {
             channels.push(channel);
         }
 
+        let mut threads = Vec::new();
+        for thread_payload in payload.threads {
+            let id = thread_payload
+                .id
+                .parse::<u64>()
+                .map_err(|_| GatewayError::protocol("Invalid thread ID"))?;
+
+            let kind = crate::domain::entities::ChannelKind::from(thread_payload.kind);
+            let name = thread_payload.name.unwrap_or_default();
+
+            let mut thread =
+                crate::domain::entities::Channel::new(id, name, kind).with_guild(guild_id);
+
+            if let Some(parent_id) = thread_payload.parent_id
+                && let Ok(pid) = parent_id.parse::<u64>()
+            {
+                thread = thread.with_parent(pid);
+            }
+
+            if let Some(last_message_id) = thread_payload.last_message_id
+                && let Ok(lmid) = last_message_id.parse::<u64>()
+            {
+                thread = thread.with_last_message_id(Some(lmid.into()));
+            }
+
+            threads.push(thread);
+        }
+
         Ok(DispatchEvent::GuildCreate {
             guild_id: GuildId(guild_id),
             name: payload.name,
             unavailable: payload.unavailable,
             channels,
+            threads,
         })
     }
 

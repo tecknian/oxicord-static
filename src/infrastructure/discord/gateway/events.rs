@@ -152,6 +152,7 @@ pub enum DispatchEvent {
         name: String,
         unavailable: bool,
         channels: Vec<Channel>,
+        threads: Vec<Channel>,
     },
     GuildUpdate {
         guild_id: GuildId,

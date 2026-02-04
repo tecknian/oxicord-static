@@ -30,6 +30,7 @@ pub struct SearchResult {
     pub kind: SearchKind,
     pub guild_id: Option<String>,
     pub guild_name: Option<String>,
+    pub parent_name: Option<String>,
     pub score: i64,
 }
 
@@ -41,6 +42,7 @@ impl SearchResult {
             kind,
             guild_id: None,
             guild_name: None,
+            parent_name: None,
             score: 0,
         }
     }
@@ -49,6 +51,12 @@ impl SearchResult {
     pub fn with_guild(mut self, id: impl Into<String>, name: impl Into<String>) -> Self {
         self.guild_id = Some(id.into());
         self.guild_name = Some(name.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_parent_name(mut self, name: impl Into<String>) -> Self {
+        self.parent_name = Some(name.into());
         self
     }
 
@@ -70,6 +78,7 @@ pub enum SearchPrefix {
     User,
     Text,
     Voice,
+    Thread,
     None,
 }
 
@@ -81,6 +90,7 @@ impl SearchPrefix {
             '@' => Some(Self::User),
             '#' => Some(Self::Text),
             '!' => Some(Self::Voice),
+            '^' => Some(Self::Thread),
             _ => None,
         }
     }
@@ -123,4 +133,12 @@ mod tests {
             (SearchPrefix::Guild, "server")
         );
     }
+}
+
+#[test]
+fn test_parse_thread_prefix() {
+    assert_eq!(
+        parse_search_query("^thread"),
+        (SearchPrefix::Thread, "thread")
+    );
 }

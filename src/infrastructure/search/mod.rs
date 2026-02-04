@@ -35,13 +35,13 @@ impl FuzzySearcher {
 
 /// Search provider for Guild Channels.
 pub struct ChannelSearchProvider {
-    channels: Vec<(String, Channel)>,
+    channels: Vec<(String, Channel, Option<String>)>,
     searcher: FuzzySearcher,
 }
 
 impl ChannelSearchProvider {
     #[must_use]
-    pub fn new(channels: Vec<(String, Channel)>) -> Self {
+    pub fn new(channels: Vec<(String, Channel, Option<String>)>) -> Self {
         Self {
             channels,
             searcher: FuzzySearcher::new(),
@@ -54,9 +54,21 @@ impl SearchProvider for ChannelSearchProvider {
     async fn search(&self, query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
 
-        for (guild_name, channel) in &self.channels {
+        for (guild_name, channel, parent_name) in &self.channels {
             let search_text = if guild_name.is_empty() {
-                channel.name().to_string()
+                if let Some(p_name) = parent_name {
+                    format!("{} {}", p_name, channel.name())
+                } else {
+                    channel.name().to_string()
+                }
+            } else if let Some(p_name) = parent_name {
+                format!(
+                    "{} {} {} {}",
+                    guild_name,
+                    p_name,
+                    channel.name(),
+                    guild_name
+                )
             } else {
                 format!("{} {} {}", guild_name, channel.name(), guild_name)
             };
@@ -79,6 +91,10 @@ impl SearchProvider for ChannelSearchProvider {
                     && let Some(gid) = channel.guild_id()
                 {
                     result = result.with_guild(gid.to_string(), guild_name);
+                }
+
+                if let Some(p_name) = parent_name {
+                    result = result.with_parent_name(p_name);
                 }
 
                 results.push(result);
@@ -164,5 +180,30 @@ impl SearchProvider for GuildSearchProvider {
         }
 
         results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::entities::ChannelId;
+    use crate::domain::entities::ChannelKind;
+
+    #[tokio::test]
+    async fn test_search_thread_with_parent() {
+        let thread = Channel::new(ChannelId(1), "cool-thread", ChannelKind::PublicThread);
+        let channels = vec![("Guild A".to_string(), thread, Some("General".to_string()))];
+
+        let provider = ChannelSearchProvider::new(channels);
+
+        let results = provider.search("cool").await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "cool-thread");
+        assert_eq!(results[0].parent_name.as_deref(), Some("General"));
+        assert_eq!(results[0].kind, SearchKind::Thread);
+
+        let results = provider.search("General").await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "cool-thread");
     }
 }

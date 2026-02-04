@@ -1063,15 +1063,19 @@ impl App {
                 name,
                 unavailable,
                 channels,
+                mut threads,
             } => {
                 if !unavailable {
-                    info!(guild_id = %guild_id, name = %name, channel_count = channels.len(), "Guild available");
+                    info!(guild_id = %guild_id, name = %name, channel_count = channels.len(), thread_count = threads.len(), "Guild available");
+                    let mut all_channels = channels;
+                    all_channels.append(&mut threads);
+
                     if let CurrentScreen::Chat(ref mut state) = self.screen {
-                        state.set_channels(guild_id, channels);
+                        state.set_channels(guild_id, all_channels);
                     } else if let Some(ref mut state) = self.pending_chat_state {
-                        state.set_channels(guild_id, channels);
+                        state.set_channels(guild_id, all_channels);
                     } else {
-                        self.pending_channels.insert(guild_id, channels);
+                        self.pending_channels.insert(guild_id, all_channels);
                     }
                 }
             }

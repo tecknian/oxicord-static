@@ -2149,9 +2149,14 @@ impl ChatScreenState {
         let query = query.to_string();
 
         let mut channels = Vec::new();
+        let mut added_ids = std::collections::HashSet::new();
+
         if matches!(
             prefix,
-            SearchPrefix::None | SearchPrefix::Text | SearchPrefix::Voice
+            SearchPrefix::None
+                | SearchPrefix::Text
+                | SearchPrefix::Voice
+                | SearchPrefix::Thread
         ) {
             for guild in self.guilds_tree_data.guilds() {
                 if let Some(guild_channels) = self.guilds_tree_data.channels(guild.id()) {
@@ -2159,16 +2164,53 @@ impl ChatScreenState {
                         let include = match prefix {
                             SearchPrefix::Text => !channel.kind().is_voice(),
                             SearchPrefix::Voice => channel.kind().is_voice(),
+                            SearchPrefix::Thread => channel.kind().is_thread(),
                             _ => true,
                         };
 
                         if include {
-                            channels.push((guild.name().to_string(), channel.clone()));
+                            let mut parent_name = None;
+                            if let Some(pid) = channel.parent_id()
+                                && let Some(parent) = self.guilds_tree_data.get_channel(pid)
+                            {
+                                parent_name = Some(parent.name().to_string());
+                            }
+                            channels.push((guild.name().to_string(), channel.clone(), parent_name));
+                            added_ids.insert(channel.id());
+                        }
+                    }
+                }
+            }
+
+            for (channel_id, state) in &self.forum_states {
+                if let Some(parent_channel) = self.guilds_tree_data.get_channel(*channel_id) {
+                    let guild_name = parent_channel
+                        .guild_id()
+                        .and_then(|gid| {
+                            self.guilds_tree_data
+                                .guilds()
+                                .iter()
+                                .find(|g| g.id() == gid)
+                        })
+                        .map_or(String::new(), |g| g.name().to_string());
+
+                    let parent_name = parent_channel.name().to_string();
+
+                    for thread in &state.threads {
+                        if !added_ids.contains(&thread.id) {
+                            let channel =
+                                Channel::new(thread.id, &thread.name, ChannelKind::PublicThread)
+                                    .with_guild(parent_channel.guild_id().unwrap_or(GuildId(0)))
+                                    .with_parent(parent_channel.id());
+
+                            channels.push((guild_name.clone(), channel, Some(parent_name.clone())));
+                            added_ids.insert(thread.id);
                         }
                     }
                 }
             }
         }
+
 
         let dms = if matches!(prefix, SearchPrefix::None | SearchPrefix::User) {
             self.guilds_tree_data.dm_users().to_vec()
@@ -2191,7 +2233,10 @@ impl ChatScreenState {
                 let mut results = Vec::new();
                 if matches!(
                     prefix,
-                    SearchPrefix::None | SearchPrefix::Text | SearchPrefix::Voice
+                    SearchPrefix::None
+                        | SearchPrefix::Text
+                        | SearchPrefix::Voice
+                        | SearchPrefix::Thread
                 ) {
                     results.extend(channel_provider.search(&query).await);
                 }
@@ -2216,7 +2261,45 @@ impl ChatScreenState {
                     return result;
                 }
             }
-            SearchKind::Channel | SearchKind::Forum | SearchKind::Thread | SearchKind::Voice => {
+            SearchKind::Thread => {
+                let thread_id_val = result.id.parse::<u64>().unwrap_or(0);
+                let thread_channel_id = ChannelId(thread_id_val);
+
+                if let Some(result) = self.on_channel_selected(thread_channel_id) {
+                    return result;
+                }
+
+                let found_thread = self.forum_states.iter().find_map(|(parent_id, state)| {
+                    state
+                        .threads
+                        .iter()
+                        .find(|t| t.id == thread_channel_id)
+                        .map(|t| (*parent_id, t.clone()))
+                });
+
+                if let Some((parent_id, thread)) = found_thread {
+                    let _ = self.on_channel_selected(parent_id);
+
+                    let channel =
+                        Channel::new(thread.id, thread.name.clone(), ChannelKind::PublicThread)
+                            .with_guild(thread.guild_id.unwrap_or(GuildId(0)).as_u64())
+                            .with_parent(parent_id);
+
+                    self.selected_channel = Some(channel.clone());
+                    self.message_pane_data
+                        .set_channel(thread_channel_id, channel.display_name());
+                    self.message_pane_state.on_channel_change();
+                    self.message_input_state.set_has_channel(true);
+                    self.message_input_state.clear();
+                    self.focus_messages_list();
+
+                    return ChatKeyResult::LoadChannelMessages {
+                        channel_id: thread_channel_id,
+                        guild_id: thread.guild_id,
+                    };
+                }
+            }
+            SearchKind::Channel | SearchKind::Forum | SearchKind::Voice => {
                 if let Ok(id) = result.id.parse::<u64>() {
                     let channel_id = ChannelId(id);
                     if let Some(result) = self.on_channel_selected(channel_id) {

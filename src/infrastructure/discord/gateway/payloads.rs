@@ -251,6 +251,8 @@ pub struct ReadyGuild {
     pub unavailable: bool,
     #[serde(default)]
     pub channels: Vec<ChannelPayload>,
+    #[serde(default)]
+    pub threads: Vec<ChannelPayload>,
 }
 
 #[derive(Debug, Deserialize)]
