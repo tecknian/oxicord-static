@@ -209,6 +209,9 @@ pub struct ReadyPayload {
     pub read_state: Vec<ReadStatePayload>,
     #[serde(default)]
     pub user_settings: Option<UserSettingsPayload>,
+    /// User relationships (friends, blocked, pending).
+    #[serde(default)]
+    pub relationships: Vec<RelationshipPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -481,6 +484,22 @@ pub struct VoiceServerUpdatePayload {
     pub token: String,
     pub guild_id: String,
     pub endpoint: Option<String>,
+}
+
+/// Relationship payload from READY event or `RELATIONSHIP_ADD`.
+#[derive(Debug, Deserialize)]
+pub struct RelationshipPayload {
+    /// User ID this relationship is with.
+    pub id: String,
+    /// Relationship type (1 = friend, 2 = blocked, 3 = pending incoming, 4 = pending outgoing).
+    #[serde(rename = "type", default)]
+    pub relationship_type: u8,
+}
+
+/// Relationship remove payload.
+#[derive(Debug, Deserialize)]
+pub struct RelationshipRemovePayload {
+    pub id: String,
 }
 
 fn deserialize_option_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>

@@ -6,6 +6,7 @@ mod guild;
 mod image;
 mod message;
 mod read_state;
+mod relationship;
 mod token;
 mod user;
 mod user_cache;
@@ -23,6 +24,7 @@ pub use message::{
     MessageReference, Reaction, ReactionEmoji,
 };
 pub use read_state::ReadState;
+pub use relationship::{Relationship, RelationshipState, RelationshipType};
 pub use token::AuthToken;
 pub use user::{PremiumType, User, UserFlags, UserId};
 pub use user_cache::{CachedUser, UserCache};

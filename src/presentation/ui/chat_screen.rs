@@ -12,7 +12,7 @@ use crate::application::services::message_content_service::{
 use crate::domain::ConnectionStatus;
 use crate::domain::entities::{
     CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, Message, MessageId,
-    User, UserCache,
+    RelationshipState, User, UserCache,
 };
 use crate::domain::keybinding::{Action, Keybind};
 use crate::domain::ports::DirectMessageChannel;
@@ -539,6 +539,8 @@ fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer
     let disable_user_colors = state.disable_user_colors;
     let image_preview = state.image_preview;
     let timestamp_format = state.timestamp_format.clone();
+    let relationship_state = state.relationship_state.clone();
+    let hide_blocked_completely = state.hide_blocked_completely;
 
     let inner_width = area.width.saturating_sub(2);
     state.message_pane_data.update_layout(
@@ -558,7 +560,9 @@ fn render_message_pane(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer
         .with_disable_user_colors(disable_user_colors)
         .with_image_preview(image_preview)
         .with_timestamp_format(&timestamp_format)
-        .with_current_user_id(current_user_id);
+        .with_current_user_id(current_user_id)
+        .with_relationship_state(&relationship_state)
+        .with_hide_blocked_completely(hide_blocked_completely);
     StatefulWidget::render(pane, area, buf, pane_state);
 }
 
@@ -659,6 +663,8 @@ pub struct ChatScreenState {
     pending_deletion_id: Option<MessageId>,
     quick_switcher: QuickSwitcher,
     show_quick_switcher: bool,
+    relationship_state: RelationshipState,
+    hide_blocked_completely: bool,
 }
 
 impl ChatScreenState {
@@ -676,6 +682,8 @@ impl ChatScreenState {
         theme: Theme,
         enable_animations: bool,
         registry: CommandRegistry,
+        relationship_state: RelationshipState,
+        hide_blocked_completely: bool,
     ) -> Self {
         let mut guilds_tree_state = GuildsTreeState::new();
         guilds_tree_state.set_focused(true);
@@ -720,6 +728,8 @@ impl ChatScreenState {
             pending_deletion_id: None,
             quick_switcher: QuickSwitcher::default(),
             show_quick_switcher: false,
+            relationship_state,
+            hide_blocked_completely,
         }
     }
 
@@ -1143,10 +1153,13 @@ impl ChatScreenState {
 
     #[allow(clippy::too_many_lines)]
     fn handle_messages_list_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) =
-            self.message_pane_state
-                .handle_key(key, &self.message_pane_data, &self.registry)
-        {
+        if let Some(action) = self.message_pane_state.handle_key(
+            key,
+            &self.message_pane_data,
+            &self.registry,
+            Some(&self.relationship_state),
+            self.hide_blocked_completely,
+        ) {
             match action {
                 MessagePaneAction::ClearSelection | MessagePaneAction::SelectMessage(_) => {}
                 MessagePaneAction::Reply {
@@ -1803,6 +1816,12 @@ impl ChatScreenState {
         &mut self.message_pane_data
     }
 
+    /// Marks message data as dirty, forcing a re-render.
+    /// Called when blocked user state changes to update message visibility.
+    pub fn mark_messages_dirty(&mut self) {
+        self.message_pane_data.mark_dirty();
+    }
+
     pub const fn message_pane_parts_mut(
         &mut self,
     ) -> (&mut MessagePaneData, &mut MessagePaneState) {
@@ -2153,10 +2172,7 @@ impl ChatScreenState {
 
         if matches!(
             prefix,
-            SearchPrefix::None
-                | SearchPrefix::Text
-                | SearchPrefix::Voice
-                | SearchPrefix::Thread
+            SearchPrefix::None | SearchPrefix::Text | SearchPrefix::Voice | SearchPrefix::Thread
         ) {
             for guild in self.guilds_tree_data.guilds() {
                 if let Some(guild_channels) = self.guilds_tree_data.channels(guild.id()) {
@@ -2210,7 +2226,6 @@ impl ChatScreenState {
                 }
             }
         }
-
 
         let dms = if matches!(prefix, SearchPrefix::None | SearchPrefix::User) {
             self.guilds_tree_data.dm_users().to_vec()
@@ -2564,6 +2579,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2602,6 +2619,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         let channel_id = ChannelId(1);
@@ -2689,6 +2708,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         let channel_id = ChannelId(1);
@@ -2739,6 +2760,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         let guild = crate::domain::entities::Guild::new(1_u64, "Guild A");
@@ -2781,6 +2804,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2801,6 +2826,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2828,6 +2855,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         assert!(state.is_guilds_tree_visible());
@@ -2850,6 +2879,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
         state.toggle_guilds_tree();
         state.set_focus(ChatFocus::MessagesList);
@@ -2874,6 +2905,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
         let guilds = vec![
             Guild::new(1_u64, "Guild One"),
@@ -2898,6 +2931,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2954,6 +2989,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -3003,6 +3040,8 @@ mod tests {
             Theme::new("Orange", None),
             true,
             CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
         );
 
         state.focus_messages_list();

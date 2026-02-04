@@ -120,6 +120,10 @@ enable_animations = true
 # Notification duration in seconds
 notification_duration = 5
 
+# If true, hide messages from blocked users completely.
+# If false, show a placeholder "[blocked message]" instead.
+hide_blocked_completely = false
+
 [notifications]
 # Enable notifications globally
 enabled = true

@@ -6,7 +6,9 @@ use crate::application::services::markdown_parser::{
     MdBlock, MdInline, MentionResolver, parse_markdown,
 };
 use crate::application::services::url_extractor::UrlExtractor;
-use crate::domain::entities::{ChannelId, Embed, ForumThread, ImageId, Message, MessageId};
+use crate::domain::entities::{
+    ChannelId, Embed, ForumThread, ImageId, Message, MessageId, RelationshipState,
+};
 use crate::domain::keybinding::Action;
 
 use crate::presentation::commands::CommandRegistry;
@@ -55,6 +57,19 @@ pub enum MessageGroup {
     #[default]
     Start,
     Compact,
+}
+
+/// Represents a renderable item in the message list.
+/// Either a single visible message or a collapsed run of blocked messages.
+enum RenderItem {
+    /// A single visible message with its original index.
+    Message { idx: usize },
+    /// A run of consecutive blocked messages.
+    BlockedRun {
+        count: usize,
+        /// Index range [start, end) of blocked messages.
+        start_idx: usize,
+    },
 }
 
 /// UI wrapper for a message with rendering state.
@@ -868,6 +883,67 @@ impl MessagePaneState {
         ));
     }
 
+    /// Navigate to the next visible render item (skips blocked runs as single unit).
+    fn select_next_visible(&mut self, render_items: &[RenderItem], message_count: usize) {
+        if render_items.is_empty() || message_count == 0 {
+            return;
+        }
+
+        self.flags.is_following = false;
+        self.flags.scroll_to_selection = true;
+
+        let current_render_idx = self.find_current_render_item_index(render_items);
+
+        let next_render_idx = match current_render_idx {
+            Some(idx) => (idx + 1).min(render_items.len() - 1),
+            None => render_items.len() - 1,
+        };
+
+        self.selected_index = Some(Self::message_index_for_render_item(
+            &render_items[next_render_idx],
+        ));
+    }
+
+    /// Navigate to the previous visible render item (skips blocked runs as single unit).
+    fn select_previous_visible(&mut self, render_items: &[RenderItem], message_count: usize) {
+        if render_items.is_empty() || message_count == 0 {
+            return;
+        }
+
+        self.flags.is_following = false;
+        self.flags.scroll_to_selection = true;
+
+        let current_render_idx = self.find_current_render_item_index(render_items);
+
+        let prev_render_idx = match current_render_idx {
+            Some(idx) => idx.saturating_sub(1),
+            None => render_items.len() - 1, // Start from last if no selection
+        };
+
+        self.selected_index = Some(Self::message_index_for_render_item(
+            &render_items[prev_render_idx],
+        ));
+    }
+
+    /// Find the render item index containing the current selection.
+    fn find_current_render_item_index(&self, render_items: &[RenderItem]) -> Option<usize> {
+        let selected = self.selected_index?;
+        render_items.iter().position(|item| match item {
+            RenderItem::Message { idx } => *idx == selected,
+            RenderItem::BlockedRun { start_idx, count } => {
+                selected >= *start_idx && selected < *start_idx + *count
+            }
+        })
+    }
+
+    /// Get the representative message index for a render item.
+    fn message_index_for_render_item(item: &RenderItem) -> usize {
+        match item {
+            RenderItem::Message { idx } => *idx,
+            RenderItem::BlockedRun { start_idx, .. } => *start_idx,
+        }
+    }
+
     #[allow(clippy::missing_const_for_fn)]
     pub fn select_first(&mut self) {
         self.flags.is_following = false;
@@ -962,6 +1038,8 @@ impl MessagePaneState {
         key: KeyEvent,
         data: &MessagePaneData,
         registry: &CommandRegistry,
+        relationship_state: Option<&RelationshipState>,
+        hide_blocked_completely: bool,
     ) -> Option<MessagePaneAction> {
         if let ViewMode::Forum(forum_state) = &mut self.view_mode {
             match registry.find_action(key) {
@@ -1008,16 +1086,29 @@ impl MessagePaneState {
 
         let message_count = data.message_count();
 
+        let render_items = build_render_items(
+            data.ui_messages(),
+            relationship_state,
+            hide_blocked_completely,
+        );
+
         match registry.find_action(key) {
             Some(Action::NavigateDown) => {
-                self.select_next(message_count);
+                self.select_next_visible(&render_items, message_count);
                 None
             }
             Some(Action::NavigateUp) => {
-                if self.selected_index == Some(0) {
+                let at_top = self.selected_index.is_none()
+                    || render_items.first().is_some_and(|item| match item {
+                        RenderItem::Message { idx } => self.selected_index == Some(*idx),
+                        RenderItem::BlockedRun { start_idx, count } => self
+                            .selected_index
+                            .is_some_and(|sel| sel >= *start_idx && sel < *start_idx + *count),
+                    });
+                if at_top {
                     return Some(MessagePaneAction::LoadHistory);
                 }
-                self.select_previous(message_count);
+                self.select_previous_visible(&render_items, message_count);
                 None
             }
             Some(Action::ScrollDown) => {
@@ -1181,11 +1272,20 @@ pub struct MessagePaneStyle {
     pub empty_style: Style,
     pub scrollbar_track_style: Style,
     pub scrollbar_thumb_style: Style,
+    pub blocked_style: Style,
 }
 
 impl MessagePaneStyle {
     #[must_use]
     pub fn from_theme(theme: &Theme) -> Self {
+        use crate::presentation::theme::adapter::ColorConverter;
+
+        let accent_hsl = ColorConverter::to_hsl(theme.accent);
+        let mut blocked_hsl = accent_hsl;
+        blocked_hsl.l = 0.35;
+        blocked_hsl.s = (blocked_hsl.s * 0.4).clamp(0.0, 1.0);
+        let blocked_fg = ColorConverter::to_ratatui(blocked_hsl);
+
         Self {
             border_style: Style::default().fg(Color::Gray),
             border_style_focused: Style::default().fg(theme.accent),
@@ -1202,6 +1302,9 @@ impl MessagePaneStyle {
                 .add_modifier(Modifier::ITALIC),
             timestamp_style: Style::default().fg(Color::DarkGray),
             loading_style: Style::default().fg(theme.accent),
+            blocked_style: Style::default()
+                .fg(blocked_fg)
+                .add_modifier(Modifier::ITALIC),
             ..Self::default()
         }
     }
@@ -1241,6 +1344,9 @@ impl Default for MessagePaneStyle {
             empty_style: Style::default().fg(Color::DarkGray),
             scrollbar_track_style: Style::default().fg(Color::DarkGray),
             scrollbar_thumb_style: Style::default().fg(Color::Gray),
+            blocked_style: Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         }
     }
 }
@@ -1254,6 +1360,10 @@ pub struct MessagePane<'a> {
     timestamp_format: &'a str,
     current_user_id: Option<String>,
     markdown_service: &'a MarkdownRenderer,
+    /// Optional reference to relationship state for blocked user filtering.
+    relationship_state: Option<&'a RelationshipState>,
+    /// If true, completely hide blocked messages; if false, show placeholder.
+    hide_blocked_completely: bool,
 }
 
 impl<'a> MessagePane<'a> {
@@ -1267,6 +1377,8 @@ impl<'a> MessagePane<'a> {
             timestamp_format: "%H:%M",
             current_user_id: None,
             markdown_service,
+            relationship_state: None,
+            hide_blocked_completely: false,
         }
     }
 
@@ -1297,6 +1409,20 @@ impl<'a> MessagePane<'a> {
     #[must_use]
     pub fn with_current_user_id(mut self, user_id: impl Into<String>) -> Self {
         self.current_user_id = Some(user_id.into());
+        self
+    }
+
+    /// Sets the relationship state for blocked user filtering.
+    #[must_use]
+    pub const fn with_relationship_state(mut self, state: &'a RelationshipState) -> Self {
+        self.relationship_state = Some(state);
+        self
+    }
+
+    /// Sets whether to completely hide blocked messages (true) or show placeholder (false).
+    #[must_use]
+    pub const fn with_hide_blocked_completely(mut self, hide: bool) -> Self {
+        self.hide_blocked_completely = hide;
         self
     }
 
@@ -1419,6 +1545,8 @@ impl<'a> MessagePane<'a> {
             timestamp_format,
             current_user_id,
             markdown_service,
+            relationship_state,
+            hide_blocked_completely,
         } = self;
 
         match data.loading_state() {
@@ -1473,15 +1601,24 @@ impl<'a> MessagePane<'a> {
             error_para.render(error_area, buf);
         }
 
-        let content_height: usize = data
-            .ui_messages()
+        let render_items = build_render_items(
+            data.ui_messages(),
+            *relationship_state,
+            *hide_blocked_completely,
+        );
+
+        let content_height: usize = render_items
             .iter()
-            .map(|m| m.estimated_height as usize)
+            .map(|item| match item {
+                RenderItem::Message { idx } => data.messages[*idx].estimated_height as usize,
+                RenderItem::BlockedRun { .. } => 1,
+            })
             .sum();
         state.update_dimensions(content_height, inner_area.height);
         state.last_width = inner_area.width;
 
-        let mut offset = state.vertical_scroll;
+        let max_scroll = content_height.saturating_sub(inner_area.height as usize);
+        let mut offset = state.vertical_scroll.min(max_scroll);
 
         if let Some(selected_idx) = state.selected_index
             && state.flags.scroll_to_selection
@@ -1489,9 +1626,18 @@ impl<'a> MessagePane<'a> {
             let mut selection_y_start = 0;
             let mut selection_height = 0;
 
-            for (i, msg) in data.ui_messages().iter().enumerate() {
-                let h = msg.estimated_height as usize;
-                if i == selected_idx {
+            for item in &render_items {
+                let h = match item {
+                    RenderItem::Message { idx } => data.messages[*idx].estimated_height as usize,
+                    RenderItem::BlockedRun { .. } => 1,
+                };
+                let contains_selection = match item {
+                    RenderItem::Message { idx } => *idx == selected_idx,
+                    RenderItem::BlockedRun { start_idx, count } => {
+                        selected_idx >= *start_idx && selected_idx < *start_idx + *count
+                    }
+                };
+                if contains_selection {
                     selection_height = h;
                     break;
                 }
@@ -1514,28 +1660,43 @@ impl<'a> MessagePane<'a> {
         let mut current_y: i32 = 0;
 
         let authors = &data.authors;
-        for (idx, ui_msg) in data.messages.iter_mut().enumerate() {
-            let h = ui_msg.estimated_height as usize;
+        for item in render_items {
+            let h = match &item {
+                RenderItem::Message { idx } => data.messages[*idx].estimated_height as usize,
+                RenderItem::BlockedRun { .. } => 1,
+            };
             let current_y_usize = usize::try_from(current_y).unwrap_or(0);
 
             if current_y_usize + h > offset && current_y_usize < offset + inner_area.height as usize
             {
                 let render_y = current_y - i32::try_from(offset).unwrap_or(0);
-                render_ui_message(
-                    ui_msg,
-                    style,
-                    authors,
-                    idx,
-                    render_y,
-                    inner_area,
-                    buf,
-                    state,
-                    *disable_user_colors,
-                    data.use_display_name,
-                    *image_preview,
-                    timestamp_format,
-                    current_user_id.as_deref(),
-                );
+
+                match item {
+                    RenderItem::BlockedRun { count, start_idx } => {
+                        let is_selected = state
+                            .selected_index
+                            .is_some_and(|sel| sel >= start_idx && sel < start_idx + count);
+                        render_blocked_run(style, render_y, inner_area, buf, is_selected, count);
+                    }
+                    RenderItem::Message { idx } => {
+                        let ui_msg = &mut data.messages[idx];
+                        render_ui_message(
+                            ui_msg,
+                            style,
+                            authors,
+                            idx,
+                            render_y,
+                            inner_area,
+                            buf,
+                            state,
+                            *disable_user_colors,
+                            data.use_display_name,
+                            *image_preview,
+                            timestamp_format,
+                            current_user_id.as_deref(),
+                        );
+                    }
+                }
             }
             current_y += i32::try_from(h).unwrap_or(0);
         }
@@ -1902,6 +2063,77 @@ fn render_embed(embed: &RenderedEmbed, start_y: i32, area: Rect, buf: &mut Buffe
     }
 
     current_y - start_y
+}
+
+fn build_render_items(
+    messages: &VecDeque<UiMessage>,
+    relationship_state: Option<&RelationshipState>,
+    hide_blocked_completely: bool,
+) -> Vec<RenderItem> {
+    let mut items = Vec::new();
+    let mut i = 0;
+
+    while i < messages.len() {
+        let author_id = messages[i].message.author().id().to_string();
+        let is_blocked = relationship_state.is_some_and(|s| s.is_blocked_str(&author_id));
+
+        if is_blocked && hide_blocked_completely {
+            i += 1;
+            continue;
+        }
+
+        if is_blocked {
+            let start_idx = i;
+            let mut count = 0;
+            while i < messages.len() {
+                let aid = messages[i].message.author().id().to_string();
+                let blocked = relationship_state.is_some_and(|s| s.is_blocked_str(&aid));
+                if !blocked {
+                    break;
+                }
+                count += 1;
+                i += 1;
+            }
+            items.push(RenderItem::BlockedRun { count, start_idx });
+        } else {
+            items.push(RenderItem::Message { idx: i });
+            i += 1;
+        }
+    }
+
+    items
+}
+
+fn render_blocked_run(
+    style: &MessagePaneStyle,
+    render_y: i32,
+    area: Rect,
+    buf: &mut Buffer,
+    is_selected: bool,
+    count: usize,
+) {
+    if render_y < 0 || render_y >= i32::from(area.height) {
+        return;
+    }
+
+    let blocked_style = if is_selected {
+        style.selected_style.add_modifier(Modifier::ITALIC)
+    } else {
+        style.blocked_style
+    };
+
+    let text = if count == 1 {
+        "─ 1 blocked ─".to_string()
+    } else {
+        format!("─ {count} blocked ─")
+    };
+
+    let line = Line::from(Span::styled(text, blocked_style));
+    let para = Paragraph::new(line).alignment(Alignment::Center);
+
+    let y = area.y.saturating_add(u16::try_from(render_y).unwrap_or(0));
+    let placeholder_area = Rect::new(area.x, y, area.width, 1);
+    para.render(placeholder_area, buf);
 }
 
 #[allow(
@@ -2729,5 +2961,130 @@ mod tests {
 
         let height = pane.calculate_message_height(&message, 100, &markdown, Color::Yellow);
         assert_eq!(height, 6, "Height should be 6 with padding changes");
+    }
+
+    #[test]
+    fn test_relationship_state_blocks_user() {
+        use crate::domain::entities::{RelationshipState, UserId};
+
+        let state = RelationshipState::new();
+        let user_id = UserId(12345);
+
+        assert!(!state.is_blocked(user_id));
+        assert!(!state.is_blocked_str("12345"));
+
+        state.block_user(user_id);
+        assert!(state.is_blocked(user_id));
+        assert!(state.is_blocked_str("12345"));
+        assert_eq!(state.blocked_count(), 1);
+
+        state.unblock_user(user_id);
+        assert!(!state.is_blocked(user_id));
+        assert_eq!(state.blocked_count(), 0);
+    }
+
+    #[test]
+    fn test_message_pane_with_blocked_user_placeholder() {
+        use crate::domain::entities::{RelationshipState, UserId};
+        use crate::presentation::services::markdown_renderer::MarkdownRenderer;
+        use ratatui::widgets::StatefulWidget;
+
+        let mut data = MessagePaneData::new(true);
+        data.set_channel(ChannelId(100), "general".to_string());
+
+        let blocked_author = MessageAuthor {
+            id: "999".to_string(),
+            username: "blockeduser".to_string(),
+            discriminator: "0".to_string(),
+            avatar: None,
+            bot: false,
+            global_name: None,
+        };
+        let blocked_message = Message::new(
+            1u64.into(),
+            ChannelId(100),
+            blocked_author,
+            "You should not see this".to_string(),
+            Local::now(),
+            crate::domain::entities::MessageKind::Default,
+        );
+        data.set_messages(vec![blocked_message]);
+
+        let relationship_state = RelationshipState::new();
+        relationship_state.block_user(UserId(999));
+
+        let markdown = MarkdownRenderer::new();
+        let pane = MessagePane::new(&mut data, &markdown)
+            .with_relationship_state(&relationship_state)
+            .with_hide_blocked_completely(false); // Show placeholder
+
+        let mut state = MessagePaneState::new();
+        let area = Rect::new(0, 0, 100, 20);
+        let mut buf = Buffer::empty(area);
+
+        pane.render(area, &mut buf, &mut state);
+
+        assert_eq!(data.message_count(), 1);
+    }
+
+    #[test]
+    fn test_message_pane_with_hide_blocked_completely() {
+        use crate::domain::entities::{RelationshipState, UserId};
+        use crate::presentation::services::markdown_renderer::MarkdownRenderer;
+        use ratatui::widgets::StatefulWidget;
+
+        let mut data = MessagePaneData::new(true);
+        data.set_channel(ChannelId(100), "general".to_string());
+
+        let blocked_author = MessageAuthor {
+            id: "999".to_string(),
+            username: "blockeduser".to_string(),
+            discriminator: "0".to_string(),
+            avatar: None,
+            bot: false,
+            global_name: None,
+        };
+        let normal_author = MessageAuthor {
+            id: "123".to_string(),
+            username: "normaluser".to_string(),
+            discriminator: "0".to_string(),
+            avatar: None,
+            bot: false,
+            global_name: None,
+        };
+
+        let blocked_message = Message::new(
+            1u64.into(),
+            ChannelId(100),
+            blocked_author,
+            "Hidden message".to_string(),
+            Local::now(),
+            crate::domain::entities::MessageKind::Default,
+        );
+        let normal_message = Message::new(
+            2u64.into(),
+            ChannelId(100),
+            normal_author,
+            "Visible message".to_string(),
+            Local::now(),
+            crate::domain::entities::MessageKind::Default,
+        );
+        data.set_messages(vec![blocked_message, normal_message]);
+
+        let relationship_state = RelationshipState::new();
+        relationship_state.block_user(UserId(999));
+
+        let markdown = MarkdownRenderer::new();
+        let pane = MessagePane::new(&mut data, &markdown)
+            .with_relationship_state(&relationship_state)
+            .with_hide_blocked_completely(true); // Hide completely
+
+        let mut state = MessagePaneState::new();
+        let area = Rect::new(0, 0, 100, 20);
+        let mut buf = Buffer::empty(area);
+
+        pane.render(area, &mut buf, &mut state);
+
+        assert_eq!(data.message_count(), 2);
     }
 }

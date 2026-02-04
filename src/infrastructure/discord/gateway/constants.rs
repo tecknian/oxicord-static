@@ -90,6 +90,8 @@ pub enum GatewayIntent {
     GuildScheduledEvents = 1 << 16,
     AutoModerationConfiguration = 1 << 20,
     AutoModerationExecution = 1 << 21,
+    UserRelationships = 1 << 22,
+    UserPresence = 1 << 23,
     GuildMessagePolls = 1 << 24,
     DirectMessagePolls = 1 << 25,
 }
@@ -141,6 +143,7 @@ impl GatewayIntents {
             .with(GatewayIntent::DirectMessages)
             .with(GatewayIntent::DirectMessageTyping)
             .with(GatewayIntent::MessageContent)
+            .with(GatewayIntent::UserRelationships)
     }
 
     #[must_use]

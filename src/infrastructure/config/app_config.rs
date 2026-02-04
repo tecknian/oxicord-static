@@ -137,6 +137,10 @@ pub struct UiConfig {
     /// Notification duration in seconds.
     #[serde(default = "default_notification_duration")]
     pub notification_duration: u64,
+
+    /// If true, hide messages from blocked users completely instead of showing a placeholder.
+    #[serde(default)]
+    pub hide_blocked_completely: bool,
 }
 
 impl Default for UiConfig {
@@ -149,6 +153,7 @@ impl Default for UiConfig {
             show_typing: true,
             enable_animations: true,
             notification_duration: 5,
+            hide_blocked_completely: false,
         }
     }
 }

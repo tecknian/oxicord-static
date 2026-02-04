@@ -95,6 +95,7 @@ fn create_app() -> Result<(App, Option<(String, TokenSource)>)> {
         keybindings: config.keybindings.clone(),
         notification_duration: config.ui.notification_duration,
         theme,
+        hide_blocked_completely: config.ui.hide_blocked_completely,
     };
 
     let app = App::new(

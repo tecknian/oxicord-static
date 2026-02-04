@@ -174,9 +174,14 @@ impl EventParser {
             "USER_SETTINGS_UPDATE" => Self::parse_user_settings_update(data),
             "VOICE_STATE_UPDATE" => Self::parse_voice_state_update(data),
             "VOICE_SERVER_UPDATE" => Self::parse_voice_server_update(data),
-            _ => Ok(DispatchEvent::Unknown {
-                event_type: event_type.to_string(),
-            }),
+            "RELATIONSHIP_ADD" | "RELATIONSHIP_UPDATE" => Self::parse_relationship_add(data),
+            "RELATIONSHIP_REMOVE" => Self::parse_relationship_remove(data),
+            _ => {
+                tracing::debug!(event_type = event_type, "Unhandled dispatch event type");
+                Ok(DispatchEvent::Unknown {
+                    event_type: event_type.to_string(),
+                })
+            }
         }
     }
 
@@ -296,6 +301,19 @@ impl EventParser {
             })
             .collect();
 
+        let relationships = ready
+            .relationships
+            .into_iter()
+            .filter_map(|rel| {
+                rel.id.parse::<u64>().ok().map(|id| {
+                    crate::domain::entities::Relationship::new(
+                        crate::domain::entities::UserId(id),
+                        crate::domain::entities::RelationshipType::from(rel.relationship_type),
+                    )
+                })
+            })
+            .collect();
+
         Ok(DispatchEvent::Ready {
             session_id: ready.session_id,
             resume_gateway_url: ready.resume_gateway_url,
@@ -304,6 +322,7 @@ impl EventParser {
             initial_guild_channels,
             read_states,
             guild_folders,
+            relationships,
         })
     }
 
@@ -799,6 +818,43 @@ impl EventParser {
             guild_id,
             endpoint: payload.endpoint,
         })
+    }
+
+    fn parse_relationship_add(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
+        tracing::debug!(raw = %data, "Parsing RELATIONSHIP_ADD");
+        let payload: super::payloads::RelationshipPayload =
+            serde_json::from_value(data).map_err(|e| {
+                GatewayError::serialization(format!("Failed to parse RelationshipAdd: {e}"))
+            })?;
+
+        let user_id = payload
+            .id
+            .parse::<u64>()
+            .map(crate::domain::entities::UserId)
+            .map_err(|_| GatewayError::protocol("Invalid user ID in relationship"))?;
+
+        let relationship_type =
+            crate::domain::entities::RelationshipType::from(payload.relationship_type);
+
+        Ok(DispatchEvent::RelationshipAdd {
+            user_id,
+            relationship_type,
+        })
+    }
+
+    fn parse_relationship_remove(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
+        let payload: super::payloads::RelationshipRemovePayload = serde_json::from_value(data)
+            .map_err(|e| {
+                GatewayError::serialization(format!("Failed to parse RelationshipRemove: {e}"))
+            })?;
+
+        let user_id = payload
+            .id
+            .parse::<u64>()
+            .map(crate::domain::entities::UserId)
+            .map_err(|_| GatewayError::protocol("Invalid user ID in relationship"))?;
+
+        Ok(DispatchEvent::RelationshipRemove { user_id })
     }
 
     fn convert_message_payload(payload: MessagePayload) -> GatewayResult<Message> {

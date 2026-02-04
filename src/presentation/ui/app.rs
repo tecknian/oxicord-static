@@ -20,7 +20,7 @@ use crate::application::services::notification_service::NotificationService;
 use crate::application::use_cases::{LoginUseCase, ResolveTokenUseCase};
 use crate::domain::ConnectionStatus;
 use crate::domain::entities::{
-    AuthToken, Channel, ChannelId, GuildFolder, GuildId, MessageId, UserCache,
+    AuthToken, Channel, ChannelId, GuildFolder, GuildId, MessageId, RelationshipState, UserCache,
 };
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{
@@ -76,6 +76,7 @@ pub struct AppConfig {
     pub editor: Option<String>,
     pub keybindings: HashMap<String, KeyAction>,
     pub theme: Theme,
+    pub hide_blocked_completely: bool,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -129,6 +130,8 @@ pub struct App {
     notification_manager: NotificationManager,
     notification_service: NotificationService,
     last_desktop_notification: Option<Instant>,
+    relationship_state: RelationshipState,
+    hide_blocked_completely: bool,
 }
 
 impl App {
@@ -239,6 +242,8 @@ impl App {
             )),
             notification_service,
             last_desktop_notification: None,
+            relationship_state: RelationshipState::new(),
+            hide_blocked_completely: config.hide_blocked_completely,
         }
     }
 
@@ -1104,10 +1109,18 @@ impl App {
                 mut initial_guild_channels,
                 read_states,
                 guild_folders,
+                relationships,
                 ..
             } => {
-                info!(user_id = %user_id, guild_count = guilds.len(), read_states_count = read_states.len(), "Gateway ready");
+                info!(user_id = %user_id, guild_count = guilds.len(), read_states_count = read_states.len(), relationship_count = relationships.len(), "Gateway ready");
                 self.gateway_ready = true;
+
+                self.relationship_state
+                    .initialize_from_relationships(&relationships);
+                debug!(
+                    blocked_count = self.relationship_state.blocked_count(),
+                    "Initialized relationship state"
+                );
 
                 let read_states_map: std::collections::HashMap<_, _> = read_states
                     .iter()
@@ -1149,6 +1162,24 @@ impl App {
                     state.set_guild_folders(guild_folders);
                 } else if let Some(ref mut state) = self.pending_chat_state {
                     state.set_guild_folders(guild_folders);
+                }
+            }
+            DispatchEvent::RelationshipAdd {
+                user_id,
+                relationship_type,
+            } => {
+                self.relationship_state
+                    .update_relationship(user_id, relationship_type);
+                self.should_render = true;
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.mark_messages_dirty();
+                }
+            }
+            DispatchEvent::RelationshipRemove { user_id } => {
+                self.relationship_state.unblock_user(user_id);
+                self.should_render = true;
+                if let CurrentScreen::Chat(ref mut state) = self.screen {
+                    state.mark_messages_dirty();
                 }
             }
             _ => {}
@@ -1500,6 +1531,8 @@ impl App {
                     self.theme,
                     self.enable_animations,
                     self.command_registry.clone(),
+                    self.relationship_state.clone(),
+                    self.hide_blocked_completely,
                 );
 
                 chat_state.set_connection_status(self.connection_status);
@@ -2107,6 +2140,7 @@ mod tests {
             keybindings: std::collections::HashMap::new(),
             notification_duration: 5,
             theme,
+            hide_blocked_completely: false,
         };
         let app = App::new(auth, data, storage, config, identity);
 
