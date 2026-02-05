@@ -271,7 +271,6 @@ fn render_help_popup(state: &mut ChatScreenState, area: Rect, buf: &mut Buffer) 
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(v_chunks[1]);
 
-    // Data Definition
     let global_bindings = [(
         "GLOBAL",
         vec![
@@ -675,6 +674,15 @@ pub struct ChatScreenState {
 }
 
 impl ChatScreenState {
+    fn is_valid_recent_item(item: &crate::domain::search::RecentItem) -> bool {
+        !(item.id == "0"
+            || item.name.is_empty()
+            || item.name.contains("(Null)")
+            || item.name == "Text Channel"
+            || item.name == "Text Channels"
+            || item.name == "Voice Channels")
+    }
+
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::fn_params_excessive_bools)]
@@ -702,6 +710,11 @@ impl ChatScreenState {
         } else {
             fx::sleep(0)
         };
+
+        let valid_recents: Vec<_> = recents
+            .into_iter()
+            .filter(Self::is_valid_recent_item)
+            .collect();
 
         let mut state = Self {
             user,
@@ -731,7 +744,7 @@ impl ChatScreenState {
             relationship_state,
             hide_blocked_completely,
             last_scroll_state: None,
-            recents: recents.clone(),
+            recents: valid_recents.clone(),
             guilds_tree_visible: true,
             autocomplete_service:
                 crate::application::services::autocomplete_service::AutocompleteService::new(),
@@ -744,7 +757,7 @@ impl ChatScreenState {
             image_manager: crate::presentation::widgets::ImageManager::new(),
         };
 
-        state.quick_switcher.set_recents(recents);
+        state.quick_switcher.set_recents(valid_recents);
         state
     }
 
@@ -763,6 +776,16 @@ impl ChatScreenState {
     }
 
     fn add_recent_item(&mut self, item: crate::domain::search::RecentItem) {
+        if !Self::is_valid_recent_item(&item) {
+            tracing::warn!(
+                "Ignored invalid recent item: {} ({:?}) id={}",
+                item.name,
+                item.kind,
+                item.id
+            );
+            return;
+        }
+
         tracing::info!("Adding recent item: {} ({:?})", item.name, item.kind);
         self.recents
             .retain(|r| !(r.id == item.id && r.kind == item.kind));
@@ -1624,6 +1647,9 @@ impl ChatScreenState {
                 ChannelKind::PublicThread
                 | ChannelKind::PrivateThread
                 | ChannelKind::AnnouncementThread => SearchKind::Thread,
+                ChannelKind::Category => {
+                    return None;
+                }
                 _ => SearchKind::Channel,
             };
 
@@ -2265,20 +2291,6 @@ impl ChatScreenState {
     }
 
     fn handle_quick_switcher_key(&mut self, key: KeyEvent) -> ChatKeyResult {
-        if let Some(action) = self.registry.find_action(key) {
-            match action {
-                Action::NavigateUp => {
-                    self.quick_switcher.select_previous();
-                    return ChatKeyResult::Consumed;
-                }
-                Action::NavigateDown => {
-                    self.quick_switcher.select_next();
-                    return ChatKeyResult::Consumed;
-                }
-                _ => {}
-            }
-        }
-
         match key.code {
             KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quick_switcher.select_previous();
@@ -2514,6 +2526,10 @@ impl ChatScreenState {
             for guild in self.guilds_tree_data.guilds() {
                 if let Some(guild_channels) = self.guilds_tree_data.channels(guild.id()) {
                     for channel in guild_channels.iter() {
+                        if channel.kind() == crate::domain::entities::ChannelKind::Category {
+                            continue;
+                        }
+
                         let include = match prefix {
                             SearchPrefix::Text => {
                                 !channel.kind().is_voice() && !channel.kind().is_thread()
@@ -3387,7 +3403,6 @@ mod tests {
         state.set_channels(guild.id(), vec![channel.clone()]);
         state.on_channel_selected(channel.id());
 
-        // Start in input
         state.focus_message_input();
         let text = "Important draft";
         state.message_input_state.set_content(text);
@@ -3471,5 +3486,204 @@ mod tests {
 
         assert!(matches!(result, ChatKeyResult::ToggleHelp));
         assert!(state.show_help);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_quick_switcher_input_vs_navigation() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
+            QuickSwitcherSortMode::Mixed,
+            vec![],
+        );
+
+        let guild = crate::domain::entities::Guild::new(1_u64, "Guild A");
+        let channel1 = crate::domain::entities::Channel::new(
+            crate::domain::entities::ChannelId(10),
+            "juice",
+            crate::domain::entities::ChannelKind::Text,
+        );
+        let channel2 = crate::domain::entities::Channel::new(
+            crate::domain::entities::ChannelId(11),
+            "jam",
+            crate::domain::entities::ChannelKind::Text,
+        );
+        state.set_guilds(vec![guild.clone()]);
+        state.set_channels(guild.id(), vec![channel1.clone(), channel2.clone()]);
+
+        state.toggle_quick_switcher();
+        assert!(state.show_quick_switcher);
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        state.handle_key(key_j);
+
+        assert_eq!(state.quick_switcher.input, "j");
+        assert_eq!(state.quick_switcher.list_state.selected(), Some(0));
+
+        let key_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        state.handle_key(key_u);
+
+        assert_eq!(state.quick_switcher.input, "ju");
+        assert_eq!(state.quick_switcher.list_state.selected(), Some(0));
+
+        state.quick_switcher.input.clear();
+        state.perform_search("");
+
+        assert!(state.quick_switcher.results.len() >= 2);
+        state.quick_switcher.list_state.select(Some(0));
+
+        let key_ctrl_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        state.handle_key(key_ctrl_j);
+
+        assert_eq!(state.quick_switcher.list_state.selected(), Some(1));
+
+        let key_ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        state.handle_key(key_ctrl_k);
+
+        assert_eq!(state.quick_switcher.list_state.selected(), Some(0));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_search_excludes_categories() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
+            QuickSwitcherSortMode::default(),
+            vec![],
+        );
+
+        let guild = Guild::new(1_u64, "Guild A");
+        let category = Channel::new(ChannelId(100), "Category 1", ChannelKind::Category);
+        let channel =
+            Channel::new(ChannelId(101), "general", ChannelKind::Text).with_parent(100_u64);
+
+        state.set_guilds(vec![guild.clone()]);
+        state.set_channels(guild.id(), vec![category.clone(), channel.clone()]);
+
+        state.toggle_quick_switcher();
+
+        state.perform_search("Category");
+
+        assert!(
+            state.quick_switcher.results.is_empty(),
+            "Categories should be excluded from search results. Found: {:?}",
+            state.quick_switcher.results
+        );
+
+        state.perform_search("general");
+        assert_eq!(state.quick_switcher.results.len(), 1);
+        assert_eq!(state.quick_switcher.results[0].id, "101");
+    }
+
+    #[test]
+    fn test_esc_navigation_void_state() {
+        let mut state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
+            QuickSwitcherSortMode::default(),
+            vec![],
+        );
+
+        let guild = Guild::new(1_u64, "Guild A");
+        let channel = Channel::new(ChannelId(10), "Channel A", ChannelKind::Text);
+
+        state.set_guilds(vec![guild.clone()]);
+        state.set_channels(guild.id(), vec![channel.clone()]);
+
+        state.on_channel_selected(channel.id());
+        assert!(state.selected_channel().is_some());
+
+        let key_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        state.handle_key(key_esc);
+
+        let recents = &state.recents;
+        let null_recent = recents
+            .iter()
+            .find(|r| r.name.contains("Text Channel") && r.id == "0");
+
+        assert!(
+            null_recent.is_none(),
+            "Should not add null channel to recents. Found: {:?}",
+            null_recent
+        );
+
+        if state.selected_channel().is_none() {
+            assert_eq!(state.focus(), ChatFocus::GuildsTree);
+        }
+    }
+
+    #[test]
+    fn test_initial_recents_filtering() {
+        use crate::domain::search::{RecentItem, SearchKind};
+
+        let invalid_item = RecentItem {
+            id: "0".to_string(),
+            name: "Text Channels".to_string(),
+            kind: SearchKind::Channel,
+            guild_id: None,
+            timestamp: 0,
+        };
+
+        let valid_item = RecentItem {
+            id: "123".to_string(),
+            name: "General".to_string(),
+            kind: SearchKind::Channel,
+            guild_id: None,
+            timestamp: 0,
+        };
+
+        let state = ChatScreenState::new(
+            create_test_user(),
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
+            QuickSwitcherSortMode::default(),
+            vec![invalid_item, valid_item],
+        );
+
+        assert_eq!(
+            state.recents.len(),
+            1,
+            "Recents should be filtered on initialization"
+        );
+        assert_eq!(state.recents[0].id, "123");
     }
 }
