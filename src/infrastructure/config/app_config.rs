@@ -101,6 +101,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub notifications: NotificationsConfig,
 
+    /// Quick Switcher sort mode (Recents, Mixed).
+    #[serde(default)]
+    pub quick_switcher_order: QuickSwitcherSortMode,
+
     /// Theme configuration.
     #[serde(default)]
     pub theme: ThemeConfig,
@@ -175,6 +179,24 @@ impl Default for NotificationsConfig {
         Self {
             enabled: true,
             internal_notifications: true,
+        }
+    }
+}
+
+/// Quick Switcher sorting strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum QuickSwitcherSortMode {
+    #[default]
+    Recents,
+    Mixed,
+}
+
+impl std::fmt::Display for QuickSwitcherSortMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Recents => write!(f, "Recents"),
+            Self::Mixed => write!(f, "Mixed"),
         }
     }
 }
@@ -330,6 +352,7 @@ impl Default for AppConfig {
             keybindings: HashMap::new(),
             ui: UiConfig::default(),
             notifications: NotificationsConfig::default(),
+            quick_switcher_order: QuickSwitcherSortMode::default(),
             theme: ThemeConfig::default(),
         }
     }
@@ -361,6 +384,10 @@ mod tests {
         assert_eq!(config.editor, Some("nvim".to_string()));
         assert!(!config.ui.enable_animations);
         assert!(!config.notifications.internal_notifications);
+        assert_eq!(
+            config.quick_switcher_order,
+            QuickSwitcherSortMode::default()
+        );
 
         assert_eq!(config.keybindings.len(), 2);
         assert_eq!(config.keybindings.get("Ctrl+q"), Some(&Action::Quit));

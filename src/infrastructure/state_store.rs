@@ -1,3 +1,5 @@
+use crate::domain::search::RecentItem;
+use crate::infrastructure::config::app_config::QuickSwitcherSortMode;
 use color_eyre::eyre::{Result, WrapErr};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -8,6 +10,10 @@ use tokio::fs;
 pub struct AppState {
     pub last_guild_id: Option<String>,
     pub last_channel_id: Option<String>,
+    #[serde(default)]
+    pub recents: Vec<RecentItem>,
+    #[serde(default)]
+    pub quick_switcher_order: QuickSwitcherSortMode,
 }
 
 #[derive(Clone)]
@@ -70,7 +76,13 @@ impl StateStore {
     /// # Errors
     ///
     /// Returns an error if the config directory cannot be created or if the state file cannot be written.
-    pub async fn save(&self, guild_id: Option<String>, channel_id: Option<String>) -> Result<()> {
+    pub async fn save(
+        &self,
+        guild_id: Option<String>,
+        channel_id: Option<String>,
+        recents: &[RecentItem],
+        sort_mode: QuickSwitcherSortMode,
+    ) -> Result<()> {
         let Some(path) = &self.config_path else {
             return Ok(());
         };
@@ -78,6 +90,8 @@ impl StateStore {
         let state = AppState {
             last_guild_id: guild_id,
             last_channel_id: channel_id,
+            recents: recents.to_vec(),
+            quick_switcher_order: sort_mode,
         };
 
         if let Some(parent) = path.parent() {

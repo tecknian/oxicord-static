@@ -26,6 +26,7 @@ use crate::domain::errors::AuthError;
 use crate::domain::ports::{
     AuthPort, DiscordDataPort, EditMessageRequest, SendMessageRequest, TokenStoragePort,
 };
+use crate::infrastructure::config::app_config::QuickSwitcherSortMode;
 use crate::infrastructure::discord::{
     DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
     GatewayIntents, TypingIndicatorManager, identity::ClientIdentity,
@@ -77,6 +78,7 @@ pub struct AppConfig {
     pub keybindings: HashMap<String, KeyAction>,
     pub theme: Theme,
     pub hide_blocked_completely: bool,
+    pub quick_switcher_order: QuickSwitcherSortMode,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -125,13 +127,20 @@ pub struct App {
     theme: Theme,
     identity: Arc<ClientIdentity>,
     state_store: StateStore,
-    state_save_tx: mpsc::UnboundedSender<(Option<GuildId>, Option<ChannelId>)>,
+    #[allow(clippy::type_complexity)]
+    state_save_tx: mpsc::UnboundedSender<(
+        Option<GuildId>,
+        Option<ChannelId>,
+        Vec<crate::domain::search::RecentItem>,
+        QuickSwitcherSortMode,
+    )>,
     clipboard_service: ClipboardService,
     notification_manager: NotificationManager,
     notification_service: NotificationService,
     last_desktop_notification: Option<Instant>,
     relationship_state: RelationshipState,
     hide_blocked_completely: bool,
+    pub quick_switcher_order: QuickSwitcherSortMode,
 }
 
 impl App {
@@ -139,6 +148,7 @@ impl App {
     ///
     /// Panics if the application state persistence cannot be initialized.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn new(
         auth_port: Arc<dyn AuthPort>,
         discord_data: Arc<dyn DiscordDataPort>,
@@ -160,8 +170,12 @@ impl App {
         tokio::spawn(backend.run());
 
         let state_store = StateStore::new();
-        let (state_save_tx, mut state_save_rx) =
-            mpsc::unbounded_channel::<(Option<GuildId>, Option<ChannelId>)>();
+        let (state_save_tx, mut state_save_rx) = mpsc::unbounded_channel::<(
+            Option<GuildId>,
+            Option<ChannelId>,
+            Vec<crate::domain::search::RecentItem>,
+            QuickSwitcherSortMode,
+        )>();
         let store = state_store.clone();
 
         let mut command_registry = CommandRegistry::new();
@@ -169,7 +183,13 @@ impl App {
 
         tokio::spawn(async move {
             const DEBOUNCE_DURATION: Duration = Duration::from_secs(1);
-            let mut pending_state: Option<(Option<GuildId>, Option<ChannelId>)> = None;
+            type PendingState = (
+                Option<GuildId>,
+                Option<ChannelId>,
+                Vec<crate::domain::search::RecentItem>,
+                QuickSwitcherSortMode,
+            );
+            let mut pending_state: Option<PendingState> = None;
             let mut timer = Box::pin(tokio::time::sleep(Duration::MAX));
 
             loop {
@@ -179,10 +199,10 @@ impl App {
                         timer = Box::pin(tokio::time::sleep(DEBOUNCE_DURATION));
                     }
                     () = &mut timer, if pending_state.is_some() => {
-                        if let Some((guild_id, channel_id)) = pending_state.take() {
+                        if let Some((guild_id, channel_id, recents, sort_mode)) = pending_state.take() {
                             let gid = guild_id.map(|g| g.as_u64().to_string());
                             let cid = channel_id.map(|c| c.as_u64().to_string());
-                            if let Err(e) = store.save(gid, cid).await {
+                            if let Err(e) = store.save(gid, cid, &recents, sort_mode).await {
                                 tracing::warn!("Failed to save state: {e}");
                             }
                         }
@@ -244,6 +264,7 @@ impl App {
             last_desktop_notification: None,
             relationship_state: RelationshipState::new(),
             hide_blocked_completely: config.hide_blocked_completely,
+            quick_switcher_order: config.quick_switcher_order,
         }
     }
 
@@ -421,7 +442,14 @@ impl App {
     }
 
     fn save_state(&self, guild_id: Option<GuildId>, channel_id: Option<ChannelId>) {
-        let _ = self.state_save_tx.send((guild_id, channel_id));
+        let (recents, sort_mode) = if let CurrentScreen::Chat(state) = &self.screen {
+            (state.recents.clone(), state.quick_switcher_sort_mode())
+        } else {
+            (Vec::new(), QuickSwitcherSortMode::default())
+        };
+        let _ = self
+            .state_save_tx
+            .send((guild_id, channel_id, recents, sort_mode));
     }
 
     async fn attempt_auto_login(&mut self, token: String, source: TokenSource) {
@@ -922,6 +950,8 @@ impl App {
                     .last_channel_id
                     .and_then(|id| id.parse::<u64>().ok())
                     .map(ChannelId),
+                recents: state.recents,
+                sort_mode: state.quick_switcher_order,
             });
         });
     }
@@ -1517,6 +1547,8 @@ impl App {
                 initial_channel_id,
                 initial_channels,
                 initial_messages,
+                recents,
+                sort_mode,
             } => {
                 info!("Data loaded, preparing chat state");
                 self.current_user_id = Some(user.id().to_string());
@@ -1533,6 +1565,8 @@ impl App {
                     self.command_registry.clone(),
                     self.relationship_state.clone(),
                     self.hide_blocked_completely,
+                    sort_mode,
+                    recents,
                 );
 
                 chat_state.set_connection_status(self.connection_status);
@@ -2141,6 +2175,7 @@ mod tests {
             notification_duration: 5,
             theme,
             hide_blocked_completely: false,
+            quick_switcher_order: QuickSwitcherSortMode::default(),
         };
         let app = App::new(auth, data, storage, config, identity);
 

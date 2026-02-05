@@ -53,6 +53,7 @@ pub enum Action {
     SecureLogout,
     ToggleDisplayName,
     ToggleQuickSwitcher,
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

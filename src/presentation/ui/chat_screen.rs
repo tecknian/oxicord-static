@@ -16,7 +16,10 @@ use crate::domain::entities::{
 };
 use crate::domain::keybinding::{Action, Keybind};
 use crate::domain::ports::DirectMessageChannel;
-use crate::domain::search::{SearchKind, SearchPrefix, SearchProvider, parse_search_query};
+use crate::domain::search::{
+    SearchKind, SearchPrefix, SearchProvider, SearchResult, parse_search_query,
+};
+use crate::infrastructure::config::app_config::QuickSwitcherSortMode;
 use crate::infrastructure::search::{ChannelSearchProvider, DmSearchProvider, GuildSearchProvider};
 use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::services::markdown_renderer::MarkdownRenderer;
@@ -668,6 +671,7 @@ pub struct ChatScreenState {
     relationship_state: RelationshipState,
     hide_blocked_completely: bool,
     last_scroll_state: Option<(usize, u16)>,
+    pub recents: Vec<crate::domain::search::RecentItem>,
 }
 
 impl ChatScreenState {
@@ -687,6 +691,8 @@ impl ChatScreenState {
         registry: CommandRegistry,
         relationship_state: RelationshipState,
         hide_blocked_completely: bool,
+        quick_switcher_order: QuickSwitcherSortMode,
+        recents: Vec<crate::domain::search::RecentItem>,
     ) -> Self {
         let mut guilds_tree_state = GuildsTreeState::new();
         guilds_tree_state.set_focused(true);
@@ -697,44 +703,53 @@ impl ChatScreenState {
             fx::sleep(0)
         };
 
-        Self {
+        let mut state = Self {
             user,
-            focus: ChatFocus::GuildsTree,
-            guilds_tree_visible: true,
-            guilds_tree_state,
             guilds_tree_data: GuildsTreeData::new(),
-            message_pane_state: MessagePaneState::new(),
+            guilds_tree_state,
             message_pane_data: MessagePaneData::new(use_display_name),
+            message_pane_state: MessagePaneState::new(),
             message_input_state: MessageInputState::new(),
-            autocomplete_service: AutocompleteService::new(),
+            markdown_service,
             user_cache,
+            disable_user_colors,
             selected_guild: None,
             selected_channel: None,
+            focus: ChatFocus::GuildsTree,
+            registry,
             dm_channels: std::collections::HashMap::new(),
             read_states: std::collections::HashMap::new(),
-            connection_status: ConnectionStatus::Disconnected,
-            markdown_service,
-            file_explorer: None,
-            show_file_explorer: false,
             show_help: false,
-            registry,
-            entrance_effect,
-            pending_duration: Duration::ZERO,
-            has_entered: false,
-            image_manager: ImageManager::new(),
-            disable_user_colors,
             use_display_name,
             image_preview,
             timestamp_format,
             theme,
             forum_states: std::collections::HashMap::new(),
             pending_deletion_id: None,
-            quick_switcher: QuickSwitcher::default(),
+            quick_switcher: QuickSwitcher::new(quick_switcher_order),
             show_quick_switcher: false,
             relationship_state,
             hide_blocked_completely,
             last_scroll_state: None,
-        }
+            recents: recents.clone(),
+            guilds_tree_visible: true,
+            autocomplete_service:
+                crate::application::services::autocomplete_service::AutocompleteService::new(),
+            connection_status: crate::domain::ConnectionStatus::Disconnected,
+            file_explorer: Some(crate::presentation::widgets::FileExplorerComponent::new()),
+            show_file_explorer: false,
+            entrance_effect,
+            pending_duration: std::time::Duration::ZERO,
+            has_entered: !enable_animations,
+            image_manager: crate::presentation::widgets::ImageManager::new(),
+        };
+
+        state.quick_switcher.set_recents(recents);
+        state
+    }
+
+    pub fn quick_switcher_sort_mode(&self) -> QuickSwitcherSortMode {
+        self.quick_switcher.sort_mode
     }
 
     pub fn set_use_display_name(&mut self, use_display_name: bool) {
@@ -745,6 +760,15 @@ impl ChatScreenState {
         if self.show_quick_switcher {
             self.perform_search(&self.quick_switcher.input.clone());
         }
+    }
+
+    fn add_recent_item(&mut self, item: crate::domain::search::RecentItem) {
+        tracing::info!("Adding recent item: {} ({:?})", item.name, item.kind);
+        self.recents
+            .retain(|r| !(r.id == item.id && r.kind == item.kind));
+        self.recents.insert(0, item);
+        self.recents.truncate(50);
+        self.quick_switcher.set_recents(self.recents.clone());
     }
 
     pub fn restore_state(
@@ -761,6 +785,8 @@ impl ChatScreenState {
         }
 
         let mut restored = false;
+        let recents_backup = self.recents.clone();
+
         if let Some(cid) = channel_id
             && self.on_channel_selected(cid).is_some()
         {
@@ -776,8 +802,11 @@ impl ChatScreenState {
 
         if !restored && let Some(first_guild) = self.guilds_tree_data.guilds().first() {
             let guild_id = first_guild.id();
-            return self.on_guild_selected(guild_id);
+            let _ = self.on_guild_selected(guild_id);
         }
+
+        self.recents = recents_backup;
+        self.quick_switcher.set_recents(self.recents.clone());
 
         None
     }
@@ -1589,6 +1618,23 @@ impl ChatScreenState {
             self.selected_guild = Some(guild_id);
             self.selected_channel = Some(channel.clone());
 
+            let search_kind = match channel.kind() {
+                ChannelKind::Voice | ChannelKind::StageVoice => SearchKind::Voice,
+                ChannelKind::Forum => SearchKind::Forum,
+                ChannelKind::PublicThread
+                | ChannelKind::PrivateThread
+                | ChannelKind::AnnouncementThread => SearchKind::Thread,
+                _ => SearchKind::Channel,
+            };
+
+            self.add_recent_item(crate::domain::search::RecentItem {
+                id: channel_id.to_string(),
+                name: channel.display_name().clone(),
+                kind: search_kind,
+                guild_id: Some(guild_id.to_string()),
+                timestamp: chrono::Utc::now().timestamp(),
+            });
+
             self.guilds_tree_data.set_active_guild(Some(guild_id));
             self.guilds_tree_data.set_active_channel(Some(channel_id));
             self.guilds_tree_data.set_active_dm_user(None);
@@ -1643,6 +1689,21 @@ impl ChatScreenState {
             return None;
         }
 
+        if let Some(guild) = self
+            .guilds_tree_data
+            .guilds()
+            .iter()
+            .find(|g| g.id() == guild_id)
+        {
+            self.add_recent_item(crate::domain::search::RecentItem {
+                id: guild_id.to_string(),
+                name: guild.name().to_string(),
+                kind: SearchKind::Guild,
+                guild_id: None,
+                timestamp: chrono::Utc::now().timestamp(),
+            });
+        }
+
         self.selected_guild = Some(guild_id);
         self.selected_channel = None;
         self.guilds_tree_data.set_active_channel(None);
@@ -1662,6 +1723,14 @@ impl ChatScreenState {
             } else {
                 return None;
             };
+
+        self.add_recent_item(crate::domain::search::RecentItem {
+            id: dm_channel_id.to_string(),
+            name: recipient_name.clone(),
+            kind: SearchKind::DM,
+            guild_id: None,
+            timestamp: chrono::Utc::now().timestamp(),
+        });
 
         if let Some(rs) = self.read_states.get_mut(&channel_id) {
             rs.mention_count = 0;
@@ -2225,10 +2294,19 @@ impl ChatScreenState {
         match self.quick_switcher.handle_key(key) {
             QuickSwitcherAction::Close => {
                 self.show_quick_switcher = false;
+                self.quick_switcher.reset();
+                self.focus = ChatFocus::GuildsTree;
+                ChatKeyResult::Consumed
+            }
+            QuickSwitcherAction::ToggleSortMode => {
+                self.quick_switcher.toggle_sort_mode();
+                self.perform_search(&self.quick_switcher.input.clone());
                 ChatKeyResult::Consumed
             }
             QuickSwitcherAction::Select(result) => {
                 self.show_quick_switcher = false;
+                self.quick_switcher.reset();
+                self.focus = ChatFocus::GuildsTree;
                 self.jump_to_result(&result)
             }
             QuickSwitcherAction::UpdateSearch(query) => {
@@ -2239,9 +2317,144 @@ impl ChatScreenState {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn perform_search(&mut self, query: &str) {
-        let (prefix, query) = parse_search_query(query);
-        let query = query.to_string();
+        let (prefix, query_text) = parse_search_query(query);
+        let query_text = query_text.to_string();
+
+        if query_text.is_empty() {
+            let mut results = Vec::new();
+
+            if self.quick_switcher.sort_mode == QuickSwitcherSortMode::Recents {
+                results = self
+                    .recents
+                    .iter()
+                    .map(|r| {
+                        let mut res =
+                            SearchResult::new(r.id.clone(), r.name.clone(), r.kind.clone())
+                                .with_score(100);
+
+                        if let Some(gid) = &r.guild_id
+                            && let Ok(id) = gid.parse::<u64>()
+                            && let Some(guild) = self
+                                .guilds_tree_data
+                                .guilds()
+                                .iter()
+                                .find(|g| g.id() == GuildId(id))
+                        {
+                            res = res.with_guild(gid, guild.name());
+                        }
+                        res
+                    })
+                    .collect();
+            } else {
+                for r in &self.recents {
+                    let mut res = SearchResult::new(r.id.clone(), r.name.clone(), r.kind.clone())
+                        .with_score(0);
+
+                    if let Some(gid) = &r.guild_id
+                        && let Ok(id) = gid.parse::<u64>()
+                        && let Some(guild) = self
+                            .guilds_tree_data
+                            .guilds()
+                            .iter()
+                            .find(|g| g.id() == GuildId(id))
+                    {
+                        res = res.with_guild(gid, guild.name());
+                    }
+                    results.push(res);
+                }
+
+                if matches!(prefix, SearchPrefix::None | SearchPrefix::User) {
+                    let dms = self.guilds_tree_data.dm_users();
+                    tracing::debug!("Mixed Mode: Adding {} DMs", dms.len());
+                    for dm in dms {
+                        let name = if self.use_display_name {
+                            dm.recipient_global_name
+                                .as_ref()
+                                .unwrap_or(&dm.recipient_username)
+                        } else {
+                            &dm.recipient_username
+                        };
+                        if !results
+                            .iter()
+                            .any(|r| r.kind == SearchKind::DM && r.id == dm.channel_id)
+                        {
+                            results.push(
+                                SearchResult::new(dm.channel_id.clone(), name, SearchKind::DM)
+                                    .with_score(0),
+                            );
+                        }
+                    }
+                }
+
+                if matches!(prefix, SearchPrefix::None | SearchPrefix::Guild) {
+                    let guilds = self.guilds_tree_data.guilds();
+                    tracing::debug!("Mixed Mode: Adding {} Guilds", guilds.len());
+                    for guild in guilds {
+                        if !results
+                            .iter()
+                            .any(|r| r.kind == SearchKind::Guild && r.id == guild.id().to_string())
+                        {
+                            results.push(
+                                SearchResult::new(
+                                    guild.id().to_string(),
+                                    guild.name(),
+                                    SearchKind::Guild,
+                                )
+                                .with_score(0),
+                            );
+                        }
+                    }
+                }
+
+                if matches!(
+                    prefix,
+                    SearchPrefix::None
+                        | SearchPrefix::Text
+                        | SearchPrefix::Voice
+                        | SearchPrefix::Thread
+                ) {
+                    let channels = self.collect_searchable_channels(prefix);
+                    tracing::debug!("Mixed Mode: Adding {} Channels", channels.len());
+                    for (guild_name, channel, parent_name) in channels {
+                        let mut kind = SearchKind::Channel;
+                        if channel.kind().is_voice() {
+                            kind = SearchKind::Voice;
+                        } else if channel.kind().is_thread() {
+                            kind = SearchKind::Thread;
+                        } else if channel.kind() == crate::domain::entities::ChannelKind::Forum {
+                            kind = SearchKind::Forum;
+                        }
+
+                        let channel_id_str = channel.id().to_string();
+                        if !results
+                            .iter()
+                            .any(|r| r.kind == kind && r.id == channel_id_str)
+                        {
+                            let mut res = SearchResult::new(channel_id_str, channel.name(), kind)
+                                .with_score(0);
+
+                            if let Some(gid) = channel.guild_id() {
+                                res = res.with_guild(gid.to_string(), guild_name);
+                            }
+                            if let Some(pname) = parent_name {
+                                res = res.with_parent_name(pname);
+                            }
+                            results.push(res);
+                        }
+                    }
+                }
+            }
+
+            tracing::debug!(
+                "Empty query search results: {} (Mode: {})",
+                results.len(),
+                self.quick_switcher.sort_mode
+            );
+            self.quick_switcher.set_results(results);
+            return;
+        }
 
         let channels = self.collect_searchable_channels(prefix);
 
@@ -2271,13 +2484,13 @@ impl ChatScreenState {
                         | SearchPrefix::Voice
                         | SearchPrefix::Thread
                 ) {
-                    results.extend(channel_provider.search(&query).await);
+                    results.extend(channel_provider.search(&query_text).await);
                 }
                 if matches!(prefix, SearchPrefix::None | SearchPrefix::User) {
-                    results.extend(dm_provider.search(&query).await);
+                    results.extend(dm_provider.search(&query_text).await);
                 }
                 if matches!(prefix, SearchPrefix::None | SearchPrefix::Guild) {
-                    results.extend(guild_provider.search(&query).await);
+                    results.extend(guild_provider.search(&query_text).await);
                 }
                 results.sort_by(|a, b| b.score.cmp(&a.score));
                 results
@@ -2452,6 +2665,11 @@ impl HasCommands for ChatScreenState {
                 KeyEvent::from(KeyCode::Enter),
                 Action::Select,
                 "Select",
+            ));
+            commands.push(Keybind::new(
+                KeyEvent::from(KeyCode::Tab),
+                Action::None,
+                format!("Sort ({})", self.quick_switcher.sort_mode),
             ));
             commands.push(Keybind::new(
                 KeyEvent::from(KeyCode::Esc),
@@ -2680,6 +2898,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2720,6 +2940,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let channel_id = ChannelId(1);
@@ -2772,6 +2994,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild = crate::domain::entities::Guild::new(1_u64, "Guild A");
@@ -2816,6 +3040,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2845,6 +3071,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         assert!(state.is_guilds_tree_visible());
@@ -2869,6 +3097,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
         state.toggle_guilds_tree();
         state.set_focus(ChatFocus::MessagesList);
@@ -2896,6 +3126,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild_a = Guild::new(1_u64, "Guild A");
@@ -2954,6 +3186,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         assert_eq!(state.focus(), ChatFocus::GuildsTree);
@@ -2989,6 +3223,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         state.focus_messages_list();
@@ -3023,6 +3259,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let commands = state.get_message_input_commands(&state.registry);
@@ -3050,6 +3288,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild = Guild::new(1_u64, "Guild A");
@@ -3090,6 +3330,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild = Guild::new(1_u64, "Guild A");
@@ -3135,6 +3377,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild = Guild::new(1_u64, "Guild A");
@@ -3176,6 +3420,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild = Guild::new(1_u64, "Guild A");
@@ -3208,6 +3454,8 @@ mod tests {
             CommandRegistry::default(),
             RelationshipState::new(),
             false,
+            QuickSwitcherSortMode::default(),
+            vec![],
         );
 
         let guild = Guild::new(1_u64, "Guild A");

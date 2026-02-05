@@ -12,6 +12,10 @@ enable_desktop_notifications = true
 # Disable user colors (monochrome mode)
 disable_user_colors = false
 
+# Quick Switcher default sort mode
+# Options: "recents", "mixed"
+quick_switcher_order = "recents"
+
 # Editor command to use for file viewing/editing.
 # Overrides $EDITOR environment variable.
 # Examples:

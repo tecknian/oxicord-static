@@ -1,6 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchKind {
     DM,
     Channel,
@@ -23,7 +24,7 @@ impl fmt::Display for SearchKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchResult {
     pub id: String,
     pub name: String,
@@ -105,6 +106,28 @@ pub fn parse_search_query(query: &str) -> (SearchPrefix, &str) {
         return (prefix, trimmed[1..].trim());
     }
     (SearchPrefix::None, trimmed)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentItem {
+    pub id: String,
+    pub name: String,
+    pub kind: SearchKind,
+    pub guild_id: Option<String>,
+    pub timestamp: i64,
+}
+
+impl RecentItem {
+    #[must_use]
+    pub fn new(result: &SearchResult) -> Self {
+        Self {
+            id: result.id.clone(),
+            name: result.name.clone(),
+            kind: result.kind.clone(),
+            guild_id: result.guild_id.clone(),
+            timestamp: chrono::Utc::now().timestamp(),
+        }
+    }
 }
 
 #[cfg(test)]

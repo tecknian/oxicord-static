@@ -96,6 +96,7 @@ fn create_app() -> Result<(App, Option<(String, TokenSource)>)> {
         notification_duration: config.ui.notification_duration,
         theme,
         hide_blocked_completely: config.ui.hide_blocked_completely,
+        quick_switcher_order: config.quick_switcher_order,
     };
 
     let app = App::new(
