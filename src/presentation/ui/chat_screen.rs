@@ -11,18 +11,20 @@ use crate::application::services::message_content_service::{
 };
 use crate::domain::ConnectionStatus;
 use crate::domain::entities::{
-    CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, Message, MessageId,
-    RelationshipState, User, UserCache,
+    CachedUser, Channel, ChannelId, ChannelKind, Guild, GuildFolder, GuildId, Member, Message,
+    MessageId, Permissions, RelationshipState, Role, User, UserCache,
 };
 use crate::domain::keybinding::{Action, Keybind};
 use crate::domain::ports::DirectMessageChannel;
 use crate::domain::search::{
     SearchKind, SearchPrefix, SearchProvider, SearchResult, parse_search_query,
 };
+use crate::domain::services::permission_calculator::PermissionCalculator;
 use crate::infrastructure::config::app_config::QuickSwitcherSortMode;
 use crate::infrastructure::search::{ChannelSearchProvider, DmSearchProvider, GuildSearchProvider};
 use crate::presentation::commands::{CommandRegistry, HasCommands};
 use crate::presentation::services::markdown_renderer::MarkdownRenderer;
+
 use crate::presentation::theme::Theme;
 use crate::presentation::ui::quick_switcher::{
     QuickSwitcher, QuickSwitcherAction, QuickSwitcherWidget,
@@ -671,6 +673,11 @@ pub struct ChatScreenState {
     hide_blocked_completely: bool,
     last_scroll_state: Option<(usize, u16)>,
     pub recents: Vec<crate::domain::search::RecentItem>,
+
+    // Permission related state
+    guild_roles: std::collections::HashMap<GuildId, Vec<Role>>,
+    guild_members: std::collections::HashMap<GuildId, Member>,
+    raw_channels: std::collections::HashMap<GuildId, Vec<Channel>>,
 }
 
 impl ChatScreenState {
@@ -755,6 +762,9 @@ impl ChatScreenState {
             pending_duration: std::time::Duration::ZERO,
             has_entered: !enable_animations,
             image_manager: crate::presentation::widgets::ImageManager::new(),
+            guild_roles: std::collections::HashMap::new(),
+            guild_members: std::collections::HashMap::new(),
+            raw_channels: std::collections::HashMap::new(),
         };
 
         state.quick_switcher.set_recents(valid_recents);
@@ -891,8 +901,83 @@ impl ChatScreenState {
         self.guilds_tree_data.set_group_guilds(group);
     }
 
+    pub fn set_guild_data(
+        &mut self,
+        guild_id: GuildId,
+        roles: Vec<Role>,
+        mut members: Vec<Member>,
+    ) {
+        self.guild_roles.insert(guild_id, roles);
+
+        // Find the member corresponding to self.user.id
+        if let Some(member) = members
+            .iter_mut()
+            .find(|m| m.user_id() == Some(self.user.id()))
+        {
+            self.guild_members.insert(guild_id, member.clone());
+        }
+    }
+
     pub fn set_channels(&mut self, guild_id: GuildId, channels: Vec<Channel>) {
-        self.guilds_tree_data.set_channels(guild_id, channels);
+        self.raw_channels.insert(guild_id, channels);
+        let Some(channels_ref) = self.raw_channels.get(&guild_id) else {
+            return;
+        };
+
+        let channel_map: std::collections::HashMap<ChannelId, &Channel> =
+            channels_ref.iter().map(|c| (c.id(), c)).collect();
+
+        let member = self.guild_members.get(&guild_id);
+        let guild_roles = self.guild_roles.get(&guild_id).map(|v| v.as_slice());
+
+        let mut visible_ids = std::collections::HashSet::new();
+        for c in channels_ref {
+            let perms = if let (Some(member), Some(roles)) = (member, guild_roles) {
+                let mut perms =
+                    PermissionCalculator::compute_permissions(guild_id.as_u64(), c, member, roles);
+
+                if c.kind().is_thread()
+                    && let Some(parent_id) = c.parent_id()
+                    && let Some(parent) = channel_map.get(&parent_id)
+                {
+                    perms = PermissionCalculator::compute_permissions(
+                        guild_id.as_u64(),
+                        parent,
+                        member,
+                        roles,
+                    );
+                }
+                perms
+            } else {
+                Permissions::empty()
+            };
+
+            if perms.contains(Permissions::VIEW_CHANNEL) {
+                visible_ids.insert(c.id());
+            }
+        }
+
+        let visible_channels: Vec<Channel> = channels_ref
+            .iter()
+            .filter(|c| {
+                if !visible_ids.contains(&c.id()) {
+                    return false;
+                }
+
+                if let Some(parent_id) = c.parent_id()
+                    && let Some(parent) = channel_map.get(&parent_id)
+                    && parent.kind().is_category()
+                    && !visible_ids.contains(&parent_id)
+                {
+                    return false;
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        self.guilds_tree_data
+            .set_channels(guild_id, visible_channels);
         self.recalculate_all_unread();
     }
 
@@ -2893,7 +2978,38 @@ impl ChatScreenState {
 #[cfg(not(windows))]
 mod tests {
     use super::*;
+    use crate::domain::entities::RoleId;
     use test_case::test_case;
+
+    fn setup_permissive_guild_data(state: &mut ChatScreenState, guild_id: GuildId) {
+        let user = state.user().clone();
+        let role = Role {
+            id: RoleId(guild_id.as_u64()), // @everyone has same ID as guild
+            name: "@everyone".to_string(),
+            permissions: Permissions::all(), // Allow everything
+            color: 0,
+            hoist: false,
+            icon: None,
+            unicode_emoji: None,
+            position: 0,
+            managed: false,
+            mentionable: false,
+        };
+        let member = Member {
+            user: Some(user),
+            roles: vec![],
+            nick: None,
+            avatar: None,
+            joined_at: String::new(),
+            premium_since: None,
+            deaf: false,
+            mute: false,
+            pending: false,
+            permissions: None,
+            communication_disabled_until: None,
+        };
+        state.set_guild_data(guild_id, vec![role], vec![member]);
+    }
 
     fn create_test_user() -> User {
         User::new("123", "testuser", "0", None, false, None)
@@ -2922,6 +3038,7 @@ mod tests {
         let channel_a1 = Channel::new(ChannelId(10), "Channel A1", ChannelKind::Text);
 
         state.set_guilds(vec![guild_a.clone()]);
+        setup_permissive_guild_data(&mut state, guild_a.id());
         state.set_channels(guild_a.id(), vec![channel_a1.clone()]);
 
         state.on_guild_selected(guild_a.id());
@@ -3022,6 +3139,7 @@ mod tests {
         );
 
         state.set_guilds(vec![guild.clone()]);
+        setup_permissive_guild_data(&mut state, guild.id());
         state.set_channels(guild.id(), vec![channel.clone()]);
 
         state.on_channel_selected(channel.id());
@@ -3152,6 +3270,8 @@ mod tests {
         let channel_b = Channel::new(ChannelId(20), "Channel B1", ChannelKind::Text);
 
         state.set_guilds(vec![guild_a.clone(), guild_b.clone()]);
+        setup_permissive_guild_data(&mut state, guild_a.id());
+        setup_permissive_guild_data(&mut state, guild_b.id());
         state.set_channels(guild_a.id(), vec![channel_a.clone()]);
         state.set_channels(guild_b.id(), vec![channel_b.clone()]);
 
@@ -3187,6 +3307,230 @@ mod tests {
     }
 
     #[test]
+    fn test_permission_filtering_public_channel() {
+        let user = create_test_user();
+        let mut state = create_test_state(user.clone());
+        let guild_id = GuildId(1);
+        let channel = Channel::new(ChannelId(10), "public", ChannelKind::Text).with_guild(guild_id);
+
+        // Setup @everyone role with VIEW_CHANNEL (default)
+        let everyone_role = Role {
+            id: RoleId(1),
+            name: "@everyone".to_string(),
+            color: 0,
+            hoist: false,
+            icon: None,
+            unicode_emoji: None,
+            position: 0,
+            permissions: Permissions::VIEW_CHANNEL,
+            managed: false,
+            mentionable: false,
+        };
+
+        let member = Member {
+            user: Some(user.clone()),
+            nick: None,
+            avatar: None,
+            roles: vec![],
+            joined_at: String::new(),
+            premium_since: None,
+            deaf: false,
+            mute: false,
+            pending: false,
+            permissions: None,
+            communication_disabled_until: None,
+        };
+
+        state.set_guild_data(guild_id, vec![everyone_role], vec![member]);
+        state.set_channels(guild_id, vec![channel.clone()]);
+
+        assert!(state.guilds_tree_data.get_channel(channel.id()).is_some());
+    }
+
+    #[test]
+    fn test_permission_filtering_private_channel_denied() {
+        let user = create_test_user();
+        let mut state = create_test_state(user.clone());
+        let guild_id = GuildId(1);
+        let channel =
+            Channel::new(ChannelId(10), "private", ChannelKind::Text).with_guild(guild_id);
+
+        // Setup @everyone role with VIEW_CHANNEL DENIED
+        let everyone_role = Role {
+            id: RoleId(1),
+            name: "@everyone".to_string(),
+            color: 0,
+            hoist: false,
+            icon: None,
+            unicode_emoji: None,
+            position: 0,
+            permissions: Permissions::empty(), // No VIEW_CHANNEL
+            managed: false,
+            mentionable: false,
+        };
+
+        let member = Member {
+            user: Some(user.clone()),
+            nick: None,
+            avatar: None,
+            roles: vec![],
+            joined_at: String::new(),
+            premium_since: None,
+            deaf: false,
+            mute: false,
+            pending: false,
+            permissions: None,
+            communication_disabled_until: None,
+        };
+
+        state.set_guild_data(guild_id, vec![everyone_role], vec![member]);
+        state.set_channels(guild_id, vec![channel.clone()]);
+
+        assert!(state.guilds_tree_data.get_channel(channel.id()).is_none());
+    }
+
+    #[test]
+    fn test_permission_filtering_role_access() {
+        let user = create_test_user();
+        let mut state = create_test_state(user.clone());
+        let guild_id = GuildId(1);
+        let channel =
+            Channel::new(ChannelId(10), "restricted", ChannelKind::Text).with_guild(guild_id);
+
+        // @everyone denied
+        let everyone_role = Role {
+            id: RoleId(1),
+            name: "@everyone".to_string(),
+            permissions: Permissions::empty(),
+            ..create_dummy_role(1)
+        };
+
+        // Member role allowed
+        let member_role = Role {
+            id: RoleId(2),
+            name: "Member".to_string(),
+            permissions: Permissions::VIEW_CHANNEL,
+            ..create_dummy_role(2)
+        };
+
+        let member = Member {
+            user: Some(user.clone()),
+            roles: vec![RoleId(2)],
+            ..create_dummy_member()
+        };
+
+        state.set_guild_data(guild_id, vec![everyone_role, member_role], vec![member]);
+        state.set_channels(guild_id, vec![channel.clone()]);
+
+        assert!(state.guilds_tree_data.get_channel(channel.id()).is_some());
+    }
+
+    #[test]
+    fn test_permission_filtering_strict_category_pruning() {
+        let user = create_test_user();
+        let mut state = create_test_state(user.clone());
+        let guild_id = GuildId(1);
+
+        let category = Channel::new(ChannelId(100), "Hidden Category", ChannelKind::Category)
+            .with_guild(guild_id);
+
+        let child = Channel::new(ChannelId(101), "Visible Child", ChannelKind::Text)
+            .with_guild(guild_id)
+            .with_parent(ChannelId(100));
+
+        // @everyone denied VIEW_CHANNEL base
+        let everyone_role = Role {
+            id: RoleId(1),
+            permissions: Permissions::empty(),
+            ..create_dummy_role(1)
+        };
+
+        // Child has overwrite allowing VIEW_CHANNEL for @everyone
+        // But Category does NOT.
+        let child =
+            child.with_permission_overwrites(vec![crate::domain::entities::PermissionOverwrite {
+                id: "1".to_string(), // @everyone
+                overwrite_type: crate::domain::entities::OverwriteType::Role,
+                allow: Permissions::VIEW_CHANNEL.bits().to_string(),
+                deny: "0".to_string(),
+            }]);
+
+        let member = create_dummy_member_with_user(user);
+
+        state.set_guild_data(guild_id, vec![everyone_role], vec![member]);
+        state.set_channels(guild_id, vec![category.clone(), child.clone()]);
+
+        // Category is hidden (base permissions empty, no overwrite).
+        // Child is technically visible (overwrite allows).
+        // BUT strict pruning means if category is hidden, child is hidden.
+
+        assert!(
+            state.guilds_tree_data.get_channel(category.id()).is_none(),
+            "Category should be hidden"
+        );
+        assert!(
+            state.guilds_tree_data.get_channel(child.id()).is_none(),
+            "Child should be hidden because parent is hidden"
+        );
+    }
+
+    fn create_test_state(user: User) -> ChatScreenState {
+        ChatScreenState::new(
+            user,
+            Arc::new(MarkdownRenderer::new()),
+            UserCache::new(),
+            false,
+            true,
+            true,
+            "%H:%M".to_string(),
+            Theme::new("Orange", None),
+            true,
+            CommandRegistry::default(),
+            RelationshipState::new(),
+            false,
+            QuickSwitcherSortMode::default(),
+            vec![],
+        )
+    }
+
+    fn create_dummy_role(id: u64) -> Role {
+        Role {
+            id: RoleId(id),
+            name: format!("Role {id}"),
+            color: 0,
+            hoist: false,
+            icon: None,
+            unicode_emoji: None,
+            position: 0,
+            permissions: Permissions::empty(),
+            managed: false,
+            mentionable: false,
+        }
+    }
+
+    fn create_dummy_member() -> Member {
+        Member {
+            user: None,
+            nick: None,
+            avatar: None,
+            roles: vec![],
+            joined_at: String::new(),
+            premium_since: None,
+            deaf: false,
+            mute: false,
+            pending: false,
+            permissions: None,
+            communication_disabled_until: None,
+        }
+    }
+
+    fn create_dummy_member_with_user(user: User) -> Member {
+        let mut m = create_dummy_member();
+        m.user = Some(user);
+        m
+    }
+
+    #[test]
     #[cfg(not(windows))]
     fn test_chat_screen_state_creation_initial_focus() {
         let mut state = ChatScreenState::new(
@@ -3211,6 +3555,7 @@ mod tests {
         let guild = Guild::new(1_u64, "Guild A");
         let channel = Channel::new(ChannelId(10), "Channel A", ChannelKind::Text);
         state.set_guilds(vec![guild.clone()]);
+        setup_permissive_guild_data(&mut state, guild.id());
         state.set_channels(guild.id(), vec![channel.clone()]);
 
         state.on_channel_selected(channel.id());
@@ -3519,6 +3864,7 @@ mod tests {
             crate::domain::entities::ChannelKind::Text,
         );
         state.set_guilds(vec![guild.clone()]);
+        setup_permissive_guild_data(&mut state, guild.id());
         state.set_channels(guild.id(), vec![channel1.clone(), channel2.clone()]);
 
         state.toggle_quick_switcher();
@@ -3578,6 +3924,7 @@ mod tests {
             Channel::new(ChannelId(101), "general", ChannelKind::Text).with_parent(100_u64);
 
         state.set_guilds(vec![guild.clone()]);
+        setup_permissive_guild_data(&mut state, guild.id());
         state.set_channels(guild.id(), vec![category.clone(), channel.clone()]);
 
         state.toggle_quick_switcher();
@@ -3618,6 +3965,7 @@ mod tests {
         let channel = Channel::new(ChannelId(10), "Channel A", ChannelKind::Text);
 
         state.set_guilds(vec![guild.clone()]);
+        setup_permissive_guild_data(&mut state, guild.id());
         state.set_channels(guild.id(), vec![channel.clone()]);
 
         state.on_channel_selected(channel.id());

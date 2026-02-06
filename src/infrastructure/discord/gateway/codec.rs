@@ -14,8 +14,8 @@ use super::payloads::{
 };
 
 use crate::domain::entities::{
-    Attachment, ChannelId, GuildId, Message, MessageAuthor, MessageId, MessageKind,
-    MessageReference, User,
+    Attachment, ChannelId, GuildId, Member, Message, MessageAuthor, MessageId, MessageKind,
+    MessageReference, Permissions, Role, RoleId, User,
 };
 
 const INITIAL_BUFFER_SIZE: usize = 32 * 1024;
@@ -191,6 +191,8 @@ impl EventParser {
             .map_err(|e| GatewayError::serialization(format!("Failed to parse Ready: {e}")))?;
 
         let mut initial_guild_channels = std::collections::HashMap::new();
+        let mut initial_guild_roles = std::collections::HashMap::new();
+        let mut initial_guild_members = std::collections::HashMap::new();
 
         for g in &ready.guilds {
             if let Ok(guild_id) = g.id.parse::<u64>()
@@ -223,6 +225,20 @@ impl EventParser {
                             channel = channel.with_last_message_id(Some(lmid.into()));
                         }
 
+                        let overwrites = channel_payload
+                            .permission_overwrites
+                            .iter()
+                            .map(|o| crate::domain::entities::PermissionOverwrite {
+                                id: o.id.clone(),
+                                overwrite_type: crate::domain::entities::OverwriteType::from(
+                                    o.overwrite_type,
+                                ),
+                                allow: o.allow.clone(),
+                                deny: o.deny.clone(),
+                            })
+                            .collect();
+                        channel = channel.with_permission_overwrites(overwrites);
+
                         channels.push(channel);
                     }
                 }
@@ -253,6 +269,61 @@ impl EventParser {
                 }
 
                 initial_guild_channels.insert(GuildId(guild_id), channels);
+
+                let roles: Vec<Role> = g
+                    .roles
+                    .iter()
+                    .filter_map(|r| {
+                        let id = r.id.parse::<u64>().ok()?;
+                        let permissions = r.permissions.parse::<u64>().ok()?;
+                        Some(Role {
+                            id: RoleId(id),
+                            name: r.name.clone(),
+                            color: r.color,
+                            hoist: r.hoist,
+                            icon: r.icon.clone(),
+                            unicode_emoji: r.unicode_emoji.clone(),
+                            position: r.position,
+                            permissions: Permissions::from_bits_truncate(permissions),
+                            managed: r.managed,
+                            mentionable: r.mentionable,
+                        })
+                    })
+                    .collect();
+                initial_guild_roles.insert(GuildId(guild_id), roles);
+
+                let members: Vec<Member> = g
+                    .members
+                    .iter()
+                    .map(|m| Member {
+                        user: m.user.as_ref().map(|u| {
+                            User::new(
+                                u.id.clone(),
+                                u.username.clone(),
+                                u.discriminator.clone(),
+                                u.avatar.clone(),
+                                u.bot,
+                                None,
+                            )
+                            .with_global_name(u.global_name.clone().unwrap_or_default())
+                        }),
+                        nick: m.nick.clone(),
+                        avatar: m.avatar.clone(),
+                        roles: m
+                            .roles
+                            .iter()
+                            .filter_map(|r| r.parse::<u64>().ok().map(RoleId))
+                            .collect(),
+                        joined_at: m.joined_at.clone(),
+                        premium_since: m.premium_since.clone(),
+                        deaf: m.deaf,
+                        mute: m.mute,
+                        pending: m.pending,
+                        permissions: m.permissions.clone(),
+                        communication_disabled_until: m.communication_disabled_until.clone(),
+                    })
+                    .collect();
+                initial_guild_members.insert(GuildId(guild_id), members);
             }
         }
 
@@ -320,6 +391,8 @@ impl EventParser {
             user_id: ready.user.id,
             guilds,
             initial_guild_channels,
+            initial_guild_roles,
+            initial_guild_members,
             read_states,
             guild_folders,
             relationships,
@@ -624,6 +697,7 @@ impl EventParser {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_guild_create(data: serde_json::Value) -> GatewayResult<DispatchEvent> {
         let payload: GuildCreatePayload = serde_json::from_value(data).map_err(|e| {
             GatewayError::serialization(format!("Failed to parse GuildCreate: {e}"))
@@ -664,6 +738,18 @@ impl EventParser {
                 channel = channel.with_last_message_id(Some(lmid.into()));
             }
 
+            let overwrites = channel_payload
+                .permission_overwrites
+                .iter()
+                .map(|o| crate::domain::entities::PermissionOverwrite {
+                    id: o.id.clone(),
+                    overwrite_type: crate::domain::entities::OverwriteType::from(o.overwrite_type),
+                    allow: o.allow.clone(),
+                    deny: o.deny.clone(),
+                })
+                .collect();
+            channel = channel.with_permission_overwrites(overwrites);
+
             channels.push(channel);
         }
 
@@ -695,12 +781,60 @@ impl EventParser {
             threads.push(thread);
         }
 
+        let roles = payload
+            .roles
+            .into_iter()
+            .filter_map(|r| {
+                let id = r.id.parse::<u64>().ok()?;
+                let permissions = r.permissions.parse::<u64>().ok()?;
+                Some(Role {
+                    id: RoleId(id),
+                    name: r.name,
+                    color: r.color,
+                    hoist: r.hoist,
+                    icon: r.icon,
+                    unicode_emoji: r.unicode_emoji,
+                    position: r.position,
+                    permissions: Permissions::from_bits_truncate(permissions),
+                    managed: r.managed,
+                    mentionable: r.mentionable,
+                })
+            })
+            .collect();
+
+        let members = payload
+            .members
+            .into_iter()
+            .map(|m| Member {
+                user: m.user.map(|u| {
+                    User::new(u.id, u.username, u.discriminator, u.avatar, u.bot, None)
+                        .with_global_name(u.global_name.unwrap_or_default())
+                }),
+                nick: m.nick,
+                avatar: m.avatar,
+                roles: m
+                    .roles
+                    .into_iter()
+                    .filter_map(|r| r.parse::<u64>().ok().map(RoleId))
+                    .collect(),
+                joined_at: m.joined_at,
+                premium_since: m.premium_since,
+                deaf: m.deaf,
+                mute: m.mute,
+                pending: m.pending,
+                permissions: m.permissions,
+                communication_disabled_until: m.communication_disabled_until,
+            })
+            .collect();
+
         Ok(DispatchEvent::GuildCreate {
             guild_id: GuildId(guild_id),
             name: payload.name,
             unavailable: payload.unavailable,
             channels,
             threads,
+            roles,
+            members,
         })
     }
 

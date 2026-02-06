@@ -520,6 +520,7 @@ impl GuildsTreeData {
                 children.sort_by(sort_fn);
                 CategoryNode { category, children }
             })
+            .filter(|node| !node.children.is_empty())
             .collect();
 
         categories.sort_by(|a, b| sort_fn(&a.category, &b.category));

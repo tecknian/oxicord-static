@@ -3,8 +3,8 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 
 use crate::domain::entities::{
-    Channel, ChannelId, GuildFolder, GuildId, Message, MessageId, ReadState, Relationship,
-    RelationshipType, UserId,
+    Channel, ChannelId, GuildFolder, GuildId, Member, Message, MessageId, ReadState, Relationship,
+    RelationshipType, Role, UserId,
 };
 
 /// Commands that can be sent to the gateway.
@@ -75,6 +75,8 @@ pub enum DispatchEvent {
         guilds: Vec<UnavailableGuild>,
         /// Channels for guilds received in READY (User accounts)
         initial_guild_channels: std::collections::HashMap<GuildId, Vec<Channel>>,
+        initial_guild_roles: std::collections::HashMap<GuildId, Vec<Role>>,
+        initial_guild_members: std::collections::HashMap<GuildId, Vec<Member>>,
         read_states: Vec<ReadState>,
         guild_folders: Vec<GuildFolder>,
         relationships: Vec<Relationship>,
@@ -155,6 +157,8 @@ pub enum DispatchEvent {
         unavailable: bool,
         channels: Vec<Channel>,
         threads: Vec<Channel>,
+        roles: Vec<Role>,
+        members: Vec<Member>,
     },
     GuildUpdate {
         guild_id: GuildId,

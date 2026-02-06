@@ -256,6 +256,10 @@ pub struct ReadyGuild {
     pub channels: Vec<ChannelPayload>,
     #[serde(default)]
     pub threads: Vec<ChannelPayload>,
+    #[serde(default)]
+    pub roles: Vec<RolePayload>,
+    #[serde(default)]
+    pub members: Vec<GuildMemberPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,6 +433,17 @@ pub struct ChannelPayload {
     pub topic: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_string_or_int")]
     pub last_message_id: Option<String>,
+    #[serde(default)]
+    pub permission_overwrites: Vec<PermissionOverwritePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PermissionOverwritePayload {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub overwrite_type: u8,
+    pub allow: String,
+    pub deny: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -442,6 +457,53 @@ pub struct GuildCreatePayload {
     pub channels: Vec<ChannelPayload>,
     #[serde(default)]
     pub threads: Vec<ChannelPayload>,
+    #[serde(default)]
+    pub roles: Vec<RolePayload>,
+    #[serde(default)]
+    pub members: Vec<GuildMemberPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RolePayload {
+    pub id: String,
+    pub name: String,
+    pub color: u32,
+    pub hoist: bool,
+    pub icon: Option<String>,
+    pub unicode_emoji: Option<String>,
+    pub position: i32,
+    pub permissions: String,
+    pub managed: bool,
+    pub mentionable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GuildMemberPayload {
+    pub user: Option<UserPayload>,
+    pub nick: Option<String>,
+    pub avatar: Option<String>,
+    pub roles: Vec<String>,
+    pub joined_at: String,
+    pub premium_since: Option<String>,
+    #[serde(default)]
+    pub deaf: bool,
+    #[serde(default)]
+    pub mute: bool,
+    #[serde(default)]
+    pub pending: bool,
+    pub permissions: Option<String>,
+    pub communication_disabled_until: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserPayload {
+    pub id: String,
+    pub username: String,
+    pub discriminator: String,
+    pub global_name: Option<String>,
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub bot: bool,
 }
 
 #[derive(Debug, Deserialize)]

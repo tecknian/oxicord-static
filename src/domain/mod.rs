@@ -15,6 +15,7 @@ pub mod ports;
 /// Search definitions.
 pub mod search;
 pub mod serde_utils;
+pub mod services;
 
 pub use notification::{Notification, NotificationLevel};
 

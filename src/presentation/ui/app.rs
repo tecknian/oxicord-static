@@ -105,6 +105,8 @@ pub struct App {
     pending_read_states: Option<Vec<crate::domain::entities::ReadState>>,
     pending_guild_folders: Option<Vec<GuildFolder>>,
     pending_channels: std::collections::HashMap<GuildId, Vec<Channel>>,
+    pending_roles: std::collections::HashMap<GuildId, Vec<crate::domain::entities::Role>>,
+    pending_members: std::collections::HashMap<GuildId, Vec<crate::domain::entities::Member>>,
     gateway_ready: bool,
     connection_status: ConnectionStatus,
     should_render: bool,
@@ -236,6 +238,8 @@ impl App {
             pending_read_states: None,
             pending_guild_folders: None,
             pending_channels: std::collections::HashMap::new(),
+            pending_roles: std::collections::HashMap::new(),
+            pending_members: std::collections::HashMap::new(),
             gateway_ready: false,
             connection_status: ConnectionStatus::Disconnected,
             should_render: true,
@@ -1099,6 +1103,8 @@ impl App {
                 unavailable,
                 channels,
                 mut threads,
+                roles,
+                members,
             } => {
                 if !unavailable {
                     info!(guild_id = %guild_id, name = %name, channel_count = channels.len(), thread_count = threads.len(), "Guild available");
@@ -1106,10 +1112,14 @@ impl App {
                     all_channels.append(&mut threads);
 
                     if let CurrentScreen::Chat(ref mut state) = self.screen {
+                        state.set_guild_data(guild_id, roles, members);
                         state.set_channels(guild_id, all_channels);
                     } else if let Some(ref mut state) = self.pending_chat_state {
+                        state.set_guild_data(guild_id, roles, members);
                         state.set_channels(guild_id, all_channels);
                     } else {
+                        self.pending_roles.insert(guild_id, roles);
+                        self.pending_members.insert(guild_id, members);
                         self.pending_channels.insert(guild_id, all_channels);
                     }
                 }
@@ -1137,6 +1147,8 @@ impl App {
                 user_id,
                 guilds,
                 mut initial_guild_channels,
+                mut initial_guild_roles,
+                mut initial_guild_members,
                 read_states,
                 guild_folders,
                 relationships,
@@ -1161,6 +1173,9 @@ impl App {
                     state.set_read_states(read_states_map);
                     state.set_guild_folders(guild_folders);
                     for (guild_id, channels) in initial_guild_channels.drain() {
+                        let roles = initial_guild_roles.remove(&guild_id).unwrap_or_default();
+                        let members = initial_guild_members.remove(&guild_id).unwrap_or_default();
+                        state.set_guild_data(guild_id, roles, members);
                         state.set_channels(guild_id, channels);
                     }
                 } else {
@@ -1168,10 +1183,20 @@ impl App {
                         state.set_read_states(read_states_map);
                         state.set_guild_folders(guild_folders.clone());
                         for (guild_id, channels) in initial_guild_channels.drain() {
+                            let roles = initial_guild_roles.remove(&guild_id).unwrap_or_default();
+                            let members =
+                                initial_guild_members.remove(&guild_id).unwrap_or_default();
+                            state.set_guild_data(guild_id, roles, members);
                             state.set_channels(guild_id, channels);
                         }
                     } else {
                         for (guild_id, channels) in initial_guild_channels.drain() {
+                            let roles = initial_guild_roles.remove(&guild_id).unwrap_or_default();
+                            let members =
+                                initial_guild_members.remove(&guild_id).unwrap_or_default();
+
+                            self.pending_roles.insert(guild_id, roles);
+                            self.pending_members.insert(guild_id, members);
                             self.pending_channels.insert(guild_id, channels);
                         }
                     }
