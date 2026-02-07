@@ -71,8 +71,6 @@ Made components optional for static builds:
 
 **Prerequisites**
 
-Ensure you have the latest stable Rust toolchain installed. You will also need the following system dependencies:
-
 - **Alpine:**
   ```bash
   doas apk add -S pkgconf chafa-dev glib-static musl-dev clang rustup libressl-dev xclip wl-clipboard
@@ -101,7 +99,6 @@ cargo build --release --no-default-features --features="image"
 ```bash
 cargo build --release --no-default-features
 ```
-
 
 ### Configuration
 
