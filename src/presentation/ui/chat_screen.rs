@@ -2111,6 +2111,7 @@ impl ChatScreenState {
 
     /// Collects all image attachments that need loading within the visible range.
     /// Returns a list of (`ImageId`, URL) pairs.
+    #[cfg(feature = "image")]
     #[must_use]
     pub fn collect_needed_image_loads(&self) -> Vec<(crate::domain::entities::ImageId, String)> {
         let mut needed = Vec::new();
@@ -2162,6 +2163,7 @@ impl ChatScreenState {
     }
 
     /// Updates an image attachment when it finishes loading.
+    #[cfg(feature = "image")]
     pub fn on_image_loaded(
         &mut self,
         id: &crate::domain::entities::ImageId,
@@ -2184,7 +2186,7 @@ impl ChatScreenState {
     /// Updates image protocols for visible messages.
     /// Should be called before rendering.
     /// Only processes images that need protocol updates.
-    /// Uses a dirty check on scroll position to avoid expensive O(N) iteration.
+    #[cfg(feature = "image")]
     pub fn update_visible_image_protocols(&mut self, terminal_width: u16) {
         if self.message_pane_data.is_empty() || !self.image_preview {
             return;
@@ -2265,6 +2267,8 @@ impl ChatScreenState {
         }
     }
 
+    /// Marks an image as downloading.
+    #[cfg(feature = "image")]
     pub fn mark_image_downloading(&mut self, id: &crate::domain::entities::ImageId) {
         for ui_msg in self.message_pane_data.ui_messages_mut() {
             for attachment in &mut ui_msg.image_attachments {
@@ -2275,6 +2279,8 @@ impl ChatScreenState {
         }
     }
 
+    /// Marks an image as failed.
+    #[cfg(feature = "image")]
     pub fn mark_image_failed(&mut self, id: &crate::domain::entities::ImageId, error: &str) {
         for ui_msg in self.message_pane_data.ui_messages_mut() {
             for attachment in &mut ui_msg.image_attachments {

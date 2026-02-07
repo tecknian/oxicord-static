@@ -9,6 +9,12 @@ repository = "https://github.com/linuxmobile/oxicord"
 keywords = ["discord", "tui", "terminal", "client"]
 categories = ["command-line-utilities"]
 
+[features]
+default = ["keyring", "notify", "image"]
+keyring = ["dep:keyring"]
+notify = ["dep:notify-rust"]
+image = ["dep:image", "dep:ratatui-image"]
+
 [dependencies]
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util"] }
 
@@ -17,9 +23,9 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 tui-textarea = { version = "0.7", default-features = false, features = ["crossterm", "search"] }
 tempfile = "3.24.0"
 
-reqwest = { version = "0.12", features = ["json", "rustls-tls-webpki-roots", "multipart", "gzip"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "native-tls", "multipart", "gzip"], default-features = false }
 base64 = "0.22"
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
 
 futures-util = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
 chrono = { version = "0.4.43", features = ["serde", "clock"], default-features = false }
@@ -34,7 +40,7 @@ color-eyre = "0.6.5"
 toml = "0.9"
 directories = "6.0"
 
-keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "apple-native", "windows-native"] }
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native"], optional = true }
 zeroize = { version = "1.8.1", features = ["derive"] }
 
 tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
@@ -51,7 +57,7 @@ lru = "0.16.3"
 unicode-width = "0.2.0"
 
 # Image rendering - Common
-image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
 sha2 = "0.10.9"
 hex = "0.4.3"
 regex = { version = "1.11", default-features = false, features = ["std", "perf", "unicode"] }
@@ -59,23 +65,14 @@ bitflags = { version = "2.6", features = ["serde"] }
 tui-scrollbar = "0.2.2"
 uuid = { version = "1.19.0", features = ["v4", "fast-rng"] }
 parking_lot = "0.12.5"
-arboard = { version = "3.6.1", features = ["wayland-data-control", "image-data"], default-features = false }
-notify-rust = "4"
+notify-rust = { version = "4", optional = true }
 opener = "0.8.4"
 coolor = "1.1.0"
 fuzzy-matcher = "0.3.7"
 termbg = "0.6.2"
 
 # Image rendering - Platform Specific
-
-[target.'cfg(target_os = "linux")'.dependencies]
-ratatui-image = { version = "10.0.3", features = ["crossterm", "chafa-dyn"], default-features = false }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-ratatui-image = { version = "10.0.3", features = ["crossterm"], default-features = false }
-
-[target.'cfg(windows)'.dependencies]
-ratatui-image = { version = "10.0.3", features = ["crossterm"], default-features = false }
+ratatui-image = { version = "10.0.3", features = ["crossterm", "chafa-dyn"], default-features = false, optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -89,7 +86,8 @@ split-debuginfo = "unpacked"
 incremental = true
 
 [profile.release]
-lto = "thin"
-codegen-units = 16
+lto = "fat"
+codegen-units = 1
 panic = "abort"
 strip = true
+opt-level = 3

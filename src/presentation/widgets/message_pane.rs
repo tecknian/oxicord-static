@@ -27,7 +27,10 @@ use regex::Regex;
 use tui_scrollbar::{GlyphSet, ScrollBar, ScrollLengths};
 use unicode_width::UnicodeWidthStr;
 
+#[cfg(feature = "image")]
 use super::image_state::{ImageAttachment, MAX_IMAGE_HEIGHT};
+#[cfg(not(feature = "image"))]
+use super::image_state_stub::{ImageAttachment, MAX_IMAGE_HEIGHT};
 use crate::presentation::theme::Theme;
 use crate::presentation::ui::utils::{clean_text, get_author_color};
 
@@ -2448,15 +2451,18 @@ fn render_ui_message(
                         Rect::new(area.x, area.y + target_y, area.width, effective_height);
                     Clear.render(clear_area, buf);
 
-                    if let Some(ref mut protocol) = img_attachment.protocol {
-                        use ratatui_image::{Resize, StatefulImage};
-                        let image_widget = StatefulImage::default().resize(Resize::Fit(None));
-                        ratatui::widgets::StatefulWidget::render(
-                            image_widget,
-                            img_area,
-                            buf,
-                            protocol,
-                        );
+                    #[cfg(feature = "image")]
+                    {
+                        if let Some(ref mut protocol) = img_attachment.protocol {
+                            use ratatui_image::{Resize, StatefulImage};
+                            let image_widget = StatefulImage::default().resize(Resize::Fit(None));
+                            ratatui::widgets::StatefulWidget::render(
+                                image_widget,
+                                img_area,
+                                buf,
+                                protocol,
+                            );
+                        }
                     }
                 }
             }

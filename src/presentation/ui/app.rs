@@ -31,6 +31,7 @@ use crate::infrastructure::discord::{
     DispatchEvent, GatewayClient, GatewayClientConfig, GatewayCommand, GatewayEventKind,
     GatewayIntents, TypingIndicatorManager, identity::ClientIdentity,
 };
+#[cfg(feature = "image")]
 use crate::infrastructure::image::{ImageLoadedEvent, ImageLoader};
 use crate::infrastructure::notifications::DesktopNotificationService;
 use crate::infrastructure::{ClipboardService, StateStore};
@@ -111,10 +112,13 @@ pub struct App {
     connection_status: ConnectionStatus,
     should_render: bool,
     /// Image loader for async image loading.
+    #[cfg(feature = "image")]
     image_loader: Option<Arc<ImageLoader>>,
     /// Receiver for image load completion events.
+    #[cfg(feature = "image")]
     image_load_rx: Option<mpsc::UnboundedReceiver<ImageLoadedEvent>>,
     /// Last time we checked for images to load.
+    #[cfg(feature = "image")]
     last_image_check: Instant,
     disable_user_colors: bool,
     group_guilds: bool,
@@ -243,8 +247,11 @@ impl App {
             gateway_ready: false,
             connection_status: ConnectionStatus::Disconnected,
             should_render: true,
+            #[cfg(feature = "image")]
             image_loader: None,
+            #[cfg(feature = "image")]
             image_load_rx: None,
+            #[cfg(feature = "image")]
             last_image_check: Instant::now(),
             disable_user_colors: config.disable_user_colors,
             group_guilds: config.group_guilds,
@@ -307,6 +314,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "image")]
     async fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         let mut terminal_events = EventStream::new();
         let mut typing_cleanup_interval = interval(TYPING_CLEANUP_INTERVAL);
@@ -325,7 +333,7 @@ impl App {
 
             let image_load_future = match &mut self.image_load_rx {
                 Some(rx) => futures_util::future::Either::Left(rx.recv()),
-                None => futures_util::future::Either::Right(std::future::pending()),
+                None => futures_util::future::Either::Right(std::future::pending::<Option<ImageLoadedEvent>>()),
             };
 
             tokio::select! {
@@ -373,6 +381,106 @@ impl App {
                     if self.last_image_check.elapsed() > IMAGE_CHECK_INTERVAL {
                         self.trigger_image_loads();
                         self.last_image_check = Instant::now();
+                    }
+
+                    if self.notification_manager.has_notifications() {
+                        self.should_render = true;
+                    }
+                }
+
+                Some(Ok(event)) = terminal_event => {
+                    let is_release_event = matches!(
+                        event,
+                        crossterm::event::Event::Key(key)
+                        if key.kind == crossterm::event::KeyEventKind::Release
+                    );
+
+                    if !is_release_event {
+                        let result = self.handle_terminal_event(&event);
+                        match result {
+                            EventResult::Exit => {
+                                self.state = AppState::Exiting;
+                            }
+                            EventResult::OpenEditor {
+                                initial_content,
+                                message_id,
+                            } => {
+                                self.handle_open_editor(terminal, &initial_content, message_id)?;
+                                self.should_render = true;
+                            }
+                            _ => {
+                                self.should_render = true;
+                            }
+                        }
+                    }
+                }
+
+                _ = typing_cleanup_interval.tick() => {
+                    self.cleanup_typing_indicators();
+                    self.should_render = true;
+                }
+            }
+
+            if self.should_render {
+                terminal.draw(|frame| self.render(frame))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "image"))]
+    async fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
+        let mut terminal_events = EventStream::new();
+        let mut typing_cleanup_interval = interval(TYPING_CLEANUP_INTERVAL);
+        let mut animation_interval = interval(ANIMATION_TICK_RATE);
+
+        terminal.draw(|frame| self.render(frame))?;
+
+        while self.state != AppState::Exiting {
+            self.should_render = false;
+
+            let gateway_future = match &mut self.gateway_rx {
+                Some(rx) => futures_util::future::Either::Left(rx.recv()),
+                None => futures_util::future::Either::Right(std::future::pending()),
+            };
+            let terminal_event = terminal_events.next();
+
+            tokio::select! {
+                biased;
+
+                Some(event) = gateway_future => {
+                    self.handle_gateway_event(event);
+                    self.should_render = true;
+                }
+
+                Some(action) = self.action_rx.recv() => {
+                    self.handle_action(action);
+                    self.should_render = true;
+                }
+
+                _ = animation_interval.tick() => {
+                     if let CurrentScreen::Splash(splash) = &mut self.screen {
+                        splash.tick(ANIMATION_TICK_RATE);
+
+                        if splash.state.animation_complete && self.pending_chat_state.is_some() {
+                             if self.validate_auth_status().await {
+                                 self.state = AppState::Chat;
+                                 self.screen = CurrentScreen::Chat(self.pending_chat_state.take().unwrap());
+                                 self.should_render = true;
+                             } else {
+                                 warn!("Token verification failed after splash");
+                                 self.transition_to_login();
+                                 self.should_render = true;
+                             }
+                        } else if !splash.state.intro_finished || (splash.state.data_ready && !splash.state.animation_complete) {
+                             self.should_render = true;
+                        }
+                    } else if let CurrentScreen::Chat(state) = &mut self.screen {
+                        state.tick(ANIMATION_TICK_RATE);
+                        if !state.has_entered() {
+                            self.should_render = true;
+                        }
                     }
 
                     if self.notification_manager.has_notifications() {
@@ -499,8 +607,11 @@ impl App {
                 frame.render_widget(screen, frame.area());
             }
             CurrentScreen::Chat(state) => {
-                let width = frame.area().width;
-                state.update_visible_image_protocols(width);
+                #[cfg(feature = "image")]
+                {
+                    let width = frame.area().width;
+                    state.update_visible_image_protocols(width);
+                }
                 frame.render_stateful_widget(ChatScreen::new(), frame.area(), state);
             }
         }
@@ -576,45 +687,42 @@ impl App {
                 self.show_notification("Copied to clipboard".to_string());
             }
             ChatKeyResult::CopyImageToClipboard(image_id) => {
-                debug!(image_id = %image_id, "Copy image to clipboard requested");
-                if let CurrentScreen::Chat(state) = &self.screen {
-                    let mut found = false;
-                    for msg in state.message_pane_data().messages() {
-                        if let Some(attachment) =
-                            msg.image_attachments.iter().find(|a| a.id == image_id)
-                        {
-                            if let Some(image) = &attachment.image {
-                                let image = image.clone();
-                                let clipboard = self.clipboard_service.clone();
-                                let tx = self.action_tx.clone();
+                #[cfg(feature = "image")]
+                {
+                    debug!(image_id = %image_id, "Copy image to clipboard requested");
+                    if let CurrentScreen::Chat(state) = &self.screen {
+                        let mut found = false;
+                        for msg in state.message_pane_data().messages() {
+                            if let Some(attachment) =
+                                msg.image_attachments.iter().find(|a| a.id == image_id)
+                            {
+                                if let Some(image) = &attachment.image {
+                                    let image = image.clone();
+                                    let clipboard = self.clipboard_service.clone();
+                                    let tx = self.action_tx.clone();
 
-                                tokio::task::spawn_blocking(move || {
-                                    let rgba = image.to_rgba8();
-                                    let width = rgba.width() as usize;
-                                    let height = rgba.height() as usize;
-                                    let bytes = std::borrow::Cow::Owned(rgba.into_raw());
+                                    tokio::task::spawn_blocking(move || {
+                                        let rgba = image.to_rgba8();
+                                        let _width = rgba.width() as usize;
+                                        let _height = rgba.height() as usize;
+                                        let bytes: std::borrow::Cow<'static, [u8]> = std::borrow::Cow::Owned(rgba.into_raw());
 
-                                    let image_data = arboard::ImageData {
-                                        width,
-                                        height,
-                                        bytes,
-                                    };
-
-                                    clipboard.set_image(image_data);
-                                    let _ = tx.send(Action::ShowNotification(
-                                        "Copied image to clipboard".to_string(),
-                                    ));
-                                });
-                                found = true;
-                            } else {
-                                self.show_notification("Image not loaded yet".to_string());
-                                found = true;
+                                        clipboard.set_binary(bytes.into_owned(), "image/png");
+                                        let _ = tx.send(Action::ShowNotification(
+                                            "Copied image to clipboard".to_string(),
+                                        ));
+                                    });
+                                    found = true;
+                                } else {
+                                    self.show_notification("Image not loaded yet".to_string());
+                                    found = true;
+                                }
+                                break;
                             }
-                            break;
                         }
-                    }
-                    if !found {
-                        self.show_notification("Image not found".to_string());
+                        if !found {
+                            self.show_notification("Image not found".to_string());
+                        }
                     }
                 }
             }
@@ -679,41 +787,44 @@ impl App {
             }
             ChatKeyResult::OpenAttachments(message_id) => {
                 debug!(message_id = %message_id, "Open attachments requested");
-                if let CurrentScreen::Chat(state) = &self.screen
-                    && let Some(ui_msg) = state
-                        .message_pane_data()
-                        .messages()
-                        .iter()
-                        .find(|m| m.message.id() == message_id)
+                #[cfg(feature = "image")]
                 {
-                    let mut urls = std::collections::HashSet::new();
-                    for img in &ui_msg.image_attachments {
-                        urls.insert(img.url.clone());
-                    }
+                    if let CurrentScreen::Chat(state) = &self.screen
+                        && let Some(ui_msg) = state
+                            .message_pane_data()
+                            .messages()
+                            .iter()
+                            .find(|m| m.message.id() == message_id)
+                    {
+                        let mut urls = std::collections::HashSet::new();
+                        for img in &ui_msg.image_attachments {
+                            urls.insert(img.url.clone());
+                        }
 
-                    if let Some(loader) = &self.image_loader {
-                        for url in urls {
-                            let loader = loader.clone();
-                            let image_id = crate::domain::entities::ImageId::from_url(&url);
-                            let url_clone = url.clone();
+                        if let Some(loader) = &self.image_loader {
+                            for url in urls {
+                                let loader = loader.clone();
+                                let image_id = crate::domain::entities::ImageId::from_url(&url);
+                                let url_clone = url.clone();
 
-                            tokio::spawn(async move {
-                                match loader.export_for_viewing(&image_id, &url_clone).await {
-                                    Ok(path) => {
-                                        tokio::task::spawn_blocking(move || {
-                                            if let Err(e) = opener::open(&path) {
-                                                tracing::error!("Failed to open image file: {}", e);
-                                            }
-                                        });
+                                tokio::spawn(async move {
+                                    match loader.export_for_viewing(&image_id, &url_clone).await {
+                                        Ok(path) => {
+                                            tokio::task::spawn_blocking(move || {
+                                                if let Err(e) = opener::open(&path) {
+                                                    tracing::error!("Failed to open image file: {}", e);
+                                                }
+                                            });
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to export image for viewing: {}",
+                                                e
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Failed to export image for viewing: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                            });
+                                });
+                            }
                         }
                     }
                 }
@@ -756,19 +867,23 @@ impl App {
                 let tx = self.action_tx.clone();
 
                 tokio::task::spawn_blocking(move || {
-                    if let Some(image) = clipboard.get_image() {
-                        let temp_dir = std::env::temp_dir();
-                        let filename = format!("paste_{}.png", uuid::Uuid::new_v4());
-                        let path = temp_dir.join(filename);
+                    #[cfg(feature = "image")]
+                    {
+                        if let Some((data, mime_type)) = clipboard.get_binary() {
+                            if mime_type.starts_with("image/") {
+                                let temp_dir = std::env::temp_dir();
+                                let filename = format!("paste_{}.png", uuid::Uuid::new_v4());
+                                let path = temp_dir.join(filename);
 
-                        if let Some(img) = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-                            u32::try_from(image.width).unwrap_or_default(),
-                            u32::try_from(image.height).unwrap_or_default(),
-                            image.bytes.into_owned(),
-                        ) && img.save(&path).is_ok()
-                        {
-                            let _ = tx.send(Action::PasteImageLoaded(path));
-                            return;
+                                // Try to load image and save it
+                                if let Ok(img) = image::load_from_memory(&data) {
+                                    let rgba = img.to_rgba8();
+                                    if rgba.save(&path).is_ok() {
+                                        let _ = tx.send(Action::PasteImageLoaded(path));
+                                        return;
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -910,19 +1025,22 @@ impl App {
         self.screen = CurrentScreen::Splash(SplashScreen::new());
         self.gateway_ready = false;
 
-        let (img_tx, img_rx) = mpsc::unbounded_channel();
-        let action_tx = self.action_tx.clone();
-        tokio::spawn(async move {
-            match ImageLoader::with_defaults(img_tx).await {
-                Ok(loader) => {
-                    let _ = action_tx.send(Action::ImageLoaderReady(Arc::new(loader)));
+        #[cfg(feature = "image")]
+        {
+            let (img_tx, img_rx) = mpsc::unbounded_channel();
+            let action_tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                match ImageLoader::with_defaults(img_tx).await {
+                    Ok(loader) => {
+                        let _ = action_tx.send(Action::ImageLoaderReady(Arc::new(loader)));
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to initialize image loader");
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to initialize image loader");
-                }
-            }
-        });
-        self.image_load_rx = Some(img_rx);
+            });
+            self.image_load_rx = Some(img_rx);
+        }
 
         let Some(ref token) = self.current_token else {
             return;
@@ -1777,6 +1895,7 @@ impl App {
                 }
             }
             Action::TypingIndicatorSent(_) => {}
+            #[cfg(feature = "image")]
             Action::ImageLoaderReady(loader) => {
                 self.image_loader = Some(loader);
             }
@@ -1800,6 +1919,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "image")]
     fn handle_image_loaded(&mut self, event: ImageLoadedEvent) {
         if let CurrentScreen::Chat(ref mut state) = self.screen {
             match event.result {
@@ -1816,6 +1936,7 @@ impl App {
     }
 
     /// Trigger loading of images in the visible viewport.
+    #[cfg(feature = "image")]
     fn trigger_image_loads(&mut self) {
         let CurrentScreen::Chat(ref mut state) = self.screen else {
             return;

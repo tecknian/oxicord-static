@@ -4,7 +4,10 @@ mod file_explorer;
 mod footer_bar;
 mod guilds_tree;
 mod header_bar;
+#[cfg(feature = "image")]
 mod image_state;
+#[cfg(not(feature = "image"))]
+mod image_state_stub;
 mod input;
 mod mention_popup;
 mod message_input;
@@ -20,7 +23,10 @@ pub use guilds_tree::{
     SortedGuildChannels, TreeNodeId,
 };
 pub use header_bar::{HeaderBar, HeaderBarStyle};
+#[cfg(feature = "image")]
 pub use image_state::{ImageAttachment, ImageManager, LOAD_BUFFER, MAX_IMAGE_HEIGHT};
+#[cfg(not(feature = "image"))]
+pub use image_state_stub::{ImageAttachment, ImageManager, LOAD_BUFFER, MAX_IMAGE_HEIGHT};
 pub use input::TextInput;
 pub use mention_popup::MentionPopup;
 pub use message_input::{

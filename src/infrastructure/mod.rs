@@ -6,6 +6,7 @@ pub mod config;
 /// Discord API client.
 pub mod discord;
 /// Image handling (caching, loading, CDN optimization).
+#[cfg(feature = "image")]
 pub mod image;
 /// System notifications.
 pub mod notifications;
@@ -22,6 +23,7 @@ pub use discord::{
     GatewayEventKind, GatewayIntents, PresenceStatus, TypingIndicatorManager, TypingIndicatorState,
     TypingUser,
 };
+#[cfg(feature = "image")]
 pub use image::{
     CacheStats, DiskImageCache, ImageLoadedEvent, ImageLoader, ImageLoaderConfig, MemoryImageCache,
     extract_attachment_id, is_discord_cdn_url, optimize_cdn_url, optimize_cdn_url_default,

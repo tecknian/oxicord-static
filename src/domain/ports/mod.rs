@@ -1,6 +1,7 @@
 mod auth_port;
 mod discord_data_port;
 mod gateway_port;
+#[cfg(feature = "image")]
 mod image_cache_port;
 mod mention_resolver_port;
 mod notification_port;
@@ -12,6 +13,7 @@ pub use discord_data_port::{
     SendMessageRequest,
 };
 pub use gateway_port::{GatewayEvent, GatewayPort};
+#[cfg(feature = "image")]
 pub use image_cache_port::{CacheError, CacheResult, ImageCachePort, ImageLoaderPort};
 pub use mention_resolver_port::MentionResolver;
 pub use notification_port::NotificationPort;

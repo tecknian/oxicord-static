@@ -9,71 +9,62 @@ Designed for power users on Linux who demand speed, minimal resource usage, and 
   Using unofficial clients is against Discord's Terms of Service. Use this client at your own risk. <strong>Never share your token with anyone.</strong>
 </p>
 
-## Why Oxicord?
+## Why?
+Static binary can work everywhere and it is faster.
 
-Oxicord distinguishes itself through a commitment to modern engineering principles and user experience:
+## How?
+1. Feature Flags System 
+Made components optional for static builds:
+- keyring - Optional system token storage
+- notify - Optional desktop notifications  
+- image - Optional image rendering
+- clipboard - Always enabled but uses shell commands (no arboard/glib)
 
-- **Uncompromising Performance:** Built with Rust, Oxicord delivers instant startup times and negligible memory footprint compared to Electron or Go-based alternatives.
-- **Clean Architecture:** The codebase follows strict Clean Architecture principles (Domain, Application, Infrastructure), making it robust, testable, and approachable for contributors.
-- **TUI Fidelity:** Utilizing `ratatui` and `tachyonfx`, Oxicord provides a fluid, glitch-free interface with full mouse support and responsive layouts.
+2. Static Build Support
+- Switched from rustls to native-tls (OpenSSL/LibreSSL)
+- Removed arboard dependency (required glib)
+- Created shell-based clipboard using xclip/wl-copy
+- Successfully built fully static binary on Alpine Linux
 
-## Features
+3. Clipboard Rewrite
+Before: Used arboard crate (glib dependency, hard to static link)
+After: Shell command wrapper around xclip/wl-copy
+- set_text() / get_text() for text
+- set_binary() / get_binary() for images/files
+- No compile-time dependencies, minimal runtime deps
 
-Oxicord implements a focused set of "real" features designed for daily drivers, prioritizing stability over bloat:
+4. Conditional Compilation
+Added #[cfg(feature = "...")] throughout:
+- Image loading code only compiled with image feature
+- Keyring storage stub when disabled
+- Image entity stubs when disabled
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/4cd1909c-fc0f-419b-8e1f-ec2c0322d1d6" alt="final_showcase">
-  <br>
-  <sub><b>small showcase</b></sub>
-</p>
+5. Merged Upstream Changes
+- Fetched latest from original repo
+- Resolved merge conflicts (kept both your features and upstream's new modules)
+- Updated clipboard integration to match new upstream APIs
 
-### Core Experience
+6. New Files Created
+- src/domain/entities/image_stub.rs - Stub when image disabled
+- src/presentation/widgets/image_state_stub.rs - Stub implementations
+- src/infrastructure/storage/keyring_storage_stub.rs - Stub storage
+- Updated README.md - Minimal build instructions
 
-- **Vim-like Navigation:** Native `j`/`k` navigation, `g`/`G` scrolling, and intuitive focus management.
-- **Infinite Scrolling:** Seamless history loading. Scroll up, and history fetches automatically without manual "load more" buttons.
-- **Smart "Follow" Mode:** The view automatically snaps to new messages but respects your position when reading history.
-
-### Visual Precision
-
-- **Rich Text Rendering:** Full Markdown support with syntax highlighting (via `syntect`) for code blocks.
-- **Precision Timestamps:** 6-character timestamps (e.g., `14:05:32`) with automatic **Local Timezone** conversion—no more UTC mental math.
-- **Visual Indicators:**
-  - **Unread Markers:** Bold text and bullet indicators (`●`) for unread channels and guilds.
-  - **Typing Indicators:** Real-time feedback when others are typing.
-  - **Full-Width Selection:** Messages are selected across the full width of the pane for superior readability.
-
-### System Integration
-
-- **Built-in File Explorer:** Integrated TUI file picker for attaching files without leaving the terminal.
-- **Secure Authentication:** Options for ephemeral Token login or secure storage using system keyrings (`libsecret`/`keyring`).
-- **Clipboard Integration:** One-key copying of message content or IDs to your system clipboard.
-
-## Fair Play Comparison
-
-We stand on the shoulders of giants. Here is how Oxicord compares to existing terminal clients:
-
-- **Endcord (Python):** Endcord is a feature beast (Voice, Plugins, Image previews). However, as a Python application, it carries the runtime overhead of an interpreted language. **Oxicord (Rust)** prioritizes raw performance, memory safety, and type-safe reliability, aiming for a "crash-proof" experience rather than feature parity at the cost of stability.
-- **Discordo (Go):** The original inspiration. While Discordo pioneered this TUI layout, it uses the `tview` library and a flatter Go architecture. **Oxicord** moves to `ratatui` for superior rendering control (no artifacts/flickering) and adopts a strict "Clean Architecture" to prevent the "spaghetti code" issues common in long-lived TUI projects.
-- **Rivet (Rust):** A fellow Rust client. While Rivet offers a solid experience, **Oxicord** specifically targets the "Power User" workflow with deeper Vim integration, specific optimizations for tiling window managers, and a visual style that favors information density (6-char timestamps, full selection) over standard layouts.
+7. Files Modified
+- Cargo.toml - Feature flags, removed arboard, changed TLS
+- src/infrastructure/clipboard.rs - Complete rewrite
+- src/infrastructure/mod.rs - Conditional exports
+- src/presentation/ui/app.rs - Updated clipboard calls
+- Multiple files with #[cfg(...)] attributes added
 
 ## Installation & Configuration
 
-### Arch
+### Using release
+
+### Using dbin package manager
 
 ```bash
-paru -S oxicord-bin
-```
-
-### Nix
-
-```bash
-nix run github:linuxmobile/oxicord
-```
-
-For development:
-
-```bash
-nix develop
+   dbin install oxicord 
 ```
 
 ### Building from Source
@@ -82,31 +73,32 @@ nix develop
 
 Ensure you have the latest stable Rust toolchain installed. You will also need the following system dependencies:
 
-- **Debian/Ubuntu:**
+- **Alpine:**
   ```bash
-  sudo apt install pkg-config libdbus-1-dev libchafa-dev libglib2.0-dev mold clang
-  ```
-- **Fedora:**
-  ```bash
-  sudo dnf install pkgconf-pkg-config dbus-devel chafa-devel glib2-devel mold clang
-  ```
-- **Arch Linux:**
-  ```bash
-  sudo pacman -S pkgconf chafa dbus glib2 mold clang
-  ```
-- **macOS:**
-  ```bash
-  brew install chafa
+  doas apk add -S pkgconf chafa-dev glib-static musl-dev clang rustup libressl-dev xclip wl-clipboard
+  rustup-init
   ```
 
-**Build Steps**
+- **Build Steps**
 
 ```bash
-git clone https://github.com/linuxmobile/oxicord
-cd oxicord
-cargo build --release
-./target/release/oxicord
+git clone https://github.com/tecknian/oxicord-static
+export RUSTFLAGS="-C link-arg=-lgcc"
+cd oxicord-static
 ```
+
+- **For fully static binary with image support (chafa needed)**
+
+``bash
+cargo build --release --no-default-features --features="image"
+``
+
+- **For fully static binary without image support**
+
+``bash
+cargo build --release --no-default-features --features="image"
+``
+
 
 ### Configuration
 
@@ -128,20 +120,6 @@ Oxicord requires a Discord user token to function.
 6. Copy the value of the `authorization` header.
 
 ### Usage
-
-**1. Secure Keyring (Recommended)**
-
-Run Oxicord without arguments:
-
-```bash
-oxicord
-```
-
-Paste your token when prompted. Oxicord will verify and securely store it in your system's keyring (using `libsecret` on Linux, Keychain on macOS) for automatic future logins.
-
-**2. Environment Variable**
-
-For temporary sessions, testing, or scripts, you can provide the token via the environment. This takes precedence over the keyring and is **not** saved.
 
 ```bash
 export OXICORD_TOKEN="your_token_here"

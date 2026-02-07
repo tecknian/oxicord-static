@@ -3,7 +3,11 @@
 mod channel;
 mod forum;
 mod guild;
+#[cfg(feature = "image")]
 mod image;
+#[cfg(not(feature = "image"))]
+mod image_stub;
+
 mod member;
 mod message;
 mod permissions;
@@ -20,7 +24,12 @@ pub use channel::{
 };
 pub use forum::ForumThread;
 pub use guild::{Guild, GuildFolder, GuildId, NsfwLevel, PremiumTier, VerificationLevel};
+#[cfg(feature = "image")]
 pub use image::{ImageId, ImageMetadata, ImageSource, ImageStatus, LoadedImage};
+
+#[cfg(not(feature = "image"))]
+pub use image_stub::{ImageId, ImageMetadata, ImageSource, ImageStatus, LoadedImage};
+
 pub use member::Member;
 pub use message::{
     Attachment, Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedImage, EmbedProvider,

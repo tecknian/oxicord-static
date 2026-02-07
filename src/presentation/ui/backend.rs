@@ -7,6 +7,7 @@ use crate::domain::ports::{
     DirectMessageChannel, DiscordDataPort, EditMessageRequest, FetchMessagesOptions,
     SendMessageRequest,
 };
+#[cfg(feature = "image")]
 use crate::infrastructure::image::ImageLoader;
 
 #[derive(Debug)]
@@ -69,6 +70,7 @@ pub enum Action {
     },
     LoginFailure(crate::domain::errors::AuthError),
     /// Image loader has been initialized and is ready to use.
+    #[cfg(feature = "image")]
     ImageLoaderReady(Arc<ImageLoader>),
     PasteImageLoaded(std::path::PathBuf),
     PasteTextLoaded(String),
