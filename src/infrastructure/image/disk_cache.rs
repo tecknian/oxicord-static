@@ -40,11 +40,11 @@ impl DiskImageCache {
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "img") {
-                if let Ok(meta) = entry.metadata().await {
-                    total_size += meta.len();
-                    count += 1;
-                }
+            if path.extension().is_some_and(|ext| ext == "img")
+                && let Ok(meta) = entry.metadata().await
+            {
+                total_size += meta.len();
+                count += 1;
             }
         }
 
@@ -193,11 +193,13 @@ impl DiskImageCache {
     }
 
     /// Returns the current cache size in bytes.
+    #[allow(clippy::unused_async)]
     pub async fn current_size(&self) -> u64 {
         self.current_size.load(Ordering::Relaxed)
     }
 
     /// Returns the number of cached files.
+    #[allow(clippy::unused_async)]
     pub async fn len(&self) -> usize {
         self.item_count.load(Ordering::Relaxed)
     }
