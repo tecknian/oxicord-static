@@ -65,6 +65,7 @@ opener = "0.8.4"
 coolor = "1.1.0"
 fuzzy-matcher = "0.3.7"
 termbg = "0.6.2"
+bytes = "1.11.1"
 
 # Image rendering - Platform Specific
 
