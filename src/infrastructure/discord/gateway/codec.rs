@@ -365,7 +365,15 @@ impl EventParser {
             .unwrap_or_default()
             .into_iter()
             .map(|f| crate::domain::entities::GuildFolder {
-                id: f.id,
+                id: f.id.and_then(|s| {
+                    s.parse::<u64>()
+                        .ok()
+                        .or_else(|| s.parse::<i64>().ok().map(|v| {
+                            #[allow(clippy::cast_sign_loss)]
+                            let v_u64 = v as u64;
+                            v_u64
+                        }))
+                }),
                 name: f.name,
                 color: f.color,
                 guild_ids: f
@@ -896,7 +904,15 @@ impl EventParser {
             .guild_folders
             .into_iter()
             .map(|f| crate::domain::entities::GuildFolder {
-                id: f.id,
+                id: f.id.and_then(|s| {
+                    s.parse::<u64>()
+                        .ok()
+                        .or_else(|| s.parse::<i64>().ok().map(|v| {
+                            #[allow(clippy::cast_sign_loss)]
+                            let v_u64 = v as u64;
+                            v_u64
+                        }))
+                }),
                 name: f.name,
                 color: f.color,
                 guild_ids: f

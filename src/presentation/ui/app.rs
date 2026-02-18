@@ -307,9 +307,7 @@ impl App {
             Some(TokenSource::Keyring) => {
                 matches!(self.resolve_token_use_case.execute(None).await, Ok(Some(_)))
             }
-            Some(TokenSource::CommandLine | TokenSource::Environment | TokenSource::UserInput) => {
-                true
-            }
+            Some(TokenSource::Environment | TokenSource::UserInput) => true,
             None => false,
         }
     }
@@ -2100,10 +2098,11 @@ impl App {
             crossterm::cursor::Show
         )?;
 
-        let mut parts = editor.split_whitespace();
-        let status = if let Some(cmd) = parts.next() {
+        let parts = crate::presentation::ui::utils::split_command(&editor);
+        let mut parts_iter = parts.into_iter();
+        let status = if let Some(cmd) = parts_iter.next() {
             std::process::Command::new(cmd)
-                .args(parts)
+                .args(parts_iter)
                 .arg(&temp_path)
                 .status()
         } else {

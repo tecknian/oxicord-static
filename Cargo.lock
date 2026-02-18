@@ -2024,6 +2024,7 @@ dependencies = [
  "async-trait",
  "base64",
  "bitflags",
+ "bytes",
  "chrono",
  "clap",
  "color-eyre",
